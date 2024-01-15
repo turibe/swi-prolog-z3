@@ -13,7 +13,7 @@
 
 %%%%%%%%%%%%%%%%%%%%
 %%
-%% This module keeps a global type map so we can incrementally typecheck in the REPL
+%% This module builds on type_inference.pl and keeps a global type map so we can incrementally typecheck in the REPL.
 %%
 %% This is ugly... Note also that we keep a mirror of this state in the C package for Z3 as well.
 %%
@@ -25,8 +25,9 @@
 %% NEW: we use a backtrackable version.
 %% TODO: Would be nice, for efficiency, to only get the deltas from one type map to the next, and assert only those. But not critical.
 
-reset_types :- print("reseting type inference map"),
-    empty_assoc(Empty), initialize_map(Empty).
+reset_types :- print_message(information, format("reseting type inference map",[])),
+    empty_assoc(Empty),
+    initialize_map(Empty).
 
 get_map(Map) :- b_getval(global_typemap, M),
                 (M == [] -> empty_assoc(Map) ; Map = M).

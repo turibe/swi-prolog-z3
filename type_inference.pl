@@ -123,12 +123,9 @@ typecheck(T, Type, Envin, Envout) :-
     functor(T, F, Arity),
     T =.. [F|Subterms],
     signature(F, ArgTypes, Result),
-    (check_length(ArgTypes, Arity) -> (
-    				     Type = Result,
-    				     check_signature(Subterms, ArgTypes, Envin, Envout)
-    				 );    	 
-      syntax_error(arity_error(T,Arity))
-     ) .
+    check_length(ArgTypes, Arity),
+    Type = Result,
+    check_signature(Subterms, ArgTypes, Envin, Envout).
 
 typecheck(X, int, E, E) :- integer(X).
 typecheck(X, real, E, E) :- integer(X).
@@ -211,8 +208,12 @@ test(divtest, [nondet]) :-
     type_inference:typecheck(a=div(x, y), _T, t, M), % choicepoint between int and real
     type_inference:typecheck(a = div(b:real, 2), _T1, M, _M1).
 
-test(badarity) :-
-    catch(typecheck(not(X,Y), bool, _Map), error(E, _), true),
-    E =@= syntax_error(arity_error(not(X,Y), 2)) .
+% test(badarity) :-
+%    catch(typecheck(not(X,Y), bool, _Map), error(E, _), true),
+%    E =@= syntax_error(arity_error(not(X,Y), 2)) .
+
+test(atleaset) :-
+    typecheck(atleast(a:bool,b:bool,c:bool,2), bool, _Map),
+    true.
 
 :- end_tests(type_inference_tests).

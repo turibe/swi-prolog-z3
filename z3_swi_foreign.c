@@ -170,6 +170,9 @@ void register_function_declaration_string(Z3_context ctx, const char *name_strin
   DEBUG("Declaration map has size %d\n", size);
 }
 
+/****
+     for debugging, get the declarations string into result:
+***/
 foreign_t z3_declarations_string_foreign(term_t result) {
   Z3_context ctx = get_context();
   Z3_string rstring =  Z3_ast_map_to_string(ctx, global_declaration_map);
@@ -189,26 +192,33 @@ void register_function_declaration(Z3_context ctx, const Z3_symbol symbol, const
 // Question: how to free / garbage collect the context?
 // Any way to make it implicit, push and pop?
 
-// Makes a context, unifies with arg.
-// Q: when, if ever, would this be freed / deleted?
-// Now gets the global context instead.
+/*
+ * Unifies the global context with the arg:
+ */
 foreign_t z3_context_foreign(term_t u) {
   int rval;
   Z3_context ctx = get_context();
   return PL_unify_pointer(u, ctx);
 }
 
-// makes a new solver and unifies it with the term:
+/*
+  makes a new solver and unifies it with the arg:
+*/
 foreign_t z3_mk_solver_foreign(term_t u) {
   int rval;
   Z3_context ctx = get_context();
   Z3_solver solver = Z3_mk_solver(ctx);
   fprintf(stderr, "made solver %p\n", (void *) solver);
-  Z3_solver_inc_ref(ctx, solver); // how to free this --- explicit prolog predicate call?
+  Z3_solver_inc_ref(ctx, solver); // should be freed with z3_free_solver
   rval = PL_unify_pointer(u, solver);
   return rval;
 }
 
+
+/**
+   Frees the solver, which should an instantiated solver object.
+   TODO: use setup_call_cleanup to do this automatically.
+**/
 foreign_t z3_free_solver_foreign(term_t u) {
   Z3_solver solver;
   Z3_context ctx  = get_context();
@@ -220,6 +230,11 @@ foreign_t z3_free_solver_foreign(term_t u) {
   Z3_solver_dec_ref(ctx, solver);
   return rval;
 }
+
+/*
+  Gets a model object from the solver; need to run check on the solver first.
+  Otherwise, an error is reported and the model is null (0).
+*/
 
 foreign_t z3_solver_get_model_foreign(term_t solver_term, term_t model_term) {
   Z3_solver solver;
@@ -253,12 +268,7 @@ foreign_t z3_model_eval_foreign(term_t model_term, term_t term, term_t result_te
   return z3_ast_to_term_internal(result_ast, result_term);
 }
 
-/**
-Z3_symbol mk_symbol_top(term_t formula) {
-  Z3_context ctx  = get_context();
-  return mk_symbol(ctx, formula);
-}
-***/
+
 
 Z3_symbol mk_symbol(Z3_context ctx, term_t formula) {
 
@@ -279,7 +289,8 @@ Z3_symbol mk_symbol(Z3_context ctx, term_t formula) {
     int res = PL_get_chars(formula, &chars, CVT_WRITE);
     assert(res);
     INFO("mk_symbol got variable %s\n", chars);
-    return Z3_mk_string_symbol(ctx, chars);
+    Z3_symbol s = Z3_mk_string_symbol(ctx, chars);
+    return s;
     break;
   }
   case PL_STRING: {
@@ -310,7 +321,9 @@ Z3_symbol mk_symbol(Z3_context ctx, term_t formula) {
   return NULL;
 }
 
-// For debugging:
+/*
+  For debugging:
+*/
 
 foreign_t z3_symbol_foreign(term_t i, term_t symbol) {
   int rval;
@@ -349,6 +362,10 @@ foreign_t z3_ast_to_term_foreign(term_t ast_term, term_t term) {
   }
   return z3_ast_to_term_internal(ast, term);
 }
+
+/*
+  Converts a Z3 ast to a prolog term
+*/
 
 foreign_t z3_ast_to_term_internal(Z3_ast ast, term_t term) {
   Z3_context ctx = get_context();
@@ -499,7 +516,10 @@ foreign_t z3_assert_foreign(term_t solver_term, term_t formula) {
       ERROR("PL_get_chars failed");
       return res;
     }
-    return PL_warning("z3_assert/3: could not make Z3 formula %s", formula_string);
+    // return PL_warning("z3_assert/3: could not make Z3 formula %s", formula_string); // starts the tracer.
+    ERROR("z3_assert/3: could not make Z3 formula %s\n", formula_string); // starts the tracer.
+    return FALSE;
+    
   }
 
   DEBUG("made formula %p\n", (void *) z3_formula);
@@ -541,6 +561,7 @@ foreign_t z3_solver_check_foreign(term_t solver_term, term_t status_arg) {
   return rval;
 }
 
+
 foreign_t z3_solver_check_and_print_foreign(term_t solver_term, term_t status_arg) {
   Z3_solver solver;
   int rval = PL_get_pointer(solver_term, (void **) &solver);
@@ -552,7 +573,6 @@ foreign_t z3_solver_check_and_print_foreign(term_t solver_term, term_t status_ar
   return z3_bool_to_atom(check_status, status_arg);
 }
 
-// xforeign z3_check_model(term_t mterm, term_t result) {}
 
 // the function name is the one being declared; subterms are the types, last one is the result.
 

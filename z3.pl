@@ -1,5 +1,11 @@
 %%% -*- Mode: Prolog; Module: z3; -*-
 
+% This module builds on the basic functionality of z3_swi_foreign.pl to provide:
+%
+% - Typechecking and declaring Z3 variables and functions
+% - Attributed variables
+% - pushing assertions
+
 :- module(z3, [
               typecheck_and_declare/2,
               declare_type_list/1,
@@ -16,14 +22,13 @@
               z3_is_consistent/1,
               get_global_solver/1,
               z3_get_model/1,
-              z3_model_eval/2, z3_model_eval/3,
+              z3_model_eval/2,
+	      z3_model_eval/3,
               z3_check_and_print/1,
               op(750, xfy, and), % =, >, etc. are 700
               op(751, xfy, or),
               op(740, xfy, <>)
               % {}/1,
-              % test_explain/3,
-              % test_relax/3
               ]).
 
 :- use_module(type_inference_global, [
@@ -39,7 +44,7 @@
 
 :- use_module(quickexplain).
 
-%% have a global variable, backtrackable, with the depth level. (can use put_attr or set_attr for that? But those are for variables.)
+%% have a global variable, backtrackable, with the depth level.
 %% before the assert, check that variable, and pop the solver as many times as needed.
 
 :- initialization(reset_globals).
@@ -315,6 +320,7 @@ typetest(Formulas, R) :-
     type_inference_global:get_map(Map),
     assoc_to_list(Map, R).
 
+%% fix: choicepoint
 test(typetest) :-
     test_formulas(Formulas),
     typetest(Formulas, _Assoc).
@@ -370,9 +376,10 @@ test(implied) :-
 test(a1) :- % [nondet]
     z3_push(X>10, R), X = 12, R = l_true.
 
-%% fixme, this should fail
-test(fail) :-
-    \+ (z3_push(X:int>Y, _R), X = 10, Y = 14).
+test(fail, [fail] ) :-
+    z3_push(X:int>Y, _R),
+    X = 10,
+    Y = 14.
 
 
 :- end_tests(attribute_tests).
