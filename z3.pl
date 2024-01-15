@@ -1,7 +1,5 @@
 %%% -*- Mode: Prolog; Module: z3; -*-
 
-%% replaces/improves on z3_wrapper.pl
-
 :- module(z3, [
               typecheck_and_declare/2,
               declare_type_list/1,
@@ -21,7 +19,7 @@
               z3_model_eval/2, z3_model_eval/3,
               z3_check_and_print/1,
               op(750, xfy, and), % =, >, etc. are 700
-              op(750, xfy, or),
+              op(751, xfy, or),
               op(740, xfy, <>)
               % {}/1,
               % test_explain/3,
@@ -122,10 +120,7 @@ resolve_solver_depth(S, X, Scopes) :- X < Scopes,
                                       Numpops is Scopes - X,
                                       popn(S, Numpops).
 
-% popn(_S, 0) :- true, !.
-% popn(S, X) :- X > 0, z3_solver_pop(S), Prev is X - 1, popn(S, Prev).
-% popn(S, Numpops) :- forall(between(1, Numpops, _X), z3_solver_pop(S, 1)).
-popn(S, Numpops) :- z3_solver_pop(S, Numpops) -> true ; report("error popping\n").
+popn(S, Numpops) :- z3_solver_pop(S, Numpops) -> true ; report("error popping Z3 solver\n").
 
 
 % should not be used directly. Types in Formula could clash with previously defined types,
@@ -292,6 +287,8 @@ z3_implies(X) :- z3_is_implied(X).
 
 
 :- begin_tests(wrapper_tests).
+
+test_test :- print("testing").
 
 test_formulas(Formulas) :-
     Formulas = [foo(a) = b+c,

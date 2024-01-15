@@ -26,11 +26,12 @@
 %% TODO: Would be nice, for efficiency, to only get the deltas from one type map to the next, and assert only those. But not critical.
 
 reset_types :- print("reseting type inference map"),
-    empty_assoc(Empty), set_map(Empty).
+    empty_assoc(Empty), initialize_map(Empty).
 
 get_map(Map) :- b_getval(global_typemap, M),
                 (M == [] -> empty_assoc(Map) ; Map = M).
 set_map(Map) :- b_setval(global_typemap, Map).
+initialize_map(Map) :- nb_setval(global_typemap, Map).
 
 show_map(L) :- get_map(Map),
                assoc_to_list(Map, L).
