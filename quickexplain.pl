@@ -96,23 +96,25 @@ test(explain1) :-
     qrelax(call, [member(X, [1,2,3,4,5])], [X > 30, X > 2, X >= 4], R),
     R =@= [X>2, X>=4].
 
-test(explain11) :-
+test(explain2) :-
     qrelax(call, [X in 1..3], [X #> 30, X#>2, X#>=4], R),
-    R = [X #> 2].
-
-test(explain2) :-
-    qexplain(call,[X in 1..5], [X=1, X=2, X>1], R),
-    R = [X=1, X=2].
-
-test(explain2) :-
-    qexplain(call, [member(X,[1,2,3,4,5])], [X=1, X=2, X>1, X < 0], R),
-    R = [X=1, X=2].
+    R =@= [X #> 2].
 
 test(explain3) :-
-    qexplain(call, [member(X,[1,2,3,4,5])], [X=1, X < 0, X=2, X>1], R),
-    R = [X<0].
+    qexplain(call,[X in 1..5], [X=1, X=2, X>1], R),
+    R =@= [X=1, X=2].
 
-% test(myrelax1) :- qexplain(call, [#>((X + Y) , 10)], [(X #< 5), (Y #< 5), (X #> 2), (X #> 4)], R), R =@= [X#<5, Y#<5]
+test(explain4) :-
+    qexplain(call, [member(X,[1,2,3,4,5])], [X=1, X=2, X>1, X < 0], R),
+    R =@= [X=1, X=2].
+
+test(explain5) :-
+    qexplain(call, [member(X,[1,2,3,4,5])], [X=1, X < 0, X=2, X>1], R),
+    R =@= [X<0].
+
+test(myrelax1) :-
+    qexplain(call, [(X + Y) #>= 10], [X#<5, Y#<5, X#>2, X#>4], R),
+    R =@= [X#<5, Y#<5].
 
 %% todo, add:
 % test_explain(call, [{a:int = Y} , Y in 1..6, {Z = a:int}, Z in 6..8, label([Y,Z]), {Y:int > Z:int}],R).
