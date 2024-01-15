@@ -1,0 +1,218 @@
+%%% -*- Mode: Prolog; Module: quickexplain; -*-
+    
+:- module(type_inference, [
+              typecheck/3,
+              typecheck/4,
+              typecheck_formula_list/3
+          ]).
+
+:- use_module(library(assoc)).
+%% Note that assoc lists require ground keys.
+
+%% When typing a var, we add an attribute to it, and then type the attribute.
+
+:- retractall(signature(_,_,_)).
+
+builtin(X) :- signature(X, _, _).
+
+declare(Functor, ArgTypes, Result) :-
+    must_be(atomic, Functor),
+    assert(signature(Functor, ArgTypes, Result)).
+
+% Notation: "all(T)" means there can be an arbitrary number of arguments,
+% all of type T. A possible improvement is to support expressions like
+% all(number) AND oneof(float).
+
+:- declare(=, [T, T], bool).
+:- declare(<>, [T, T], bool).
+:- declare(==, [T, T], bool).
+:- declare(equal, [T, T], bool).
+:- declare(distinct, all(_T), bool).
+:- declare(+, all(T), T).
+
+% :- declare(+, oneof(real), real).
+% :- declare(+, [real, T], real). % todo: support oneof(real) syntax?
+% :- declare(+, [T, real], real).
+% :- declare(*, oneof(real), real).
+
+:- declare(*, all(T), T).
+:- declare(power, [int, int], int).
+:- declare(power, [real, int], real).
+:- declare(power, [_T, real], real).
+% :- declare(*, [real, T], real).
+% :- declare(*, [T, real], real).
+
+% div poses a problem that we can infer int types, but constraints asserted later might imply they are real.
+% really need an OR type.
+% "The arguments must either both have int type or both have real type. If the arguments have int type, then the result type is an int type, otherwise the the result type is real."
+:- declare(div, [real, real], real).
+:- declare(div, [int, int], int).
+
+:- declare(/, [real, real], real).
+:- declare(/, [int, int], int).
+:- declare(-, [T, T], T).
+:- declare(<, [T, T], bool).
+:- declare(>, [T, T], bool).
+:- declare(>=, [T, T], bool).
+:- declare(geq, [T, T], bool).
+:- declare(=<, [T, T], bool).
+:- declare(leq, [T, T], bool).
+:- declare(and, all(bool), bool).
+:- declare("," , all(bool), bool).
+:- declare(; , all(bool), bool).
+:- declare(or, all(bool), bool).
+:- declare(xor, all(bool), bool).
+:- declare(implies, [bool, bool], bool).
+:- declare(iff, [bool, bool], bool).
+:- declare(not, [bool], bool).
+:- declare(true, [], bool).
+:- declare(false, [], bool).
+:- declare(ite, [bool, T, T], T).
+
+% at most and at least take N bools followed by an int:
+
+:- declare(atmost, [bool, bool, int], bool).
+:- declare(atmost, [bool, bool, bool, int], bool).
+:- declare(atmost, [bool, bool, bool, bool, int], bool).
+
+:- declare(atleast, [bool, bool, int], bool).
+:- declare(atleast, [bool, bool, bool, int], bool).
+:- declare(atleast, [bool, bool, bool, bool, int], bool).
+
+
+% TODO: use attributed variables with finite domains, to represent cases where a var can be one of several types.
+
+
+
+% subterm_list(T, L) :- findall(Y, arg(_, T, Y), L).
+
+
+/*******************
+% TODO: foldl could do this job?
+check_subterm_list([], _Type, E, E).
+check_subterm_list([S|Rest], Type, E, Eout) :-
+    typecheck(S, Type, E, E1),
+    check_subterm_list(Rest, Type, E1, Eout).
+
+typecheck(T, Type, Envin, Envout) :- member(Type, [int, float, bool]),
+                                      T =.. [F|Subterms],
+                                      functor_type(F, Type),
+                                      check_subterm_list(Subterms, Type, Envin, Envout).
+********************/
+
+% TODO: for functions with no signature, fill in f(T1,T2,...TN)->TN+1, for uninterpreted types
+
+atomic_mappable(X, X) :- atom(X), !, true. % we want to exclude int, string, etc., so just atomic won't do.
+% atomic_mappable(X, A) :- var(X), !, z3:add_attribute(X, A).
+
+compound_mappable(X) :- compound(X),
+                        functor(X, F, _N),
+                        \+ builtin(F).
+
+check_length(all(_), _) :- !, true.
+check_length(L, Arity) :- length(L, Arity).
+
+
+typecheck(F, _, _, _) :- var(F), !, instantiation_error(F).
+typecheck(F, Type, Envin, Envout) :- compound(F),
+                                     functor(F, :, 2), !,
+                                     F = Term:Type,
+                                     typecheck(Term, Type, Envin, Envout).
+typecheck(T, Type, Envin, Envout) :-
+    nonvar(T),
+    functor(T, F, Arity),
+    T =.. [F|Subterms],
+    signature(F, ArgTypes, Result),
+    (check_length(ArgTypes, Arity) -> (
+    				     Type = Result,
+    				     check_signature(Subterms, ArgTypes, Envin, Envout)
+    				 );    	 
+      syntax_error(arity_error(T,Arity))
+     ) .
+
+typecheck(X, int, E, E) :- integer(X).
+typecheck(X, real, E, E) :- integer(X).
+typecheck(X, real, E, E) :- float(X).
+typecheck(X, string, E, E) :- string(X).
+typecheck(X1, T, Envin, Envout) :- atomic_mappable(X1, X),
+                                   get_assoc(X, Envin, T1), !,
+                                   T = T1, % TODO: print error if this fails
+                                   Envin = Envout.
+typecheck(X1, T, Envin, Envout) :- atomic_mappable(X1, X),
+                                   \+ get_assoc(X, Envin, _), !,
+                                   put_assoc(X, Envin, T, Envout).
+typecheck(X, Type, Envin, Envout) :- compound(X),
+                                     X = F:T, !,
+                                     Type = T,
+                                     put_assoc(F, Envin, T, Envout).
+typecheck(X, Type, Envin, Envout) :- compound_mappable(X),
+                                     X =.. [F|Subterms],
+                                     get_assoc(F, Envin, Funtype), !,
+                                     Funtype = lambda(Argtypes, Type),
+                                     check_signature(Subterms, Argtypes, Envin, Envout).
+typecheck(X, Type, Envin, Envout) :- compound_mappable(X),
+                                     X =.. [F|Subterms],
+                                     \+ get_assoc(F, Envin, _), !,
+                                     length(Subterms, Arity),
+                                     length(Argtypes, Arity),
+                                     Newtype = lambda(Argtypes, Type),
+                                     put_assoc(F, Envin, Newtype, EnvIntermediate),
+                                     check_signature(Subterms, Argtypes, EnvIntermediate, Envout). % What if F is used in a subterm? Check.
+
+
+% TODO: works but want to avoid blowups.
+% ideally one would just assert the constraint, check that it's satisfiable, and continue.
+% the map would have to support those constraints. Use attributed variables?
+% check_signature([], oneof(T), _, _) :- fail.
+% check_signature([Arg|Rest], oneof(T), Ein, Eout) :-
+%    typecheck(Arg, T, Ein, Eout) -> true ; check_signature(Rest, oneof(T), Ein, Eout).
+
+check_signature([], all(_), E, E).
+check_signature([Arg|Rest], all(T), Ein, Eout) :- typecheck(Arg, T, Ein, E2),
+                                                  check_signature(Rest, all(T), E2, Eout).
+check_signature([], [], E, E).
+check_signature([Arg|Rest], [T|TRest], Ein, Eout) :- typecheck(Arg, T, Ein, E2),
+                                                     check_signature(Rest, TRest, E2, Eout).
+
+% typecheck(term, type, envin, envout)
+
+typecheck(Term, Type, Eout) :- empty_assoc(Empty), typecheck(Term, Type, Empty, Eout).
+
+
+typecheck_formula_list([F|R], Ein, Eout) :- typecheck(F, bool, Ein, Enext),
+                                            typecheck_formula_list(R, Enext, Eout).
+typecheck_formula_list([], E, E) :- true.
+
+%% typecheck_formula_list(X, Ein, Eout) :- \+ is_list(X),
+%%                                         typecheck_formula_list([X], Ein, Eout).
+
+%% doit(Term, Type, Result) :- empty_assoc(Empty), typecheck(Term, Type, Empty, Eout), assoc_to_list(Eout, Result).
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Unit tests %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+:- begin_tests(type_inference_tests).
+
+test(basic, [true(Atype =@= int)]) :-
+    typecheck(and(a:int > b, c), bool, Map),
+    get_assoc(a, Map, Atype), !,
+    get_assoc(b, Map, int), !,
+    get_assoc(c, Map, bool).
+
+test(conflict1, [fail]) :-
+    typecheck(a:int, int, Map),
+    typecheck(a, bool, Map, _Mapout).
+
+test(conflict1, [fail]) :-
+    typecheck(f(a:int), int, Map),
+    typecheck(f(b:bool), int, Map, _Mapout).
+
+test(divtest, [nondet]) :-
+    type_inference:typecheck(a=div(x, y), _T, t, M), % choicepoint between int and real
+    type_inference:typecheck(a = div(b:real, 2), _T1, M, _M1).
+
+test(badarity) :-
+    catch(typecheck(not(X,Y), bool, _Map), error(E, _), true),
+    E =@= syntax_error(arity_error(not(X,Y), 2)) .
+
+:- end_tests(type_inference_tests).
