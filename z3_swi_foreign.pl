@@ -130,5 +130,8 @@ test(incompatible_types2, [fail]) :-
     z3_assert(S, a = b),
     z3_solver_get_model(S, _Model).
 
+test(at_least_fail, [fail]) :-
+    z3_mk_solver(S),
+    z3_assert(S, atleast(a:bool, b:bool, c:bool)).
 
 :- end_tests(foreign_tests).
