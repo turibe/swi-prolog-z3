@@ -34,6 +34,8 @@
 #define ERROR(...) do {fprintf(stderr, __VA_ARGS__); fflush(stderr);} while (false)
 #define INFO(...) do {fprintf(stderr, __VA_ARGS__); fflush(stderr);} while (false)
 
+// TODO: for prolog errors, use PL_raise_exception.
+
 // *************************************************************************
 // from Z3's test_capi.c:
 
@@ -64,17 +66,23 @@ Z3_lbool solver_check_and_print(Z3_context ctx, Z3_solver s)
     case Z3_L_UNDEF:
         printf("unknown\n");
         m = Z3_solver_get_model(ctx, s);
-        if (m) Z3_model_inc_ref(ctx, m);
-        printf("potential model:\n%s\n", Z3_model_to_string(ctx, m));
+        if (m) {
+	  Z3_model_inc_ref(ctx, m);
+	  printf("potential model:\n%s\n", Z3_model_to_string(ctx, m));
+	}
         break;
     case Z3_L_TRUE:
         m = Z3_solver_get_model(ctx, s);
-        if (m) Z3_model_inc_ref(ctx, m);
-        printf("sat\n%s\n", Z3_model_to_string(ctx, m));
+        if (m) {
+	  Z3_model_inc_ref(ctx, m);
+	  printf("sat\n%s\n", Z3_model_to_string(ctx, m));
+	}
         break;
     }
-    if (m) Z3_model_dec_ref(ctx, m);
-    return result;
+    if (m) {
+      Z3_model_dec_ref(ctx, m);
+    }
+    return result; // this is the internal function
 }
 
 // ***************************** GLOBAL VARIABLES ********************************************
@@ -192,13 +200,24 @@ void register_function_declaration(Z3_context ctx, const Z3_symbol symbol, const
 // Question: how to free / garbage collect the context?
 // Any way to make it implicit, push and pop?
 
+
 /*
- * Unifies the global context with the arg:
+ * Unifies the global context with the arg. Wraps in "context(X)".
+ * Eventually should use blob mechanism to represent all pointers.
  */
 foreign_t z3_context_foreign(term_t u) {
-  int rval;
   Z3_context ctx = get_context();
-  return PL_unify_pointer(u, ctx);
+  functor_t CONTEXT_FUNCTOR = PL_new_functor(PL_new_atom("context"), 1);
+  term_t t  = PL_new_term_ref();
+  term_t pt = PL_new_term_ref();
+  int res1 = PL_unify_pointer(pt, ctx);
+  int res = PL_cons_functor(t, CONTEXT_FUNCTOR, pt);
+  if (!res) {
+    ERROR("error calling PL_cons_functor");
+    return FALSE;
+  }
+
+  return PL_unify(u, t);
 }
 
 /*
@@ -242,7 +261,10 @@ foreign_t z3_solver_get_model_foreign(term_t solver_term, term_t model_term) {
   if (!rval) return rval;
   Z3_context ctx  = get_context();
   Z3_model model = Z3_solver_get_model(ctx, solver);
-  return PL_unify_pointer(model_term, model);
+  if (model) {
+    return PL_unify_pointer(model_term, model);
+  }
+  return FALSE;
 }
 
 // TODO: model completion could be a flag
@@ -536,7 +558,7 @@ foreign_t z3_assert_foreign(term_t solver_term, term_t formula) {
 
 foreign_t z3_solver_get_num_scopes_foreign(term_t solver_term, term_t result) {
   Z3_solver solver;
-  int rval = PL_get_pointer(solver_term, (void **) &solver);
+  int rval = PL_get_pointer(solver_term, (void **) &solver); // todo; try PL_get_pointer_ex
   if (!rval) {
     return rval;
   }
@@ -615,24 +637,36 @@ Z3_func_decl mk_func_decl(Z3_context ctx, const atom_t name, const size_t arity,
    return(result);
 }
 
+/*
+  Makes a sort from formula, returns pointer in "result". Useful to end-users?
+*/
+
 foreign_t z3_mk_sort_foreign(term_t formula, term_t result) {
   Z3_context ctx = get_context();
   switch (PL_term_type(formula)) {
-  case PL_ATOM:
   case PL_INTEGER:
+  case PL_VARIABLE:
+  case PL_STRING:
+  case PL_TERM:
     // we call mk_sort again, check that it's the same one.
     // dangerous to convert that int to a pointer, Z3 can't check it anyway
-  case PL_VARIABLE: {
+    ERROR("first argument of mk_sort should be an atom\n");
+    return FALSE;
+  case PL_ATOM: {
     Z3_sort sort = mk_sort(ctx, formula);
     return PL_unify_pointer(result, sort);
     break;
   }
   default:
-    ERROR("Cannot handle result type in z3_mk_sort_foreign\n");
+    ERROR("Cannot handle formula  type in z3_mk_sort_foreign\n");
     break;
   }
   return FALSE;
 }
+
+// crash: z3_function_declaration(f, [int, int], int).
+
+// Example: 3_function_declaration(f(int, bool), int, R).
 
 // Note: This does not handle the case where formula is a variable.
 // There does not seem to be a way to get the attribute here, so have to pass a fake term, then...
@@ -653,7 +687,7 @@ foreign_t z3_function_declaration_foreign(const term_t formula, const term_t ran
       }
       name = PL_new_atom(chars);
       ****/
-      ERROR("should not declare Z3 types for variables\n");
+      ERROR("should not directly declare Z3 types for variables, use attributes instead\n");
       return FALSE;
     }
     else {
@@ -666,7 +700,11 @@ foreign_t z3_function_declaration_foreign(const term_t formula, const term_t ran
     }
   }
   if (PL_is_variable(range)) {
-    ERROR("range should not be a variable for z3_function_declaration");
+    ERROR("z3_function_declaration range should not be a variable");
+    return FALSE;
+  }
+  if (!PL_is_atom(range)) { // TODO: we could unify it with all the known types... :-)
+    ERROR("z3_function_declaration range should be an atom\n");
     return FALSE;
   }
   const Z3_context ctx = get_context();

@@ -40,7 +40,8 @@
 :- use_module(library(assoc)). % use dicts instead? Both can't handle vars as keys properly.
 :- use_module(library(ordsets)).
 
-:- load_foreign_library(z3_swi_foreign).
+%% :- load_foreign_library(z3_swi_foreign).
+:- use_module(z3_swi_foreign).
 
 :- use_module(quickexplain).
 
@@ -265,7 +266,6 @@ z3_push_and_print(F,R) :- z3_push(F,R), z3_print_status(R).
 
 z3_push_and_print(F) :- z3_push_and_print(F, _R).
 
-%% TODO/FIXME: need to pop the solver here...
 z3_is_consistent(F) :- z3_push(F, l_true) -> (
                                                      get_global_solver(S),
                                                      popn(S,1),
