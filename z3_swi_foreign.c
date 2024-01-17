@@ -28,8 +28,8 @@
 
 *****/      
 
-// #define DEBUG(...) do {fprintf(stderr, __VA_ARGS__) ; fflush(stderr); } while (false)
-#define DEBUG(...) {}
+#define DEBUG(...) do {fprintf(stderr, __VA_ARGS__) ; fflush(stderr); } while (false)
+// #define DEBUG(...) {}
 #define INPROGRESS(...) do {fprintf(stderr, __VA_ARGS__); fflush(stderr);} while (false)
 #define ERROR(...) do {fprintf(stderr, __VA_ARGS__); fflush(stderr);} while (false)
 #define INFO(...) do {fprintf(stderr, __VA_ARGS__); fflush(stderr);} while (false)
@@ -45,7 +45,7 @@ Z3_ast mk_var(Z3_context ctx, const char * name, Z3_sort ty)
     return Z3_mk_const(ctx, s, ty);
 }
 
-Z3_ast mk_int_var(Z3_context ctx, const char * name)
+Z3_ast Z3_mk_int_var(Z3_context ctx, const char * name)
 {
     Z3_sort ty = Z3_mk_int_sort(ctx);
     return mk_var(ctx, name, ty);
@@ -145,7 +145,7 @@ Z3_func_decl get_function_declaration(Z3_context ctx, const char *name_string, c
   assert(global_declaration_map != NULL);
   int map_size = Z3_ast_map_size(ctx, global_declaration_map);
   DEBUG("current map size is %d\n", map_size);
-  Z3_ast key = mk_int_var(ctx, name_string);
+  Z3_ast key = Z3_mk_int_var(ctx, name_string);
   // Z3_inc_ref(ctx, key); // no-op?
   DEBUG("made key %s\n", Z3_ast_to_string(ctx, key));
   if (!Z3_ast_map_contains(ctx, global_declaration_map, key)) {
@@ -170,7 +170,7 @@ Z3_func_decl get_function_declaration(Z3_context ctx, const char *name_string, c
 
 // crashing:
 void register_function_declaration_string(Z3_context ctx, const char *name_string, const size_t arity, Z3_func_decl declaration) {
-  Z3_ast key = mk_int_var(ctx, name_string); // why mk_int_var?
+  Z3_ast key = Z3_mk_int_var(ctx, name_string); // why mk_int_var?
   Z3_string rstring = Z3_ast_to_string(ctx, Z3_func_decl_to_ast(ctx, declaration));
   DEBUG("Installing declaration for %s: %s/%lu\n", name_string, rstring, arity);
   Z3_ast_map_insert(ctx, global_declaration_map, key, (Z3_ast) declaration); // use Z3_fun_decl_to_ast?
@@ -412,16 +412,17 @@ foreign_t z3_ast_to_term_internal(Z3_ast ast, term_t term) {
     }
   }
   DEBUG("non-numeral case\n");
-  if (Z3_is_string(ctx, ast)) {
+  if (Z3_is_string(ctx, ast)) { // never happens?
     Z3_string s = Z3_get_string(ctx, ast);
+    DEBUG("got string %s", s);
     return PL_unify_string_chars(term, s);
   }
   // use Z3_get_bool_value(ctx, ast); ???
 
   if (Z3_get_ast_kind(ctx, ast) == Z3_APP_AST) {
-    DEBUG("We have a Z3_app_ast\n");
     Z3_app app = Z3_to_app(ctx, ast);
     unsigned arity = Z3_get_app_num_args(ctx, app);
+    DEBUG("We have a Z3_app_ast of arity %d\n", arity);
     term_t subterms = PL_new_term_refs(arity);
     for (int i=0; i<arity; ++i) {
       Z3_ast subterm_ast = Z3_get_app_arg(ctx, app, i);
@@ -433,6 +434,13 @@ foreign_t z3_ast_to_term_internal(Z3_ast ast, term_t term) {
     Z3_symbol symbol = Z3_get_decl_name(ctx, decl);
     Z3_string str = Z3_get_symbol_string(ctx, symbol);
     term_t t = PL_new_term_ref();
+    if ((arity == 0) && (str[0] == '_')) {
+      DEBUG("Got 'variable' %s\n", str);
+      // TODO: here could turn '_110652' back to a variable, but would need a map
+      PL_put_variable(t);
+      return PL_unify(term, t);
+    }
+
     functor_t func = PL_new_functor(PL_new_atom(str), arity);
     if (!PL_cons_functor_v(t, func, subterms)) {
       return FALSE;
@@ -503,7 +511,8 @@ foreign_t z3_solver_pop_foreign(const term_t solver_term, const term_t num_backt
 }
 
 /*
- assert formula for solver
+ assert formula for solver.
+ FIXME: can crash SWI Prolog by putting in a random int as the solver.
 */
 
 foreign_t z3_assert_foreign(term_t solver_term, term_t formula) {
@@ -522,7 +531,7 @@ foreign_t z3_assert_foreign(term_t solver_term, term_t formula) {
     DEBUG("made new solver %p\n", (void *) solver);
   }
   else {
-    rval = PL_get_pointer(solver_term, (void **) &solver);
+    rval = PL_get_pointer_ex(solver_term, (void **) &solver);
     if (!rval) {
       DEBUG("unify solver failed %d\n", rval);
       return rval;
@@ -558,7 +567,7 @@ foreign_t z3_assert_foreign(term_t solver_term, term_t formula) {
 
 foreign_t z3_solver_get_num_scopes_foreign(term_t solver_term, term_t result) {
   Z3_solver solver;
-  int rval = PL_get_pointer(solver_term, (void **) &solver); // todo; try PL_get_pointer_ex
+  int rval = PL_get_pointer_ex(solver_term, (void **) &solver);
   if (!rval) {
     return rval;
   }
@@ -570,7 +579,7 @@ foreign_t z3_solver_get_num_scopes_foreign(term_t solver_term, term_t result) {
 
 foreign_t z3_solver_check_foreign(term_t solver_term, term_t status_arg) {
   Z3_solver solver;
-  int rval = PL_get_pointer(solver_term, (void **) &solver);
+  int rval = PL_get_pointer_ex(solver_term, (void **) &solver);
   if (!rval) {
     return rval;
   }
@@ -822,7 +831,7 @@ Z3_ast term_to_ast(const Z3_context ctx, const term_t formula) {
         if (!res) {
           fprintf(stderr, "PL_get_chars failed for variable");
         }
-        fprintf(stderr, "Got variable, var is %s\n", chars);
+        fprintf(stderr, "Got prolog variable, var is %s\n", chars); // TODO: somehow keep the variable as a variable
         // return NULL;
     }
     else {
@@ -830,17 +839,18 @@ Z3_ast term_to_ast(const Z3_context ctx, const term_t formula) {
       assert(res);
       DEBUG("Got atom %s\n", chars);
     }
+    // chars is set
     const Z3_func_decl declaration = get_function_declaration(ctx, chars, 0);
     if (declaration == NULL) {
       ERROR("did not find declaration for %s, defaulting to int\n", chars);
     }
     else {
       const Z3_string decstring  = Z3_ast_to_string(ctx, Z3_func_decl_to_ast(ctx, declaration));
-      DEBUG("Got declaration %s\n", (void *) decstring);
+      DEBUG("Got declaration %s\n", decstring);
     }
     if (declaration == NULL) {
       INFO("term_to_ast got atom %s, default int\n", chars);
-      result = mk_int_var(ctx, chars);
+      result = Z3_mk_int_var(ctx, chars);
     }
     else {
       result = Z3_mk_app(ctx, declaration, 0, 0); // ???
