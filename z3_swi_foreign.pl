@@ -15,8 +15,8 @@
 	      z3_context/1,
 	      z3_model_eval/3,
 	      z3_solver_check_and_print/2,
-	      z3_get_num_scopes/2,
-	      z3_solver_push/1,
+	      z3_solver_scopes/2,
+	      z3_solver_push/2,
 	      z3_solver_pop/2,
 	      op(750, xfy, and), % =, >, etc. are 700 ; Local to the module
               op(751, xfy, or),
@@ -28,7 +28,6 @@
 
 z3_print_declarations(X) :-
     z3_declarations_string(X), print_message(information, format(X, [])).
-
 
 
 :- begin_tests(foreign_tests).
@@ -133,5 +132,19 @@ test(incompatible_types2, [fail]) :-
 test(at_least_fail, [fail]) :-
     z3_mk_solver(S),
     z3_assert(S, atleast(a:bool, b:bool, c:bool)).
+
+
+test(declare_fail1, [fail]) :-
+    z3_function_declaration(_X,int,_R).
+
+test(declare_fail2, [fail]) :-
+    z3_function_declaration(a,_Y,_R).
+
+test(push) :-
+    z3_mk_solver(S),
+    z3_solver_push(S,1),
+    z3_solver_push(S,2),
+    z3_solver_scopes(S,2),
+    z3_solver_pop(S,1).
 
 :- end_tests(foreign_tests).

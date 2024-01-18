@@ -12,9 +12,13 @@
 /****
 
      This is a C foreign interface between SWI Prolog and the Z3 prover. It exposes the basic Z3 functionality
-     as Prolog predicates, leaving the implementation of more complex uses to Prolog code / libraries.
+     as Prolog predicates, leaving the implementation of more complex applications to Prolog code and libraries.
 
      The main decision is how to handle state -- context, declarations and solvers.
+
+     It would be nice to embed the declarations in the context object, but this does not seem to be possible.
+     We then keep a map of signatures (name, arity, type) to declarations.
+     (We assume for now that functions are not overloaded by type.)
 
      For now, we go with one global, implicit context object, and one global declaration map;
      everything else, including solvers, is created and destroyed at the Prolog level.
@@ -24,7 +28,7 @@
 /***** Guide to types:
 
       atom_t    SWI type, Prolog atom
-      term_t    SWI type, Prolog atom
+      term_t    SWI type, Prolog term
 
 *****/
 
@@ -91,8 +95,9 @@ Z3_lbool solver_check_and_print(Z3_context ctx, Z3_solver s)
 // ***************************** GLOBAL VARIABLES ********************************************
 
 
-// There is only one Z3 context object;
-// solver objects are explicit, and we can do push and pop on solvers from Prolog:
+// For now, there is only one, global Z3 context object;
+// solver objects are explicit, and we can do push and pop on solvers from Prolog.
+
 Z3_context global_z3_context = NULL;
 long global_symbol_count = 0;
 // Keeps around the declarations; not affected by push and pop:
@@ -171,7 +176,7 @@ Z3_func_decl get_function_declaration(Z3_context ctx, const char *name_string, c
   return declaration;
 }
 
-// crashing:
+
 void register_function_declaration_string(Z3_context ctx, const char *name_string, const size_t arity, Z3_func_decl declaration) {
   Z3_ast key = Z3_mk_int_var(ctx, name_string); // why mk_int_var?
   Z3_string rstring = Z3_ast_to_string(ctx, Z3_func_decl_to_ast(ctx, declaration));
@@ -191,18 +196,7 @@ foreign_t z3_declarations_string_foreign(term_t result) {
 }
 
 
-/***
-void register_function_declaration(Z3_context ctx, const Z3_symbol symbol, const size_t arity, Z3_func_decl declaration) {
-  const char * string = Z3_get_symbol_string(ctx, symbol); // not valid for long...
-  INFO("symbol string is %d\n", string);
-  register_function_declaration_string(ctx, string, arity, declaration);
-}
-****/
-
-
-// Question: how to free / garbage collect the context?
-// Any way to make it implicit, push and pop?
-
+// Question: how to garbage collect the context?
 
 /*
  * Unifies the global context with the arg. Wraps in "context(X)".
@@ -477,7 +471,7 @@ foreign_t z3_ast_string_foreign(term_t formula, term_t result) {
 }
 
 
-foreign_t z3_solver_push_foreign(const term_t solver_term) {
+foreign_t z3_solver_push_foreign(const term_t solver_term, term_t output_term) {
   Z3_solver solver;
   int rval = PL_get_pointer(solver_term, (void **) &solver);
   if (!rval) {
@@ -485,7 +479,9 @@ foreign_t z3_solver_push_foreign(const term_t solver_term) {
   }
   const Z3_context ctx = get_context();
   Z3_solver_push(ctx, solver);
-  return TRUE;
+  unsigned scopes = Z3_solver_get_num_scopes(ctx, solver);
+  
+  return PL_unify_uint64(output_term, scopes);
 }
 
 foreign_t z3_solver_pop_foreign(const term_t solver_term, const term_t num_backtrack) {
@@ -545,7 +541,7 @@ foreign_t z3_assert_foreign(term_t solver_term, term_t formula) {
       return res;
     }
     // return PL_warning("z3_assert/3: could not make Z3 formula %s", formula_string); // starts the tracer.
-    ERROR("z3_assert/3: could not make Z3 formula %s\n", formula_string); // starts the tracer.
+    ERROR("z3_assert/3: could not make Z3 formula %s\n", formula_string);
     return FALSE;
     
   }
@@ -553,7 +549,15 @@ foreign_t z3_assert_foreign(term_t solver_term, term_t formula) {
   DEBUG("made formula %p\n", (void *) z3_formula);
   Z3_sort formula_sort = Z3_get_sort(ctx, z3_formula);
   if (formula_sort != Z3_mk_bool_sort(ctx)) {
-    return PL_warning("z3_assert/3: cannot assert non-boolean formula");
+    char * formula_string;
+    int res = PL_get_chars(formula, &formula_string, CVT_ALL | CVT_VARIABLE | CVT_EXCEPTION | CVT_WRITE);
+    if (!res) {
+      ERROR("PL_get_chars failed\n");
+      return res;
+    }
+    ERROR("z3_assert/3: cannot assert non-boolean formula %s\n", formula_string); // starts the tracer
+    // look into PL_raise_exception
+    return FALSE;
   }
 
   Z3_solver_assert(ctx, solver, z3_formula);
@@ -562,7 +566,7 @@ foreign_t z3_assert_foreign(term_t solver_term, term_t formula) {
 }
 
 
-foreign_t z3_solver_get_num_scopes_foreign(term_t solver_term, term_t result) {
+foreign_t z3_solver_scopes_foreign(term_t solver_term, term_t result) {
   Z3_solver solver;
   int rval = PL_get_pointer_ex(solver_term, (void **) &solver);
   if (!rval) {
@@ -572,7 +576,6 @@ foreign_t z3_solver_get_num_scopes_foreign(term_t solver_term, term_t result) {
   unsigned scopes = Z3_solver_get_num_scopes(ctx, solver);
   return PL_unify_uint64(result, scopes);
 }
-
 
 foreign_t z3_solver_check_foreign(term_t solver_term, term_t status_arg) {
   Z3_solver solver;
@@ -603,8 +606,9 @@ foreign_t z3_solver_check_and_print_foreign(term_t solver_term, term_t status_ar
 
 
 // the function name is the one being declared; subterms are the types, last one is the result.
-
 // FIXME: call get_function_declaration to avoid redeclaring things?
+// The problem is state: if we do so, then we cannot redeclare things, unless we reset the declarations at each query.
+// Do we even want to share declarations from one query to the next?
 
 Z3_func_decl mk_func_decl(Z3_context ctx, const atom_t name, const size_t arity, const term_t formula, term_t range) {
    const char *name_string = PL_atom_chars(name);
@@ -634,80 +638,51 @@ Z3_func_decl mk_func_decl(Z3_context ctx, const atom_t name, const size_t arity,
      res = PL_get_chars(range, &fchars, CVT_WRITE);
      ERROR("Range was %s\n", fchars);
    }
-   Z3_func_decl result =  Z3_mk_func_decl(ctx, symbol, arity, arity == 0 ?  0 : domain, range_sort);
-   if (result != NULL) {
-     register_function_declaration_string(ctx, name_string, arity, result);
-     DEBUG("mk_func_decl result is %s\n", Z3_ast_to_string(ctx, Z3_func_decl_to_ast(ctx, result)));
+   // FIXME: this is breaking the tests:
+   // Z3_func_decl result = get_function_declaration(ctx, name_string, arity);
+   Z3_func_decl result = NULL;
+   if (result == NULL) {
+     result =  Z3_mk_func_decl(ctx, symbol, arity, arity == 0 ?  0 : domain, range_sort);
+     if (result != NULL) {
+       register_function_declaration_string(ctx, name_string, arity, result);
+       DEBUG("mk_func_decl result is %s\n", Z3_ast_to_string(ctx, Z3_func_decl_to_ast(ctx, result)));
+     }
    }
+   else {
+     DEBUG("Found existing declaration for %s/%ld\n", name_string, arity);
+   }
+
    free(domain);
    return(result);
 }
 
-/*
-  Makes a sort from formula, returns pointer in "result". Useful to end-users?
-*/
 
-foreign_t z3_mk_sort_foreign(term_t formula, term_t result) {
-  Z3_context ctx = get_context();
-  switch (PL_term_type(formula)) {
-  case PL_INTEGER:
-  case PL_VARIABLE:
-  case PL_STRING:
-  case PL_TERM:
-    // we call mk_sort again, check that it's the same one.
-    // dangerous to convert that int to a pointer, Z3 can't check it anyway
-    ERROR("first argument of mk_sort should be an atom\n");
-    return FALSE;
-  case PL_ATOM: {
-    Z3_sort sort = mk_sort(ctx, formula);
-    return PL_unify_pointer(result, sort);
-    break;
-  }
-  default:
-    ERROR("Cannot handle formula  type in z3_mk_sort_foreign\n");
-    break;
-  }
-  return FALSE;
-}
-
-// crash: z3_function_declaration(f, [int, int], int).
-
-// Example: 3_function_declaration(f(int, bool), int, R).
+// Example: z3_function_declaration(f(int, bool), int, R).
+// Example: z3_function_declaration(f(int, int), int, X)
 
 // Note: This does not handle the case where formula is a variable.
 // There does not seem to be a way to get the attribute here, so have to pass a fake term, then...
+
+// TODO: require that result is var?
+
 foreign_t z3_function_declaration_foreign(const term_t formula, const term_t range, term_t result) {
   atom_t name;
   size_t arity;
   int res = PL_get_name_arity(formula, &name, &arity);
   if (!res) {
     if (PL_is_variable(formula)) {
-      // ERROR("Cannot make function declaration for variable\n");
-      /***** works, but want to disallow vars for now:
-      arity = 0;
-      char *chars;
-      res = PL_get_chars(formula, &chars, CVT_VARIABLE | CVT_WRITE);
-      if (!res) {
-        fprintf(stderr, "Could not get chars for variable\n");
-        return FALSE;
-      }
-      name = PL_new_atom(chars);
-      ****/
       ERROR("should not directly declare Z3 types for variables, use attributes instead\n");
       return FALSE;
     }
     else {
-      char *chars = NULL;
+      char *formula_chars = NULL;
       char *range_chars = NULL;
+      res = PL_get_chars(formula, &formula_chars, CVT_WRITE);
       res = PL_get_chars(range, &range_chars, CVT_WRITE);
       assert(res);
-      fprintf(stderr, "Ignoring declaration for non-var, non-atom, non-compound term %s and range %s\n", chars, range_chars);
-      return TRUE; // TODO: cleanup!!! Check how this was handled before.
+      ERROR("Bad declaration, term %s and range %s\n", formula_chars, range_chars);
+      return FALSE;
     }
-  }
-  if (PL_is_variable(range)) {
-    ERROR("z3_function_declaration range should not be a variable");
-    return FALSE;
   }
   if (!PL_is_atom(range)) { // TODO: we could unify it with all the known types... :-)
     ERROR("z3_function_declaration range should be an atom\n");
@@ -716,7 +691,7 @@ foreign_t z3_function_declaration_foreign(const term_t formula, const term_t ran
   const Z3_context ctx = get_context();
   Z3_func_decl decl = mk_func_decl(ctx, name, arity, formula, range);
   if (decl == NULL) {
-    INFO("failing since mk_func_decl is NULL\n");
+    INFO("failing, mk_func_decl is NULL\n");
     return FALSE;
   }
   return PL_unify_pointer(result, decl);
@@ -1093,6 +1068,11 @@ foreign_t z3_simplify_term_foreign(term_t tin, term_t tout) {
   return z3_ast_to_term_internal(ast_out, tout);
 }
 
+
+#define PRED(name, arity, func, attr) \
+  PL_register_foreign_in_module("z3_foreign", name, arity, func, attr)
+
+
 install_t install()
 {
   fprintf(stderr, "Installing Z3 package\n");
@@ -1101,34 +1081,40 @@ install_t install()
   // name, arity, function, flags
 
   // get the global context:
-  PL_register_foreign("z3_context", 1, z3_context_foreign, 0);
+  PRED("z3_context", 1, z3_context_foreign, 0);
 
   // make a new solver:
-  PL_register_foreign("z3_mk_solver", 1, z3_mk_solver_foreign, 0);
+  PRED("z3_mk_solver", 1, z3_mk_solver_foreign, 0);
   
-  PL_register_foreign("z3_free_solver", 1, z3_free_solver_foreign, 0);
+  PRED("z3_free_solver", 1, z3_free_solver_foreign, 0);
   
-  PL_register_foreign("z3_symbol", 2, z3_symbol_foreign, 0); // for debugging
+  PRED("z3_symbol", 2, z3_symbol_foreign, 0); // for debugging
 
   // z3_assert(+Solver, +Formula):
-  PL_register_foreign("z3_assert", 2, z3_assert_foreign, 0);
+  PRED("z3_assert", 2, z3_assert_foreign, 0);
 
   // for debugging:
-  PL_register_foreign("z3_ast", 2, z3_ast_foreign, 0);
-  PL_register_foreign("z3_ast_string", 2, z3_ast_string_foreign, 0);
+  PRED("z3_ast", 2, z3_ast_foreign, 0);
+  PRED("z3_ast_string", 2, z3_ast_string_foreign, 0);
+
+  // z3_function_declaration(+term, +range, X):  
+  PRED("z3_function_declaration", 3, z3_function_declaration_foreign, 0);
+
+  // z3_solver_push(+solver, -num_scopes):
+  PRED("z3_solver_push", 2, z3_solver_push_foreign, 0);
+  // z3_solver_push(+solver, -num_scopes):
+  PRED("z3_solver_pop", 2, z3_solver_pop_foreign, 0);
+  // z3_solver_scopes(+Solver, -Scopes):
+  PRED("z3_solver_scopes", 2, z3_solver_scopes_foreign, 0);
   
-  PL_register_foreign("z3_function_declaration", 3, z3_function_declaration_foreign, 0);
-  PL_register_foreign("z3_solver_push", 1, z3_solver_push_foreign, 0);
-  PL_register_foreign("z3_solver_pop", 2, z3_solver_pop_foreign, 0);
-  PL_register_foreign("z3_solver_check", 2, z3_solver_check_foreign, 0);
-  PL_register_foreign("z3_solver_check_and_print", 2, z3_solver_check_and_print_foreign, 0);
-  PL_register_foreign("z3_mk_sort", 2, z3_mk_sort_foreign, 0);
-  PL_register_foreign("z3_get_num_scopes", 2, z3_solver_get_num_scopes_foreign, 0);
-  PL_register_foreign("z3_declarations_string", 1, z3_declarations_string_foreign, 0);
-  PL_register_foreign("z3_ast_to_term", 2, z3_ast_to_term_foreign, 0);
-  PL_register_foreign("z3_solver_get_model", 2, z3_solver_get_model_foreign, 0);
-  PL_register_foreign("z3_model_eval", 3, z3_model_eval_foreign, 0);
-  PL_register_foreign("z3_declaration_map_size", 1, z3_declaration_map_size_foreign, 0);
-  PL_register_foreign("z3_reset_declarations", 0, z3_reset_declarations_foreign, 0);
-  PL_register_foreign("z3_simplify_term", 2, z3_simplify_term_foreign, 0);
+  PRED("z3_solver_check", 2, z3_solver_check_foreign, 0);
+  PRED("z3_solver_check_and_print", 2, z3_solver_check_and_print_foreign, 0);
+  
+  PRED("z3_declarations_string", 1, z3_declarations_string_foreign, 0);
+  PRED("z3_ast_to_term", 2, z3_ast_to_term_foreign, 0);
+  PRED("z3_solver_get_model", 2, z3_solver_get_model_foreign, 0);
+  PRED("z3_model_eval", 3, z3_model_eval_foreign, 0);
+  PRED("z3_declaration_map_size", 1, z3_declaration_map_size_foreign, 0);
+  PRED("z3_reset_declarations", 0, z3_reset_declarations_foreign, 0);
+  PRED("z3_simplify_term", 2, z3_simplify_term_foreign, 0);
 }

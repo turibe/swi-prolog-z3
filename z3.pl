@@ -112,10 +112,10 @@ mypush(S) :- get_global_solver(S),
              resolve_solver_depth(S, X),
              New is X + 1,
              b_setval(solver_depth, New),
-             z3_solver_push(S).
+             z3_solver_push(S, _D).
 
 resolve_solver_depth(Solver, X) :- b_getval(solver_depth, X),
-                                  z3_get_num_scopes(Solver, N),
+                                  z3_solver_scopes(Solver, N),
                                   resolve_solver_depth(Solver, X, N).
 
 resolve_solver_depth(_S, X, Scopes) :- X >= Scopes,
@@ -174,10 +174,12 @@ z3_push(F, Status) :-
     get_map(Assoc),
     % assoc_to_list(Assoc, L),
     % declare_type_list(L), %% this declares the entire type list again
+    % TODO: use only the ones in F?
     declare_types(Assoc, Symbols),
     mypush(Solver),
     internal_assert_and_check(Solver, FG, Status).
 
+% z3_push fails if solver reports inconsistency
 z3_push(F) :- z3_push(F, l_true).
 
 % does not work:

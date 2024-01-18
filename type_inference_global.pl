@@ -1,4 +1,5 @@
-
+%%% -*- Mode: Prolog; Module: z3; -*-
+    
 :- module(type_inference_global, [
               reset_types/0,
               show_map/1,
@@ -15,7 +16,7 @@
 %%
 %% This module builds on type_inference.pl and keeps a global type map so we can incrementally typecheck in the REPL.
 %%
-%% This is ugly... Note also that we keep a mirror of this state in the C package for Z3 as well.
+%% Note also that we keep a mirror of this state in the C package for Z3 as well.
 %%
 
 :- use_module(type_inference).
@@ -30,8 +31,10 @@ reset_types :- print_message(information, format("reseting type inference map",[
     initialize_map(Empty).
 
 get_map(Map) :- b_getval(global_typemap, M),
-                (M == [] -> empty_assoc(Map) ; Map = M).
+		(M == [] -> empty_assoc(Map) ; Map = M).
+    
 set_map(Map) :- b_setval(global_typemap, Map).
+
 initialize_map(Map) :- nb_setval(global_typemap, Map).
 
 show_map(L) :- get_map(Map),
@@ -50,3 +53,5 @@ assert_type(Term, Type) :- ground(Term), !,
 assert_type(Term, _Type) :- type_error(ground, Term).
 
 get_type(T, Type) :- get_map(E), typecheck(T, Type, E, _).
+
+%%%%%%%%%%%% TODO: add tests %%%%%%%%%%%
