@@ -9,7 +9,7 @@
 	      z3_mk_solver/1,
 	      z3_free_solver/1,
 	      z3_assert/2,
-	      z3_function_declaration/3,
+	      z3_function_declaration/2,
 	      z3_declarations_string/1,
 	      z3_print_declarations/1,
 	      z3_context/1,
@@ -17,7 +17,7 @@
 	      z3_solver_check_and_print/2,
 	      z3_solver_scopes/2,
 	      z3_solver_push/2,
-	      z3_solver_pop/2,
+	      z3_solver_pop/3,
 	      op(750, xfy, and), % =, >, etc. are 700 ; Local to the module
               op(751, xfy, or),
               op(740, xfy, <>)
@@ -29,6 +29,9 @@
 z3_print_declarations(X) :-
     z3_declarations_string(X), print_message(information, format(X, [])).
 
+
+%% returned pointer is only useful for debugging:
+z3_function_declaration(A,B) :- z3_function_declaration(A,B,_C).
 
 :- begin_tests(foreign_tests).
 
@@ -81,8 +84,8 @@ test(symbols) :-
 
 test(model_eval) :-
     z3_mk_solver(S),
-    z3_function_declaration(a, int, _R1),
-    z3_function_declaration(b, int, _R2),
+    z3_function_declaration(a, int),
+    z3_function_declaration(b, int),
     z3_assert(S, a=3),
     z3_assert(S, b=2),    
     z3_solver_check(S, Status),
@@ -99,7 +102,7 @@ test(model_eval) :-
 test(assert_test) :-
     z3_reset_declarations,
     z3_mk_solver(S),
-    z3_function_declaration(a, bool, _R1),
+    z3_function_declaration(a, bool),
     z3_assert(S, (a and (b > 0)) and (1.321 < c)),
     z3_solver_check(S, Status),
     assertion(Status == l_true),
@@ -107,25 +110,25 @@ test(assert_test) :-
 
 test(bad_types, [fail] ) :-
     z3_mk_solver(S),
-    z3_function_declaration(a, real, _R1),
+    z3_function_declaration(a, real),
     z3_assert(S, a=3).
 
 test(no_check, [fail]) :-
     z3_mk_solver(S),
-    z3_function_declaration(a, int, _R1),
+    z3_function_declaration(a, int),
     z3_assert(S, a = 3),
     z3_solver_get_model(S, _Model).
 
 test(incompatible_types1, [fail]) :-
     z3_mk_solver(S),
-    z3_function_declaration(a, foo, _R1),
+    z3_function_declaration(a, foo),
     z3_assert(S, a = 3),
     z3_solver_get_model(S, _Model).
 
 test(incompatible_types2, [fail]) :-
     z3_mk_solver(S),
-    z3_function_declaration(a, foo, _R1),
-    z3_function_declaration(b, bar, _R2),
+    z3_function_declaration(a, foo),
+    z3_function_declaration(b, bar),
     z3_assert(S, a = b),
     z3_solver_get_model(S, _Model).
 
@@ -135,16 +138,22 @@ test(at_least_fail, [fail]) :-
 
 
 test(declare_fail1, [fail]) :-
-    z3_function_declaration(_X,int,_R).
+    z3_function_declaration(_X, int).
 
 test(declare_fail2, [fail]) :-
-    z3_function_declaration(a,_Y,_R).
+    z3_function_declaration(a, _Y).
 
-test(push) :-
+test(solver_push_pop) :-
     z3_mk_solver(S),
     z3_solver_push(S,1),
     z3_solver_push(S,2),
     z3_solver_scopes(S,2),
-    z3_solver_pop(S,1).
+    z3_solver_pop(S,1,X),
+    assertion(X == 1).
+
+test(solver_pop, [fail]) :-
+    z3_mk_solver(S),
+    z3_solver_push(S, 1),
+    z3_solver_pop(S, 10, _X).
 
 :- end_tests(foreign_tests).

@@ -126,7 +126,7 @@ resolve_solver_depth(S, X, Scopes) :- X < Scopes,
                                       Numpops is Scopes - X,
                                       popn(S, Numpops).
 
-popn(S, Numpops) :- z3_solver_pop(S, Numpops) -> true ; report("error popping Z3 solver\n").
+popn(S, Numpops) :- z3_solver_pop(S, Numpops, _) -> true ; report("error popping Z3 solver\n").
 
 
 % should not be used directly. Types in Formula could clash with previously defined types,
@@ -238,12 +238,12 @@ z3_declare(F, T) :- var(F), !,
 z3_declare(F, int) :- integer(F), !, true.
 z3_declare(F, real) :- float(F), !, true.
 z3_declare(F, T) :- atom(T), \+ var(T), !, 
-                    z3_function_declaration(F, T, _R).
-z3_declare(F, T) :- var(T), !, T = uninterpreted, z3_function_declaration(F, T, _R).
+                    z3_function_declaration(F, T).
+z3_declare(F, T) :- var(T), !, T = uninterpreted, z3_function_declaration(F, T).
 z3_declare(F, lambda(Arglist, Range)) :- (var(F) -> type_error(nonvar, F) ; true), !,
                                          Fapp =.. [F|Arglist],
                                          (var(Range) -> Range = uninterpreted ; true), !,
-                                         z3_function_declaration(Fapp, Range, _R).
+                                         z3_function_declaration(Fapp, Range).
 
 typecheck_and_declare(Formulas, Assoc) :-
     %% BUG: these don't work, they do not unify across the assoc.

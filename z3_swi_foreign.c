@@ -470,6 +470,9 @@ foreign_t z3_ast_string_foreign(term_t formula, term_t result) {
   return PL_unify_string_chars(result, rstring);
 }
 
+/*
+  Does one push on the solver; output is the new number of scopes for the solver.
+*/
 
 foreign_t z3_solver_push_foreign(const term_t solver_term, term_t output_term) {
   Z3_solver solver;
@@ -484,14 +487,16 @@ foreign_t z3_solver_push_foreign(const term_t solver_term, term_t output_term) {
   return PL_unify_uint64(output_term, scopes);
 }
 
-foreign_t z3_solver_pop_foreign(const term_t solver_term, const term_t num_backtrack) {
+/* Pops the solver npops times. Output is the new number of scopes for the solver. */
+   
+foreign_t z3_solver_pop_foreign(const term_t solver_term, const term_t npops, term_t output_term) {
   Z3_solver solver;
   int rval = PL_get_pointer(solver_term, (void **) &solver);
   if (!rval) {
     return rval;
   }
   int nbacktrack;
-  rval = PL_get_integer(num_backtrack, &nbacktrack);
+  rval = PL_get_integer_ex(npops, &nbacktrack);
   assert(rval);
   const Z3_context ctx = get_context();
   const int scopes = Z3_solver_get_num_scopes(ctx, solver);
@@ -500,7 +505,9 @@ foreign_t z3_solver_pop_foreign(const term_t solver_term, const term_t num_backt
     return FALSE;
   }
   Z3_solver_pop(ctx, solver, nbacktrack);
-  return TRUE;
+  const int new_scopes = Z3_solver_get_num_scopes(ctx, solver);
+  assert(new_scopes == scopes - nbacktrack);
+  return PL_unify_uint64(output_term, new_scopes);
 }
 
 /*
@@ -555,7 +562,7 @@ foreign_t z3_assert_foreign(term_t solver_term, term_t formula) {
       ERROR("PL_get_chars failed\n");
       return res;
     }
-    ERROR("z3_assert/3: cannot assert non-boolean formula %s\n", formula_string); // starts the tracer
+    ERROR("z3_assert/3: cannot assert non-boolean formula %s\n", formula_string);
     // look into PL_raise_exception
     return FALSE;
   }
@@ -1102,8 +1109,10 @@ install_t install()
 
   // z3_solver_push(+solver, -num_scopes):
   PRED("z3_solver_push", 2, z3_solver_push_foreign, 0);
-  // z3_solver_push(+solver, -num_scopes):
-  PRED("z3_solver_pop", 2, z3_solver_pop_foreign, 0);
+  
+  // z3_solver_pop(+solver, +numpops, -num_scopes):
+  PRED("z3_solver_pop", 3, z3_solver_pop_foreign, 0);
+  
   // z3_solver_scopes(+Solver, -Scopes):
   PRED("z3_solver_scopes", 2, z3_solver_scopes_foreign, 0);
   
