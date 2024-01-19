@@ -6,14 +6,23 @@
               typecheck_formula_list/3
           ]).
 
-:- use_module(library(assoc)).
-%% Note that assoc lists require ground keys.
+:- license(mit).
+:- expects_dialect(swi).
 
+:- use_module(library(assoc)).
+
+
+%% Note that assoc lists require ground keys.
 %% When typing a var, we add an attribute to it, and then type the attribute.
+
+:- dynamic signature/3.
+
+% :- initialization(...) ?
 
 :- retractall(signature(_,_,_)).
 
-builtin(X) :- signature(X, _, _).
+%% F has been defined:
+declared(F) :- signature(F, _, _).
 
 declare(Functor, ArgTypes, Result) :-
     must_be(atomic, Functor),
@@ -107,7 +116,7 @@ atomic_mappable(X, X) :- atom(X), !, true. % we want to exclude int, string, etc
 
 compound_mappable(X) :- compound(X),
                         functor(X, F, _N),
-                        \+ builtin(F).
+                        \+ declared(F).
 
 check_length(all(_), _) :- !, true.
 check_length(L, Arity) :- length(L, Arity).
@@ -212,8 +221,9 @@ test(divtest, [nondet]) :-
 %    catch(typecheck(not(X,Y), bool, _Map), error(E, _), true),
 %    E =@= syntax_error(arity_error(not(X,Y), 2)) .
 
-test(atleaset) :-
-    typecheck(atleast(a:bool,b:bool,c:bool,2), bool, _Map),
+test(atleast) :-
+    typecheck(atleast(a:bool,b:bool,c:bool,2), bool, Map),
+    get_assoc(a, Map, bool),
     true.
 
 :- end_tests(type_inference_tests).

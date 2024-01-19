@@ -362,17 +362,20 @@ test(nonsat) :-
 % z3_push_and_print(a:real=div(x, y), R), z3_push_and_print(a = div(b, 4.0), R1).
 
 test(atmost0) :-
+    z3_reset_declarations,
     z3_push(atmost(a:bool, b:bool, c:bool, 0), R), z3_push(a, R1),
     R = l_true,
     R1 = l_false.
 
 test(atmost1) :-
+    z3_reset_declarations,
     z3_push(atmost(a:bool, b:bool, c:bool, 1), R), z3_push(a, R1), z3_push(b, R2),
     R = l_true,
     R1 = l_true,
     R2 = l_false.
 
 test(atleast) :-
+    z3_reset_declarations,
     z3_push(atleast(a:bool, b:bool, c:bool, 2), R), z3_push(a, R1), z3_push(not(b), R2), z3_push(not(c), R3),
     R = l_true,
     R1 = l_true,
@@ -380,8 +383,10 @@ test(atleast) :-
     R3 = l_false.
 
 test(consistent) :-
+    z3_reset_declarations,
     z3_push(and(a:int>b,b>c,c>d)), \+ z3_is_consistent(d>a).
 test(implied) :-
+    z3_reset_declarations,
     z3_push(and(a:int>b,b>c,c>d)), z3_is_implied(a>d).
 
 %% todo: undef, as in:

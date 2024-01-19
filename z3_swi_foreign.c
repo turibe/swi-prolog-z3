@@ -156,20 +156,18 @@ Z3_func_decl get_function_declaration(Z3_context ctx, const char *name_string, c
   int map_size = Z3_ast_map_size(ctx, global_declaration_map);
   DEBUG("current map size is %d\n", map_size);
   Z3_ast key = Z3_mk_int_var(ctx, name_string);
-  // Z3_inc_ref(ctx, key); // no-op?
   DEBUG("made key %s\n", Z3_ast_to_string(ctx, key));
   if (!Z3_ast_map_contains(ctx, global_declaration_map, key)) {
     DEBUG("key %s not in map\n", name_string);
     return NULL;
   }
-  DEBUG("key is in map\n");
+  DEBUG("key %s is in map\n", name_string);
   Z3_ast value = Z3_ast_map_find(ctx, global_declaration_map, key);
   DEBUG("called map find\n");
   Z3_func_decl declaration = (Z3_func_decl) value;
   if (declaration != NULL) {
-    DEBUG("making string\n");
-    Z3_string rstring = Z3_ast_to_string(ctx, Z3_func_decl_to_ast(ctx, declaration));
-    DEBUG("Found declaration for %s: %s\n", name_string, rstring);
+    // Z3_string rstring = Z3_ast_to_string(ctx, Z3_func_decl_to_ast(ctx, declaration));
+    // DEBUG("Found declaration for %s: %s\n", name_string, rstring);
   }
   else {
     ERROR("Did not find declaration for %s\n", name_string);
@@ -180,7 +178,7 @@ Z3_func_decl get_function_declaration(Z3_context ctx, const char *name_string, c
 
 
 void register_function_declaration_string(Z3_context ctx, const char *name_string, const size_t arity, Z3_func_decl declaration) {
-  Z3_ast key = Z3_mk_int_var(ctx, name_string); // why mk_int_var?
+  Z3_ast key = Z3_mk_int_var(ctx, name_string);
   Z3_string rstring = Z3_ast_to_string(ctx, Z3_func_decl_to_ast(ctx, declaration));
   DEBUG("Installing declaration for %s: %s/%lu\n", name_string, rstring, arity);
   Z3_ast_map_insert(ctx, global_declaration_map, key, (Z3_ast) declaration); // use Z3_fun_decl_to_ast?
@@ -189,7 +187,7 @@ void register_function_declaration_string(Z3_context ctx, const char *name_strin
 }
 
 /****
-     for debugging, get the declarations string into result:
+     for debugging; gets the declarations string into result:
 ***/
 foreign_t z3_declarations_string_foreign(term_t result) {
   Z3_context ctx = get_context();
@@ -355,7 +353,8 @@ foreign_t z3_symbol_foreign(term_t i, term_t symbol) {
 
   Z3_symbol s = mk_symbol(ctx, i);
   if (s == NULL) {
-    return PL_warning("z3_symbol/3: should specify an int, atom, or string");
+    // return PL_warning("z3_symbol/2: should specify an int, atom, or string");
+    return FALSE;
   }
   rval = PL_unify_pointer(symbol, s);
   return rval;
@@ -384,6 +383,8 @@ foreign_t z3_ast_to_term_foreign(term_t ast_term, term_t term) {
   return z3_ast_to_term_internal(ast, term);
 }
 
+
+// get a Prolog list with the assertions added to a solver:
 
 foreign_t z3_solver_assertions_foreign(term_t solver_term, term_t list) {
   Z3_solver solver;
@@ -454,7 +455,7 @@ foreign_t z3_ast_to_term_internal(Z3_ast ast, term_t term) {
     }
     int64_t num, den;
     if (Z3_get_numeral_rational_int64(ctx, ast, &num, &den)) {
-      functor_t div = PL_new_functor(PL_new_atom("div"), 2); // how to construct a rational?
+      functor_t div = PL_new_functor(PL_new_atom("div"), 2); // how to construct a Prolog rational?
       term_t t = PL_new_term_ref();
       term_t t1 = PL_new_term_refs(2);
       term_t t2 = t1+1;
@@ -471,12 +472,14 @@ foreign_t z3_ast_to_term_internal(Z3_ast ast, term_t term) {
     }
   }
   DEBUG("non-numeral case\n");
-  if (Z3_is_string(ctx, ast)) { // never happens?
+  if (Z3_is_string(ctx, ast)) {
     Z3_string s = Z3_get_string(ctx, ast);
     DEBUG("got string %s", s);
     return PL_unify_string_chars(term, s);
   }
-  // use Z3_get_bool_value(ctx, ast); ???
+
+  // TODO: handle booleans,
+  // use Z3_get_bool_value(ctx, ast);
 
   if (Z3_get_ast_kind(ctx, ast) == Z3_APP_AST) {
     Z3_app app = Z3_to_app(ctx, ast);
@@ -499,13 +502,7 @@ foreign_t z3_ast_to_term_internal(Z3_ast ast, term_t term) {
     }
     return PL_unify(term, t);
   }
-  /**
-  // for a symbol:
-  if (Z3_get_symbol_kind(ctx, ast) == Z3_STRING_SYMBOL) {
-    Z3_string s = Z3_get_symbol_string(ctx, ast);
-    return PL_unify_atom_chars(term, s);
-  }
-  ***/
+
   INFO("z3_ast_to_term failed\n");
   return FALSE;
 }
@@ -520,6 +517,10 @@ foreign_t term_to_z3_ast_foreign(term_t formula, term_t result) {
   return PL_unify_pointer(result, z3_ast);
 }
 
+
+/*
+  For debugging: convert Z3 ast to a Prolog string:
+*/
 
 foreign_t z3_ast_string_foreign(term_t formula, term_t result) {
   Z3_context ctx = get_context();
@@ -711,9 +712,10 @@ Z3_func_decl mk_func_decl(Z3_context ctx, const atom_t name, const size_t arity,
      ERROR("Range was %s\n", fchars);
      return FALSE;
    }
-   // FIXME: this is breaking the tests:
-   // Z3_func_decl result = get_function_declaration(ctx, name_string, arity);
-   Z3_func_decl result = NULL;
+   // FIXME: this breaks the tests:
+   Z3_func_decl result = get_function_declaration(ctx, name_string, arity);
+   // the question is whether we overwrite existing declarations or not.
+   // Z3_func_decl result = NULL;
    if (result == NULL) {
      result =  Z3_mk_func_decl(ctx, symbol, arity, arity == 0 ?  0 : domain, range_sort);
      if (result != NULL) {
@@ -1173,7 +1175,7 @@ install_t install()
   
   PRED("z3_free_solver", 1, z3_free_solver_foreign, 0);
   
-  PRED("z3_symbol", 2, z3_symbol_foreign, 0); // for debugging
+
 
   // z3_assert(+Solver, +Formula):
   PRED("z3_assert", 2, z3_assert_foreign, 0);
@@ -1182,6 +1184,7 @@ install_t install()
   PRED("term_to_z3_ast", 2, term_to_z3_ast_foreign, 0);
   PRED("z3_ast_string", 2, z3_ast_string_foreign, 0);
   PRED("z3_ast_to_term", 2, z3_ast_to_term_foreign, 0);
+  PRED("z3_symbol", 2, z3_symbol_foreign, 0); // for debugging
   
   // z3_function_declaration(+term, +range, X):  
   PRED("z3_function_declaration", 3, z3_function_declaration_foreign, 0);
