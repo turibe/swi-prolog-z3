@@ -34,8 +34,8 @@
 
 // TODO: get rid of global vars, make everything an argument
 
-#define DEBUG(...) do {fprintf(stderr, __VA_ARGS__) ; fflush(stderr); } while (false)
-// #define DEBUG(...) {}
+// #define DEBUG(...) do {fprintf(stderr, __VA_ARGS__) ; fflush(stderr); } while (false)
+#define DEBUG(...) {}
 #define INPROGRESS(...) do {fprintf(stderr, __VA_ARGS__); fflush(stderr);} while (false)
 #define ERROR(...) do {fprintf(stderr, __VA_ARGS__); fflush(stderr);} while (false)
 #define INFO(...) do {fprintf(stderr, __VA_ARGS__); fflush(stderr);} while (false)
@@ -74,16 +74,16 @@ Z3_lbool solver_check_and_print(Z3_context ctx, Z3_solver s)
         printf("unknown\n");
         m = Z3_solver_get_model(ctx, s);
         if (m) {
-	  Z3_model_inc_ref(ctx, m);
-	  printf("potential model:\n%s\n", Z3_model_to_string(ctx, m));
-	}
+          Z3_model_inc_ref(ctx, m);
+          printf("potential model:\n%s\n", Z3_model_to_string(ctx, m));
+        }
         break;
     case Z3_L_TRUE:
         m = Z3_solver_get_model(ctx, s);
         if (m) {
-	  Z3_model_inc_ref(ctx, m);
-	  printf("sat\n%s\n", Z3_model_to_string(ctx, m));
-	}
+          Z3_model_inc_ref(ctx, m);
+          printf("sat\n%s\n", Z3_model_to_string(ctx, m));
+        }
         break;
     }
     if (m) {
@@ -265,7 +265,9 @@ foreign_t z3_solver_get_model_foreign(term_t solver_term, term_t model_term) {
 }
 
 // TODO: model completion could be a flag
-// TODO: outside, in PL, handle z3_push(X=14), z3_push(Y=X-5), z3_model_eval(X*Y,R) by looking at attributed variables.
+// In Prolog, we handle z3_push(X=14), z3_push(Y=X-5) by using attributed variables.
+// TODO: handle z3_push(X=14), z3_push(Y=X-5), z3_model_eval(X*Y,R) by looking at attributed variables.
+// need a higher-level model_eval that replaces vars by their attributes.
 foreign_t z3_model_eval_foreign(term_t model_term, term_t term, term_t result_term) {
   Z3_model model;
   int rval = PL_get_pointer_ex(model_term, (void **) &model);
@@ -746,7 +748,6 @@ foreign_t z3_function_declaration_foreign(const term_t formula, const term_t ran
       char *range_chars = NULL;
       res = PL_get_chars(formula, &formula_chars, CVT_WRITE);
       res = PL_get_chars(range, &range_chars, CVT_WRITE);
-      assert(res);
       ERROR("Bad declaration, term %s and range %s\n", formula_chars, range_chars);
       return FALSE;
     }
@@ -807,11 +808,11 @@ Z3_sort mk_sort(Z3_context ctx, term_t expression) {
 
     term_t a = PL_new_term_ref();
     Z3_sort *subterms = calloc(arity, sizeof(Z3_sort));
-    for(int n=1; n<=arity; n++) {
+    for (int n=1; n<=arity; n++) {
       res = PL_get_arg(n, expression, a);
       INFO("mk_sort: Argument %d, res is %d\n", n, res);
       if (!res) {
-	return FALSE;
+        return FALSE;
       }
       subterms[n-1] = mk_sort(ctx, a); // datatypes use constructors, not subsorts...
       if (subterms[n-1] == NULL) {
@@ -849,8 +850,10 @@ Z3_sort mk_sort(Z3_context ctx, term_t expression) {
 }
 
 
-
-// version that includes the sort/type as another argument?
+/*
+  Converts the Prolog term "formula" to a Z3 AST.
+  Returns NULL if it fails:
+*/
 
 Z3_ast term_to_ast(const Z3_context ctx, const term_t formula) {
   long lval;
@@ -858,6 +861,9 @@ Z3_ast term_to_ast(const Z3_context ctx, const term_t formula) {
   switch (PL_term_type(formula)) {
 
   case PL_VARIABLE:
+    // TODO: it could be nice to look at the attributes, if any, and use them instead of the variable,
+    // but the foreign interface does not offer methods for doing so.
+    return NULL;
   case PL_ATOM: {
     int bval;
     if (PL_get_bool(formula, &bval)) {
@@ -867,25 +873,14 @@ Z3_ast term_to_ast(const Z3_context ctx, const term_t formula) {
       }
       return Z3_mk_false(ctx);
     }
-    // DEBUG("not a boolean constant\n");
-    // assert(PL_is_atom(formula)); // can also be a var now
+
     char *chars;
-    int res;
-    if (PL_is_variable(formula)) {
-        res = PL_get_chars(formula, &chars, CVT_VARIABLE | CVT_WRITE);
-        if (!res) {
-          ERROR("PL_get_chars failed for variable");
-        }
-        ERROR("Got prolog variable, var is %s\n", chars); // TODO: somehow keep the variable as a variable
-        return NULL;
+    int res = PL_get_atom_chars(formula, &chars);
+    if (!res) {
+      return NULL;
     }
-    else {
-      int res = PL_get_atom_chars(formula, &chars);
-      if (!res) {
-	return NULL;
-      }
-      DEBUG("Got atom %s\n", chars);
-    }
+    DEBUG("Got atom %s\n", chars);
+    
     // chars is set
     const Z3_func_decl declaration = get_function_declaration(ctx, chars, 0);
     if (declaration == NULL) {
@@ -895,13 +890,14 @@ Z3_ast term_to_ast(const Z3_context ctx, const term_t formula) {
       const Z3_string decstring  = Z3_ast_to_string(ctx, Z3_func_decl_to_ast(ctx, declaration));
       DEBUG("Got declaration %s\n", decstring);
     }
-    if (declaration == NULL) {
+    if (declaration == NULL) { // we could require everything to be declared...
       DEBUG("term_to_ast got atom %s, default int\n", chars);
       result = Z3_mk_int_var(ctx, chars);
     }
     else {
       result = Z3_mk_app(ctx, declaration, 0, 0); // ???
     }
+    return result;
     break;
   }
   case PL_STRING: {
@@ -938,16 +934,15 @@ Z3_ast term_to_ast(const Z3_context ctx, const term_t formula) {
     Z3_sort sort = Z3_mk_real_sort(ctx);
     char *formula_string;
     if (PL_get_chars(formula, &formula_string, CVT_FLOAT) ) {
-      Z3_ast ret = Z3_mk_numeral(ctx, formula_string, sort);
-      if (ret == NULL) {
+      result = Z3_mk_numeral(ctx, formula_string, sort);
+      if (result == NULL) {
         ERROR("Z3_mk_numeral failed for %s\n", formula_string);
       }
-      else {
-        return ret;
-      }
+      return result;
     }
     else {
-      ERROR("PL_get_chars failed for float\n");
+      ERROR("PL_get_chars failed for float %s\n", formula_string);
+      return NULL;
     }
     break;
   }
@@ -972,10 +967,16 @@ Z3_ast term_to_ast(const Z3_context ctx, const term_t formula) {
         return NULL;
       }
       res = PL_get_arg(1, formula, a);
-      assert(res);
+      if (!res) {
+        ERROR("PL_get_arg 1 failed\n");
+        return NULL;
+      }
       Z3_symbol symbol_name = mk_symbol(ctx, a);
       res = PL_get_arg(2, formula, a);
-      assert(res);
+      if (!res) {
+        ERROR("PL_get_arg 2 failed\n");
+        return NULL;
+      }
       Z3_sort sort = mk_sort(ctx, a);
       if (sort == NULL) {
         INFO("mk_sort for symbol is null\n");
@@ -1044,7 +1045,7 @@ Z3_ast term_to_ast(const Z3_context ctx, const term_t formula) {
     else if (strcmp(name_string, "=") == 0 || strcmp(name_string, "==") == 0 || strcmp(name_string, "equals") == 0 ) {
       DEBUG("making equals\n");
       assert(arity == 2);
-      // TODO: check that types are compatible... else Z3 quits/crashes
+      // Check that types are compatible; otherwise Z3 quits/crashes
       Z3_sort s1 = Z3_get_sort(ctx, subterms[0]);
       Z3_sort s2 = Z3_get_sort(ctx, subterms[1]);
       if (s1 != s2) {
@@ -1120,11 +1121,12 @@ Z3_ast term_to_ast(const Z3_context ctx, const term_t formula) {
   case PL_DICT:
   default: {
     char *formula_string;
+    int type = PL_term_type(formula);
     if (! PL_get_chars(formula, &formula_string, CVT_ALL | CVT_VARIABLE | CVT_EXCEPTION | CVT_WRITE) ) {
-      ERROR("PL_get_chars failed in mk_term for unhandled Prolog term");
+      ERROR("PL_get_chars failed in mk_term for unhandled Prolog term of type %d", type);
     }
     else {
-      fprintf(stderr, "Can't handle formula %s, type is %d\n", formula_string, PL_term_type(formula));
+      ERROR("Can't handle formula %s, type is %d\n", formula_string, type);
     }
     break;
     // return Z3_mk_false(ctx);

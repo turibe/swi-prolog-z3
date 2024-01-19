@@ -20,8 +20,10 @@
               z3_implies/1,
               z3_entails/1,
               z3_is_consistent/1,
-              get_global_solver/1,
-              z3_get_model/1,
+              % get_global_solver/1,  % returns pointer, not very useful
+              % z3_get_model/1,
+	      solver_scopes/1,
+	      
               z3_model_eval/2,
 	      z3_model_eval/3,
               z3_check_and_print/1,
@@ -109,24 +111,32 @@ assert_depth(N) :- b_getval(solver_depth, N).
 %% and it should always be called before an assert, if we want it to be retractable.
 %% So, hide mypush, expose asserts.
 mypush(S) :- get_global_solver(S),
-             resolve_solver_depth(S, X),
+             resolve_solver_depth(X),
              New is X + 1,
              b_setval(solver_depth, New),
              z3_solver_push(S, _D).
 
-resolve_solver_depth(Solver, X) :- b_getval(solver_depth, X),
-                                  z3_solver_scopes(Solver, N),
-                                  resolve_solver_depth(Solver, X, N).
+%% BUG: after z3_push(a:int=14), z3_push(b:int=a-5).
+%%      then solver_scopes(X) gives 2.
+%%      resolve_solver_depth would fix it.
+%%      it's executed at the next push, so perhaps it's not a problem.
 
-resolve_solver_depth(_S, X, Scopes) :- X >= Scopes,
+solver_scopes(N) :- get_global_solver(S), z3_solver_scopes(S,N).
+
+resolve_solver_depth(X) :- b_getval(solver_depth, X),
+                            solver_scopes(N),
+                            resolve_solver_depth(X, N).
+
+resolve_solver_depth(X, Scopes) :- X >= Scopes,
                                        % report(status("scopes OK", Scopes, X)),
                                        !.
-resolve_solver_depth(S, X, Scopes) :- X < Scopes,
+resolve_solver_depth(X, Scopes) :- X < Scopes,
                                       % report(status("need to pop", Scopes, X)),
                                       Numpops is Scopes - X,
-                                      popn(S, Numpops).
+                                      popn(Numpops).
 
-popn(S, Numpops) :- z3_solver_pop(S, Numpops, _) -> true ; report("error popping Z3 solver\n").
+popn(Numpops) :- get_global_solver(S),
+		 z3_solver_pop(S, Numpops, _) -> true ; report("error popping Z3 solver\n").
 
 
 % should not be used directly. Types in Formula could clash with previously defined types,
@@ -211,9 +221,18 @@ z3_get_model(M) :- get_global_solver(S), z3_solver_get_model(S,M).
 %% TODO/FIXME: replace variables by their attributes:
 %% Example: z3_push(X=14), z3_push(Y=X-5), Y=9, get_attr(X,z3,A), z3_model_eval(A+1,R). (works)
 %% vs. z3_push(X=14), z3_push(Y=X-5), Y=9, get_attr(X,z3,A), z3_model_eval(X+1,R). (doesn't work)
-z3_model_eval(Expression, Result) :- z3_get_model(M), z3_model_eval(M, Expression, Result).
 
+%% TODO: replace variables by their attributes!
+z3_model_eval(Expression, Result) :- z3_get_model(M),
+				     replace_var_attributes(Expression, E1),
+				     z3_swi_foreign:z3_model_eval(M, E1, Result).
 
+%% A little inefficient for big terms, would be better to do in the C code eval:
+replace_var_attributes(X, A) :- var(X), get_attr(X, z3, A), !, true.
+replace_var_attributes(X, X) :- \+ compound(X), !, true.
+replace_var_attributes(X, R) :- compound(X),
+				mapargs(replace_var_attributes, X, R).
+				    
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% lower level (used to be z3_wrapper.pl) %%%%%%
 
@@ -269,13 +288,11 @@ z3_push_and_print(F,R) :- z3_push(F,R), z3_print_status(R).
 z3_push_and_print(F) :- z3_push_and_print(F, _R).
 
 z3_is_consistent(F) :- z3_push(F, l_true) -> (
-                                                     get_global_solver(S),
-                                                     popn(S,1),
-                                                     true
-                                                 ); (
-                        get_global_solver(S),
-                        popn(S,1),
-                        false
+                                                  popn(1),
+                                                  true
+                                              ); (
+                           popn(1),
+                           false
                        ).
 z3_is_implied(F) :- \+ z3_is_consistent(not(F)).
 
@@ -382,6 +399,10 @@ test(fail, [fail] ) :-
     z3_push(X:int>Y, _R),
     X = 10,
     Y = 14.
+
+test(attributes) :-
+    z3_push(X=14), z3_push(Y=X-5), z3_model_eval(X * Y, R),
+    assertion(R == 126).
 
 
 :- end_tests(attribute_tests).

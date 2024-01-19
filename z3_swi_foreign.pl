@@ -104,6 +104,8 @@ test(assert_test) :-
     z3_reset_declarations,
     z3_mk_solver(S),
     z3_function_declaration(a, bool),
+    z3_function_declaration(b, int),
+    z3_function_declaration(c, int),
     z3_assert(S, (a and (b > 0)) and (1.321 < c)),
     z3_solver_check(S, Status),
     assertion(Status == l_true),
@@ -134,6 +136,7 @@ test(incompatible_types2, [fail]) :-
     z3_solver_get_model(S, _Model).
 
 test(at_least_fail, [fail]) :-
+    z3_reset_declarations,
     z3_mk_solver(S),
     z3_assert(S, atleast(a:bool, b:bool, c:bool)).
 
@@ -162,10 +165,16 @@ test(solver_pop, [fail]) :-
 %% this does not work because need a:bool on eval:
 % z3_mk_solver(S), z3_assert(S, a:bool),  z3_solver_check(S,R), z3_solver_get_model(S,M), z3_model_eval(M, not(a), V).
 
-% FIXME: whether this test succeeds or not depends on previous defs for a, b, c, if we don't specify the types.
+% The success of this test depends on previous defs for a, b, c, if we don't specify the types.
 
 test(get_asssertions) :-
-    z3_mk_solver(S), z3_assert(S, and(c:bool,x:bool)), z3_assert(S, a:int>3), z3_assert(S, b:int>1), z3_solver_check(S,R),  z3_solver_assertions(S, List),
+    z3_reset_declarations,
+    z3_mk_solver(S), z3_assert(S, and(c:bool,x:bool)), z3_assert(S, a:int>3), z3_assert(S, b:int>1),
+    z3_solver_check(S,R),  z3_solver_assertions(S, List),
+    assertion(R == l_true),
     assertion(List =@= [b>1, a>3, c and x]).
+
+test(real_assertion) :-
+    z3_mk_solver(S), z3_assert(S, x:real = 1.3).
 
 :- end_tests(foreign_tests).
