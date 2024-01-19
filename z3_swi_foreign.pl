@@ -2,7 +2,7 @@
 
 %% this is the lowest-level wrapper
 
-:- module(z3_foreign, [
+:- module(z3_swi_foreign, [
 	      z3_reset_declarations/0,
 	      z3_solver_check/2,
 	      z3_solver_get_model/2,
@@ -14,10 +14,11 @@
 	      z3_print_declarations/1,
 	      z3_context/1,
 	      z3_model_eval/3,
-	      z3_solver_check_and_print/2,
+	      z3_solver_check_and_print/2, % calls Z2_model_to_string
 	      z3_solver_scopes/2,
 	      z3_solver_push/2,
 	      z3_solver_pop/3,
+	      z3_solver_assertions/2,
 	      op(750, xfy, and), % =, >, etc. are 700 ; Local to the module
               op(751, xfy, or),
               op(740, xfy, <>)
@@ -30,7 +31,7 @@ z3_print_declarations(X) :-
     z3_declarations_string(X), print_message(information, format(X, [])).
 
 
-%% returned pointer is only useful for debugging:
+%% returned pointer is only useful for debugging, so we hide it here:
 z3_function_declaration(A,B) :- z3_function_declaration(A,B,_C).
 
 :- begin_tests(foreign_tests).
@@ -155,5 +156,16 @@ test(solver_pop, [fail]) :-
     z3_mk_solver(S),
     z3_solver_push(S, 1),
     z3_solver_pop(S, 10, _X).
+
+%% TODO: this does not work because a gets default int:
+% z3_mk_solver(S), z3_assert(S, a),  z3_solver_check(S,R), z3_solver_get_model(S,M), z3_model_eval(M, not(a), V).
+%% this does not work because need a:bool on eval:
+% z3_mk_solver(S), z3_assert(S, a:bool),  z3_solver_check(S,R), z3_solver_get_model(S,M), z3_model_eval(M, not(a), V).
+
+% FIXME: whether this test succeeds or not depends on previous defs for a, b, c, if we don't specify the types.
+
+test(get_asssertions) :-
+    z3_mk_solver(S), z3_assert(S, and(c:bool,x:bool)), z3_assert(S, a:int>3), z3_assert(S, b:int>1), z3_solver_check(S,R),  z3_solver_assertions(S, List),
+    assertion(List =@= [b>1, a>3, c and x]).
 
 :- end_tests(foreign_tests).
