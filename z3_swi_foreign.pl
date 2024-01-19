@@ -177,4 +177,22 @@ test(get_asssertions) :-
 test(real_assertion) :-
     z3_mk_solver(S), z3_assert(S, x:real = 1.3).
 
+test(roundtrips1) :-
+    term_to_z3_ast("i am a string", AS), z3_ast_to_term(AS, PS),
+    assertion(PS == "i am a string"),
+    term_to_z3_ast(123, A1), z3_ast_to_term(A1, T1),
+    assertion(T1 == 123),
+    term_to_z3_ast(1.4, A2), z3_ast_to_term(A2, T2),
+    assertion(T2 == 7 div 5).
+
+
+test(roundtrips2) :-
+    z3_reset_declarations,
+    z3_function_declaration(f(int,int,bool),int),
+    z3_function_declaration(g(bool),bool),
+    z3_function_declaration(c,bool),
+    Term = f(a,b,g(c)), % a and b are int by default.
+    term_to_z3_ast(Term, X), z3_ast_to_term(X,Y),
+    assertion(Y == Term).    
+
 :- end_tests(foreign_tests).

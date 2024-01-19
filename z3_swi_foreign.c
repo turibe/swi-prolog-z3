@@ -22,7 +22,9 @@
 
      For now, we go with one global, implicit context object, and one global declaration map;
      everything else, including solvers, is created and destroyed at the Prolog level.
-
+     
+     A more functional approach would get rid of the global vars, and pass them as arguments.
+     
 *****/
 
 /***** Guide to types:
@@ -32,7 +34,7 @@
 
 *****/
 
-// TODO: get rid of global vars, make everything an argument
+
 
 // #define DEBUG(...) do {fprintf(stderr, __VA_ARGS__) ; fflush(stderr); } while (false)
 #define DEBUG(...) {}
@@ -40,7 +42,7 @@
 #define ERROR(...) do {fprintf(stderr, __VA_ARGS__); fflush(stderr);} while (false)
 #define INFO(...) do {fprintf(stderr, __VA_ARGS__); fflush(stderr);} while (false)
 
-// TODO: for prolog errors, use PL_raise_exception.
+// To raise Prolog errors, we could use PL_raise_exception, but the _ex functions are recommended instead.
 
 // *************************************************************************
 // from Z3's test_capi.c:
@@ -106,7 +108,7 @@ Z3_ast_map global_declaration_map = NULL;
 
 Z3_ast term_to_ast(Z3_context ctx, term_t formula);
 foreign_t z3_ast_to_term_foreign(term_t ast_term, term_t formula);
-foreign_t z3_ast_to_term_internal(Z3_ast, term_t formula);
+foreign_t z3_ast_to_term_internal(Z3_ast ast, term_t formula);
 Z3_sort mk_sort(Z3_context ctx, term_t formula);
 Z3_symbol mk_symbol(Z3_context ctx, term_t formula);
 
@@ -374,13 +376,11 @@ int z3_bool_to_atom(const Z3_lbool status, term_t plterm) {
   }
 }
 
-// use Z3_get_ast_kind?
+/* For debugging only, easy to crash the system :-) */
+
 foreign_t z3_ast_to_term_foreign(term_t ast_term, term_t term) {
   Z3_ast ast;
-  if (!PL_get_pointer_ex(ast_term, (void**) &ast)) {
-    INFO("z3_ast_to_term_foreign unify pointer failed.\n");
-    return FALSE;
-  }
+  PL_get_pointer_ex(ast_term, (void**) &ast);
   return z3_ast_to_term_internal(ast, term);
 }
 
@@ -441,7 +441,7 @@ foreign_t debug_list_foreign(term_t atom, term_t result)
 
 
 /*
-  Converts a Z3 ast to a prolog term
+  Converts a Z3 ast to a Prolog term:
 */
 
 foreign_t z3_ast_to_term_internal(Z3_ast ast, term_t term) {
@@ -454,11 +454,15 @@ foreign_t z3_ast_to_term_internal(Z3_ast ast, term_t term) {
     }
     int64_t num, den;
     if (Z3_get_numeral_rational_int64(ctx, ast, &num, &den)) {
-      functor_t div = PL_new_functor(PL_new_atom("div"), 2);
+      functor_t div = PL_new_functor(PL_new_atom("div"), 2); // how to construct a rational?
       term_t t = PL_new_term_ref();
       term_t t1 = PL_new_term_refs(2);
       term_t t2 = t1+1;
-      int res = PL_cons_functor(t, div, t1, t2);
+      int res = PL_put_int64(t1, num);
+      if (!res) return res;
+      res = PL_put_int64(t2, den);
+      if (!res) return res;
+      res = PL_cons_functor(t, div, t1, t2);
       if (!res) {
         ERROR("error calling PL_cons_functor");
         return FALSE;
@@ -507,7 +511,7 @@ foreign_t z3_ast_to_term_internal(Z3_ast ast, term_t term) {
 }
 
 
-foreign_t z3_ast_foreign(term_t formula, term_t result) {
+foreign_t term_to_z3_ast_foreign(term_t formula, term_t result) {
   Z3_context ctx = get_context();
   Z3_ast z3_ast = term_to_ast(ctx, formula);
   if (z3_ast == NULL) {
@@ -907,24 +911,24 @@ Z3_ast term_to_ast(const Z3_context ctx, const term_t formula) {
       ERROR("Could not convert string\n");
     }
     else {
-      ERROR("Can't handle string %s\n", string);
+      return Z3_mk_string(ctx, string);
     }
     return NULL;
     break;
   }
   case PL_INTEGER:
-    if (PL_get_long(formula, &lval)) {
+    if (PL_get_long_ex(formula, &lval)) {
       DEBUG("Got PL_get_long\n");
       Z3_sort intsort = Z3_mk_int_sort(ctx);
       return Z3_mk_int64(ctx, lval, intsort);
     }
     else {
-      fprintf(stderr, "Could not get long in PL_INTEGER case\n");
+      ERROR("Could not get long in PL_INTEGER case\n");
       return NULL;
     }
     break;
   case PL_RATIONAL:
-    fprintf(stderr, "TODO: PL_RATIONAL\n");
+    ERROR("TODO: PL_RATIONAL\n");
     break;
   case PL_FLOAT: {
     // double myf;
@@ -1174,10 +1178,11 @@ install_t install()
   // z3_assert(+Solver, +Formula):
   PRED("z3_assert", 2, z3_assert_foreign, 0);
 
-  // for debugging:
-  PRED("z3_ast", 2, z3_ast_foreign, 0);
+  // for debugging, testing round-trips:
+  PRED("term_to_z3_ast", 2, term_to_z3_ast_foreign, 0);
   PRED("z3_ast_string", 2, z3_ast_string_foreign, 0);
-
+  PRED("z3_ast_to_term", 2, z3_ast_to_term_foreign, 0);
+  
   // z3_function_declaration(+term, +range, X):  
   PRED("z3_function_declaration", 3, z3_function_declaration_foreign, 0);
 
@@ -1194,7 +1199,7 @@ install_t install()
   PRED("z3_solver_check_and_print", 2, z3_solver_check_and_print_foreign, 0);
   
   PRED("z3_declarations_string", 1, z3_declarations_string_foreign, 0);
-  PRED("z3_ast_to_term", 2, z3_ast_to_term_foreign, 0);
+
   PRED("z3_solver_get_model", 2, z3_solver_get_model_foreign, 0);
   PRED("z3_model_eval", 3, z3_model_eval_foreign, 0);
   PRED("z3_declaration_map_size", 1, z3_declaration_map_size_foreign, 0);
