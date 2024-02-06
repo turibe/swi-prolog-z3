@@ -677,7 +677,8 @@ foreign_t z3_solver_check_and_print_foreign(term_t solver_term, term_t status_ar
 
 // the function name is the one being declared; subterms are the types, last one is the result.
 // FIXME: call get_function_declaration to avoid redeclaring things?
-// The problem is state: if we do so, then we cannot redeclare things, unless we reset the declarations at each query.
+// The problem is state: if we do so, then we cannot redeclare things from one query to the next,
+// unless we reset the declarations at each query.
 // Do we even want to share declarations from one query to the next?
 
 Z3_func_decl mk_func_decl(Z3_context ctx, const atom_t name, const size_t arity, const term_t formula, term_t range) {

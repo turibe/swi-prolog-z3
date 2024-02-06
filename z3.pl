@@ -30,7 +30,7 @@
               op(750, xfy, and), % =, >, etc. are 700
               op(751, xfy, or),
               op(740, xfy, <>)
-              % {}/1,
+              % {}/1, % clashes
               ]).
 
 :- use_module(type_inference_global, [
