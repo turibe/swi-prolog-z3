@@ -388,6 +388,11 @@ test(consistent) :-
 test(implied) :-
     z3_reset_declarations,
     z3_push(and(a:int>b,b>c,c>d)), z3_is_implied(a>d).
+test(boolean) :-
+    z3_reset_declarations,
+    z3_push(or(and(a:bool, b:bool), not(c:bool))),
+    z3_push(c:bool),
+    z3_is_implied(a).
 
 %% todo: undef, as in:
 %% z3_push(power(a:real,b:int) = c, R), z3_push(c=2.0, R1), z3_push(a=2.0, R2).

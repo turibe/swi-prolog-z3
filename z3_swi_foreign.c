@@ -901,7 +901,7 @@ Z3_ast term_to_ast(const Z3_context ctx, const term_t formula) {
       result = Z3_mk_int_var(ctx, chars);
     }
     else {
-      result = Z3_mk_app(ctx, declaration, 0, 0); // ???
+      result = Z3_mk_app(ctx, declaration, 0, 0); // arity 0, no args
     }
     return result;
     break;
