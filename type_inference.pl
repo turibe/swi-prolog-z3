@@ -9,6 +9,11 @@
 :- license(mit).
 :- expects_dialect(swi).
 
+%% This is a convenince module, for typechecking formulas that will be then asserted in Z3,
+%% without having to declare all of the atom and function types.
+%% For example, typecheck(and(a>b, b>c, c>d ,d > 1.0, f(a) = c), X, Y) infers "real" types for a,b,c, and d,
+%% and real->real for the function f.
+
 :- use_module(library(assoc)).
 
 
@@ -29,7 +34,8 @@ declare(Functor, ArgTypes, Result) :-
     assert(signature(Functor, ArgTypes, Result)).
 
 % Notation: "all(T)" means there can be an arbitrary number of arguments,
-% all of type T. A possible improvement is to support expressions like
+% all of type T. 
+% A possible improvement is to support expressions like
 % all(number) AND oneof(float).
 
 :- declare(=, [T, T], bool).
@@ -80,14 +86,16 @@ declare(Functor, ArgTypes, Result) :-
 
 % at most and at least take N bools followed by an int:
 
-:- declare(atmost, [bool, bool, int], bool).
-:- declare(atmost, [bool, bool, bool, int], bool).
-:- declare(atmost, [bool, bool, bool, bool, int], bool).
+%% :- declare(atmost, [bool, bool, int], bool).
+%% :- declare(atmost, [bool, bool, bool, int], bool).
+%% :- declare(atmost, [bool, bool, bool, bool, int], bool).
 
-:- declare(atleast, [bool, bool, int], bool).
-:- declare(atleast, [bool, bool, bool, int], bool).
-:- declare(atleast, [bool, bool, bool, bool, int], bool).
+%% :- declare(atleast, [bool, bool, int], bool).
+%% :- declare(atleast, [bool, bool, bool, int], bool).
+%% :- declare(atleast, [bool, bool, bool, bool, int], bool).
 
+:- declare(atleast, allthen(bool, int), bool).
+:- declare(atmost, allthen(bool, int), bool).
 
 % TODO: use attributed variables with finite domains, to represent cases where a var can be one of several types.
 
@@ -118,7 +126,9 @@ compound_mappable(X) :- compound(X),
                         functor(X, F, _N),
                         \+ declared(F).
 
+
 check_length(all(_), _) :- !, true.
+check_length(allthen(_,_), _) :- !, true.
 check_length(L, Arity) :- length(L, Arity).
 
 
@@ -136,10 +146,10 @@ typecheck(T, Type, Envin, Envout) :-
     Type = Result,
     check_signature(Subterms, ArgTypes, Envin, Envout).
 
-typecheck(X, int, E, E) :- integer(X).
-typecheck(X, real, E, E) :- integer(X).
-typecheck(X, real, E, E) :- float(X).
-typecheck(X, string, E, E) :- string(X).
+typecheck(X, int, E, E) :- integer(X), !.
+typecheck(X, real, E, E) :- integer(X), !.
+typecheck(X, real, E, E) :- float(X), !.
+typecheck(X, string, E, E) :- string(X), !.
 typecheck(X1, T, Envin, Envout) :- atomic_mappable(X1, X),
                                    get_assoc(X, Envin, T1), !,
                                    T = T1, % TODO: print error if this fails
@@ -173,6 +183,12 @@ typecheck(X, Type, Envin, Envout) :- compound_mappable(X),
 % check_signature([Arg|Rest], oneof(T), Ein, Eout) :-
 %    typecheck(Arg, T, Ein, Eout) -> true ; check_signature(Rest, oneof(T), Ein, Eout).
 
+check_signature([], allthen(_,_), E, E).
+check_signature([Arg], allthen(_,T), Ein, Eout) :- !, typecheck(Arg, T, Ein, Eout).
+check_signature([Arg|Rest], allthen(AT,T), Ein, Eout) :- \+ Rest = [],
+							 typecheck(Arg, AT, Ein, E2),
+							 check_signature(Rest, allthen(AT,T), E2, Eout).
+
 check_signature([], all(_), E, E).
 check_signature([Arg|Rest], all(T), Ein, Eout) :- typecheck(Arg, T, Ein, E2),
                                                   check_signature(Rest, all(T), E2, Eout).
@@ -193,6 +209,9 @@ typecheck_formula_list([], E, E) :- true.
 %%                                         typecheck_formula_list([X], Ein, Eout).
 
 %% doit(Term, Type, Result) :- empty_assoc(Empty), typecheck(Term, Type, Empty, Eout), assoc_to_list(Eout, Result).
+
+mytest :-
+    typecheck(atleast(a, b, c),X,M), trace.
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Unit tests %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -222,7 +241,7 @@ test(divtest, [nondet]) :-
 %    E =@= syntax_error(arity_error(not(X,Y), 2)) .
 
 test(atleast) :-
-    typecheck(atleast(a:bool,b:bool,c:bool,2), bool, Map),
+    typecheck(atleast(a,b,c,2), bool, Map),
     get_assoc(a, Map, bool),
     true.
 
