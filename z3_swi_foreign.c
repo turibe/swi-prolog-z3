@@ -36,8 +36,8 @@
 
 
 
-// #define DEBUG(...) do {fprintf(stderr, __VA_ARGS__) ; fflush(stderr); } while (false)
-#define DEBUG(...) {}
+#define DEBUG(...) do {fprintf(stderr, __VA_ARGS__) ; fflush(stderr); } while (false)
+// #define DEBUG(...) {}
 #define INPROGRESS(...) do {fprintf(stderr, __VA_ARGS__); fflush(stderr);} while (false)
 #define ERROR(...) do {fprintf(stderr, __VA_ARGS__); fflush(stderr);} while (false)
 #define INFO(...) do {fprintf(stderr, __VA_ARGS__); fflush(stderr);} while (false)
@@ -448,9 +448,9 @@ foreign_t debug_list_foreign(term_t atom, term_t result)
 foreign_t z3_ast_to_term_internal(Z3_ast ast, term_t term) {
   Z3_context ctx = get_context();
   if (Z3_is_numeral_ast(ctx, ast)) {
-    DEBUG("got numeral\n");
     int64_t i;
     if (Z3_get_numeral_int64(ctx, ast, &i)) {
+      DEBUG("got numeral %lld\n", i);
       return PL_unify_int64(term, i);
     }
     int64_t num, den;
@@ -773,6 +773,81 @@ foreign_t z3_function_declaration_foreign(const term_t formula, const term_t ran
 }
 
 
+
+foreign_t model_functions(Z3_context ctx, Z3_model m, term_t list) {
+  int num_funcs = Z3_model_get_num_funcs(ctx, m);
+  term_t l = PL_new_term_ref();
+  PL_put_nil(l);
+  DEBUG("Num functions is %d\n", num_funcs);
+  for (unsigned i = 0; i < num_funcs; i++) {
+    Z3_func_decl fdecl = Z3_model_get_func_decl(ctx, m, i);
+    Z3_symbol symbol = Z3_get_decl_name(ctx, fdecl);
+    Z3_string str = Z3_get_symbol_string(ctx, symbol);
+    DEBUG("Function is %s\n", str);
+
+    Z3_func_interp finterp = Z3_model_get_func_interp(ctx, m, fdecl);
+    if (finterp == NULL) {
+      continue;
+    }
+    Z3_func_interp_inc_ref(ctx, finterp); // crashes without this!
+
+    unsigned arity = Z3_func_interp_get_arity(ctx, finterp);
+    DEBUG("Arity is %d\n", arity);
+
+    unsigned fentries = Z3_func_interp_get_num_entries (ctx, finterp);
+    DEBUG("Entries is %d\n", fentries);
+    for (unsigned j = 0; j < fentries; j++) {
+      DEBUG("processing entry %d\n", j);
+      Z3_func_entry point = Z3_func_interp_get_entry(ctx, finterp, j);
+      Z3_func_entry_inc_ref(ctx, point);
+      DEBUG("got point\n");
+      Z3_ast value = Z3_func_entry_get_value(ctx, point);
+      DEBUG("got value\n");
+      unsigned args = Z3_func_entry_get_num_args(ctx, point);
+      // assert(args == arity);
+      DEBUG("num_args for %d is %d\n", j, args);
+      term_t t = PL_new_term_ref();
+      term_t subterms = PL_new_term_refs(arity);
+
+      for (unsigned w = 0; w < args; w++) {
+	DEBUG("getting subterm %u\n", w);
+	Z3_ast keyw = Z3_func_entry_get_arg(ctx, point, w);
+	if (!z3_ast_to_term_internal(keyw, subterms+w)) {
+	  return FALSE;
+	}
+      }
+      
+      functor_t func = PL_new_functor(PL_new_atom(str), arity);
+      if (!PL_cons_functor_v(t, func, subterms)) {
+	return FALSE;
+      }
+      // TODO: make bigger term with "t:value", put that on the list
+      DEBUG("consing list\n");
+      int r = PL_cons_list(l, t, l);
+      if (!r) {
+	return r;
+      }
+      Z3_func_interp_dec_ref(ctx, finterp);
+    }
+    
+    DEBUG("getting the else\n");
+    Z3_ast felse = Z3_func_interp_get_else(ctx, finterp);
+  }
+  return PL_unify(l, list);
+}
+
+
+foreign_t z3_model_functions_foreign(term_t model_term, term_t list) {
+  Z3_context ctx = get_context();
+  Z3_model model;
+  int rval = PL_get_pointer_ex(model_term, (void **) &model);
+  if (!rval) {
+    return rval;
+  }
+  return model_functions(ctx, model, list);
+}
+    
+
 Z3_sort mk_sort(Z3_context ctx, term_t expression) {
   switch (PL_term_type(expression)) {
   case PL_ATOM: {
@@ -897,7 +972,7 @@ Z3_ast term_to_ast(const Z3_context ctx, const term_t formula) {
       const Z3_string decstring  = Z3_ast_to_string(ctx, Z3_func_decl_to_ast(ctx, declaration));
       DEBUG("Got declaration %s\n", decstring);
     }
-    if (declaration == NULL) { // we could require everything to be declared...
+    if (declaration == NULL) { // Undeclared atoms are by default ints; we could require everything to be declared.
       DEBUG("term_to_ast got atom %s, default int\n", chars);
       result = Z3_mk_int_var(ctx, chars);
     }
@@ -935,7 +1010,7 @@ Z3_ast term_to_ast(const Z3_context ctx, const term_t formula) {
     break;
   case PL_FLOAT: {
     // double myf;
-    // don't use PL_get_float because apparently Z3 can't make reals from floats ???
+    // don't use PL_get_float because apparently Z3 can't make reals from floats.
     // Z3_sort sort = Z3_mk_fpa_sort_double(ctx);
     DEBUG("making float\n");
     Z3_sort sort = Z3_mk_real_sort(ctx);
@@ -967,7 +1042,7 @@ Z3_ast term_to_ast(const Z3_context ctx, const term_t formula) {
     DEBUG("functor name: %s\n", name_string);
 
     term_t a = PL_new_term_ref();
-    if (strcmp(name_string, ":")==0) { // TODO: handle this in prolog?
+    if (strcmp(name_string, ":")==0) { // Path in case : is not handled at the Prolog level.
       // we expect symbol:sort
       if (arity != 2) {
         ERROR(": should have arity 2, has arity %lu", arity);
@@ -991,6 +1066,7 @@ Z3_ast term_to_ast(const Z3_context ctx, const term_t formula) {
       }
       // FIXME: here we shoud declare...
       // mk_func_decl(ctx, symbol_name, ...);
+      // to catch inconsistent uses of the same constant.
       DEBUG("making const\n");
       result = Z3_mk_const(ctx, symbol_name, sort);
       DEBUG("making const result is %s\n", Z3_ast_to_string(ctx, result));
@@ -1211,6 +1287,8 @@ install_t install()
   PRED("z3_simplify_term", 2, z3_simplify_term_foreign, 0);
 
   PRED("z3_solver_assertions", 2, z3_solver_assertions_foreign, 0);
+
+  PRED("z3_model_functions", 2, z3_model_functions_foreign, 0);
 
   PRED("debug_list", 2, debug_list_foreign, 0);
 }

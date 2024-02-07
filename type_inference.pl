@@ -18,7 +18,6 @@ Notes:
 
 ***/
 
-    
 :- module(type_inference, [
               typecheck/3,
               typecheck/4,

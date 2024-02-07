@@ -20,7 +20,7 @@
               z3_implies/1,
               z3_entails/1,
               z3_is_consistent/1,
-              % get_global_solver/1,  % returns pointer, not very useful
+              get_global_solver/1,  % returns pointer, not very useful
               % z3_get_model/1,
 	      solver_scopes/1,
 	      

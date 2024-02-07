@@ -19,6 +19,7 @@
 	      z3_solver_push/2,
 	      z3_solver_pop/3,
 	      z3_solver_assertions/2,
+	      z3_model_functions/2,
 	      op(750, xfy, and), % =, >, etc. are 700 ; Local to the module
               op(751, xfy, or),
               op(740, xfy, <>)
