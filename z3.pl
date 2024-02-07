@@ -20,9 +20,9 @@
               z3_implies/1,
               z3_entails/1,
               z3_is_consistent/1,
-              get_global_solver/1,  % returns pointer, not very useful
-              % z3_get_model/1,
-	      solver_scopes/1,
+              z3_get_global_solver/1,  % returns pointer, not very useful
+              z3_get_model/1,
+	          solver_scopes/1,
 	      
               z3_model_eval/2,
 	      z3_model_eval/3,
@@ -102,7 +102,7 @@ reset_global_solver :-
     nb_setval(global_solver, S),
     nb_setval(solver_depth, 0).
 
-get_global_solver(S) :- nb_getval(global_solver, S).
+z3_get_global_solver(S) :- nb_getval(global_solver, S).
 
 assert_depth(N) :- b_getval(solver_depth, N).
 
@@ -110,7 +110,7 @@ assert_depth(N) :- b_getval(solver_depth, N).
 %% we should only use mypush to get the solver.
 %% and it should always be called before an assert, if we want it to be retractable.
 %% So, hide mypush, expose asserts.
-mypush(S) :- get_global_solver(S),
+mypush(S) :- z3_get_global_solver(S),
              resolve_solver_depth(X),
              New is X + 1,
              b_setval(solver_depth, New),
@@ -121,7 +121,7 @@ mypush(S) :- get_global_solver(S),
 %%      resolve_solver_depth would fix it.
 %%      it's executed at the next push, so perhaps it's not a problem.
 
-solver_scopes(N) :- get_global_solver(S), z3_solver_scopes(S,N).
+solver_scopes(N) :- z3_get_global_solver(S), z3_solver_scopes(S,N).
 
 resolve_solver_depth(X) :- b_getval(solver_depth, X),
                             solver_scopes(N),
@@ -135,7 +135,7 @@ resolve_solver_depth(X, Scopes) :- X < Scopes,
                                       Numpops is Scopes - X,
                                       popn(Numpops).
 
-popn(Numpops) :- get_global_solver(S),
+popn(Numpops) :- z3_get_global_solver(S),
 		 z3_solver_pop(S, Numpops, _) -> true ; report("error popping Z3 solver\n").
 
 
@@ -201,23 +201,27 @@ declare_types(M, [X|Rest]) :- (get_assoc(X, M, Def) -> z3_declare(X, Def) ; true
                               declare_types(M, Rest).
 declare_types(_M, []) :- true.
 
-z3_print_status(Status) :- get_global_solver(Solver), z3_solver_check_and_print(Solver, Status).
+z3_print_status(Status) :- z3_get_global_solver(Solver),
+                           z3_solver_check_and_print(Solver, Status).
 
 z3_check_and_print(S) :- z3_print_status(S).
 
 print_declarations :- z3_declarations_string(S), current_output(Out), write(Out, S).
 
 z3_eval(Expression, Result) :-  \+ is_list(Expression),
-                               get_global_solver(S),
+                               z3_get_global_solver(S),
                                z3_solver_check(S, Status),
                                Status == l_true, % TODO: investigate l_undef
                                z3_solver_get_model(S, Model),
                                z3_model_eval(Model, Expression, Result).
 
 z3_eval([], []) :- !, true.
-z3_eval([X|Rest],[EX|Erest]) :- z3_eval(X, EX), z3_eval(Rest, Erest). % FIXME: make more efficient, do only one check
+z3_eval([X|Rest],[EX|Erest]) :-
+        z3_eval(X, EX),
+        z3_eval(Rest, Erest). % FIXME: make more efficient, do only one check
 
-z3_get_model(M) :- get_global_solver(S), z3_solver_get_model(S,M).
+z3_get_model(M) :- z3_get_global_solver(S), z3_solver_get_model(S,M).
+
 %% TODO/FIXME: replace variables by their attributes:
 %% Example: z3_push(X=14), z3_push(Y=X-5), Y=9, get_attr(X,z3,A), z3_model_eval(A+1,R). (works)
 %% vs. z3_push(X=14), z3_push(Y=X-5), Y=9, get_attr(X,z3,A), z3_model_eval(X+1,R). (doesn't work)

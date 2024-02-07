@@ -806,7 +806,9 @@ foreign_t model_functions(Z3_context ctx, Z3_model m, term_t list) {
       unsigned args = Z3_func_entry_get_num_args(ctx, point);
       // assert(args == arity);
       DEBUG("num_args for %d is %d\n", j, args);
-      term_t t = PL_new_term_ref();
+
+      // the lhs f(v1, ..., vn) of the "point":
+      term_t lhs = PL_new_term_ref();
       term_t subterms = PL_new_term_refs(arity);
 
       for (unsigned w = 0; w < args; w++) {
@@ -818,21 +820,50 @@ foreign_t model_functions(Z3_context ctx, Z3_model m, term_t list) {
       }
       
       functor_t func = PL_new_functor(PL_new_atom(str), arity);
-      if (!PL_cons_functor_v(t, func, subterms)) {
+      if (!PL_cons_functor_v(lhs, func, subterms)) {
 	return FALSE;
       }
-      // TODO: make bigger term with "t:value", put that on the list
+
+
+      DEBUG("making rhs\n");
+      term_t rhs = PL_new_term_ref();
+      if (!z3_ast_to_term_internal(value, rhs)) {
+	return FALSE;
+      }
+
+      DEBUG("consing arrow\n");
+      functor_t arrow = PL_new_functor(PL_new_atom("->"), 2);
+      term_t pair = PL_new_term_ref();
+      if (!PL_cons_functor(pair, arrow, lhs, rhs)) {
+	DEBUG("error consing functor\n");
+	return FALSE;
+      }
+      
       DEBUG("consing list\n");
-      int r = PL_cons_list(l, t, l);
+      int r = PL_cons_list(l, pair, l);
       if (!r) {
 	return r;
       }
-      Z3_func_interp_dec_ref(ctx, finterp);
     }
     
     DEBUG("getting the else\n");
     Z3_ast felse = Z3_func_interp_get_else(ctx, finterp);
+    term_t else_value = PL_new_term_ref();
+    if (!z3_ast_to_term_internal(felse, else_value)) {
+      return FALSE;
+    }
+    functor_t else_functor = PL_new_functor(PL_new_atom("else"), 1);
+    term_t else_term = PL_new_term_ref();
+    if (!PL_cons_functor(else_term, else_functor, else_value)) {
+      return FALSE;
+    }
+    if (!PL_cons_list(l, else_term, l)) {
+	return FALSE;
+    }
+    
+    Z3_func_interp_dec_ref(ctx, finterp);
   }
+  
   return PL_unify(l, list);
 }
 
@@ -844,7 +875,10 @@ foreign_t z3_model_functions_foreign(term_t model_term, term_t list) {
   if (!rval) {
     return rval;
   }
-  return model_functions(ctx, model, list);
+  Z3_model_inc_ref(ctx, model);
+  rval = model_functions(ctx, model, list);
+  Z3_model_dec_ref(ctx, model);
+  return rval;
 }
     
 
