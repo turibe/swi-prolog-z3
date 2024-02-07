@@ -36,8 +36,8 @@
 
 
 
-#define DEBUG(...) do {fprintf(stderr, __VA_ARGS__) ; fflush(stderr); } while (false)
-// #define DEBUG(...) {}
+// #define DEBUG(...) do {fprintf(stderr, __VA_ARGS__) ; fflush(stderr); } while (false)
+#define DEBUG(...) {}
 #define INPROGRESS(...) do {fprintf(stderr, __VA_ARGS__); fflush(stderr);} while (false)
 #define ERROR(...) do {fprintf(stderr, __VA_ARGS__); fflush(stderr);} while (false)
 #define INFO(...) do {fprintf(stderr, __VA_ARGS__); fflush(stderr);} while (false)
@@ -670,7 +670,7 @@ foreign_t z3_solver_check_and_print_foreign(term_t solver_term, term_t status_ar
     return rval;
   }
   const Z3_context ctx = get_context();
-  Z3_lbool check_status = solver_check_and_print(ctx, solver);
+  const Z3_lbool check_status = solver_check_and_print(ctx, solver);
   return z3_bool_to_atom(check_status, status_arg);
 }
 
@@ -773,6 +773,7 @@ foreign_t z3_function_declaration_foreign(const term_t formula, const term_t ran
 }
 
 
+// NEXT: write similar function, model_constants
 
 foreign_t model_functions(Z3_context ctx, Z3_model m, term_t list) {
   int num_funcs = Z3_model_get_num_funcs(ctx, m);
@@ -782,8 +783,8 @@ foreign_t model_functions(Z3_context ctx, Z3_model m, term_t list) {
   for (unsigned i = 0; i < num_funcs; i++) {
     Z3_func_decl fdecl = Z3_model_get_func_decl(ctx, m, i);
     Z3_symbol symbol = Z3_get_decl_name(ctx, fdecl);
-    Z3_string str = Z3_get_symbol_string(ctx, symbol);
-    DEBUG("Function is %s\n", str);
+    Z3_string function_name = Z3_get_symbol_string(ctx, symbol);
+    DEBUG("Function is %s\n", function_name);
 
     Z3_func_interp finterp = Z3_model_get_func_interp(ctx, m, fdecl);
     if (finterp == NULL) {
@@ -819,11 +820,10 @@ foreign_t model_functions(Z3_context ctx, Z3_model m, term_t list) {
 	}
       }
       
-      functor_t func = PL_new_functor(PL_new_atom(str), arity);
+      functor_t func = PL_new_functor(PL_new_atom(function_name), arity);
       if (!PL_cons_functor_v(lhs, func, subterms)) {
 	return FALSE;
       }
-
 
       DEBUG("making rhs\n");
       term_t rhs = PL_new_term_ref();
@@ -852,9 +852,11 @@ foreign_t model_functions(Z3_context ctx, Z3_model m, term_t list) {
     if (!z3_ast_to_term_internal(felse, else_value)) {
       return FALSE;
     }
-    functor_t else_functor = PL_new_functor(PL_new_atom("else"), 1);
+    functor_t else_functor = PL_new_functor(PL_new_atom("else"), 2);
     term_t else_term = PL_new_term_ref();
-    if (!PL_cons_functor(else_term, else_functor, else_value)) {
+    term_t fname_term = PL_new_term_ref();
+    PL_put_atom_chars(fname_term, function_name);
+    if (!PL_cons_functor(else_term, else_functor, fname_term, else_value)) {
       return FALSE;
     }
     if (!PL_cons_list(l, else_term, l)) {

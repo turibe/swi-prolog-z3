@@ -328,11 +328,16 @@ test_formulas(Formulas) :-
                ] %  b = 2 %% TODO: get model out
                .
 
+%% TODO: clean up, remove dependency on reset_globals.
+
 doit(Formulas, S, R) :-
     typecheck_and_declare(Formulas, _Assoc),
     Conjunction =.. [and | Formulas],
     z3_assert(S, Conjunction), %% makes a new solver
-    z3_solver_check_and_print(S, R).
+    z3_solver_check_and_print(S, R),
+    % z3_get_global_solver(S),
+    z3_solver_get_model(S,M), z3_model_functions(M,Model),  print(Model),
+    true.
 
 doit(R) :-
     test_formulas(Formulas),
