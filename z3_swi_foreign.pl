@@ -8,6 +8,7 @@
 	      z3_solver_get_model/2,
 	      z3_mk_solver/1,
 	      z3_free_solver/1,
+	      z3_free_model/1,
 	      z3_assert/2,
 	      z3_function_declaration/2,
 	      z3_declarations_string/1,
@@ -20,6 +21,7 @@
 	      z3_solver_pop/3,
 	      z3_solver_assertions/2,
 	      z3_model_functions/2,
+	      z3_model_constants/2,
 	      op(750, xfy, and), % =, >, etc. are 700 ; Local to the module
               op(751, xfy, or),
               op(740, xfy, <>)

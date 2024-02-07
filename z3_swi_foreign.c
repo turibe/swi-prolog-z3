@@ -242,8 +242,20 @@ foreign_t z3_free_solver_foreign(term_t u) {
   if (!rval) {
     return rval;
   }
-  fprintf(stderr, "freeing solver %p\n", (void *) solver);
+  DEBUG("freeing solver %p\n", (void *) solver);
   Z3_solver_dec_ref(ctx, solver);
+  return rval;
+}
+
+foreign_t z3_free_model_foreign(term_t u) {
+  Z3_model model;
+  Z3_context ctx  = get_context();
+  int rval = PL_get_pointer_ex(u, (void **) &model);
+  if (!rval) {
+    return rval;
+  }
+  DEBUG("freeing model %p\n", (void *) model);
+  Z3_model_dec_ref(ctx, model);
   return rval;
 }
 
@@ -259,6 +271,7 @@ foreign_t z3_solver_get_model_foreign(term_t solver_term, term_t model_term) {
   Z3_context ctx  = get_context();
   Z3_model model = Z3_solver_get_model(ctx, solver);
   if (model) {
+    Z3_model_inc_ref(ctx, model);
     return PL_unify_pointer(model_term, model);
   }
   return FALSE;
@@ -773,7 +786,6 @@ foreign_t z3_function_declaration_foreign(const term_t formula, const term_t ran
 }
 
 
-// NEXT: write similar function, model_constants
 
 foreign_t model_functions(Z3_context ctx, Z3_model m, term_t list) {
   int num_funcs = Z3_model_get_num_funcs(ctx, m);
@@ -867,7 +879,53 @@ foreign_t model_functions(Z3_context ctx, Z3_model m, term_t list) {
   }
   
   return PL_unify(l, list);
-}
+} // model_functions
+
+
+foreign_t model_constants(const Z3_context ctx, const Z3_model m, term_t list) {
+  const int num_consts = Z3_model_get_num_consts(ctx, m);
+  DEBUG("Num constants is %d\n", num_consts);
+  term_t l = PL_new_term_ref();
+  PL_put_nil(l);
+
+  for (unsigned i = 0; i < num_consts; i++) {
+    Z3_func_decl fdecl = Z3_model_get_const_decl(ctx, m, i);
+    Z3_symbol symbol = Z3_get_decl_name(ctx, fdecl);
+    Z3_string constant_name = Z3_get_symbol_string(ctx, symbol);
+    DEBUG("Constant is %s\n", constant_name);
+
+    Z3_ast value = Z3_model_get_const_interp(ctx, m, fdecl);
+    if (value == NULL) {
+      continue;
+    }
+
+    term_t lhs = PL_new_term_ref();
+    PL_put_atom_chars(lhs, constant_name); // TODO: macro to check results?
+
+    DEBUG("making rhs\n");
+    term_t rhs = PL_new_term_ref();
+    if (!z3_ast_to_term_internal(value, rhs)) {
+      return FALSE;
+    }
+
+    DEBUG("consing arrow\n");
+    functor_t arrow = PL_new_functor(PL_new_atom("->"), 2);
+    term_t pair = PL_new_term_ref();
+    if (!PL_cons_functor(pair, arrow, lhs, rhs)) {
+      DEBUG("error consing functor\n");
+      return FALSE;
+    }
+      
+    DEBUG("consing list\n");
+    int r = PL_cons_list(l, pair, l);
+    if (!r) {
+      return r;
+    }
+  
+  }
+  
+  return PL_unify(l, list);
+} // model_constants
 
 
 foreign_t z3_model_functions_foreign(term_t model_term, term_t list) {
@@ -881,8 +939,20 @@ foreign_t z3_model_functions_foreign(term_t model_term, term_t list) {
   rval = model_functions(ctx, model, list);
   Z3_model_dec_ref(ctx, model);
   return rval;
-}
-    
+}    
+
+foreign_t z3_model_constants_foreign(term_t model_term, term_t list) {
+  Z3_context ctx = get_context();
+  Z3_model model;
+  int rval = PL_get_pointer_ex(model_term, (void **) &model);
+  if (!rval) {
+    return rval;
+  }
+  Z3_model_inc_ref(ctx, model);
+  rval = model_constants(ctx, model, list);
+  Z3_model_dec_ref(ctx, model);
+  return rval;
+}    
 
 Z3_sort mk_sort(Z3_context ctx, term_t expression) {
   switch (PL_term_type(expression)) {
@@ -1287,6 +1357,7 @@ install_t install()
   PRED("z3_mk_solver", 1, z3_mk_solver_foreign, 0);
   
   PRED("z3_free_solver", 1, z3_free_solver_foreign, 0);
+  PRED("z3_free_model", 1, z3_free_model_foreign, 0);
   
 
 
@@ -1325,6 +1396,7 @@ install_t install()
   PRED("z3_solver_assertions", 2, z3_solver_assertions_foreign, 0);
 
   PRED("z3_model_functions", 2, z3_model_functions_foreign, 0);
+  PRED("z3_model_constants", 2, z3_model_constants_foreign, 0);
 
   PRED("debug_list", 2, debug_list_foreign, 0);
 }

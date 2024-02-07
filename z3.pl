@@ -336,7 +336,9 @@ doit(Formulas, S, R) :-
     z3_assert(S, Conjunction), %% makes a new solver
     z3_solver_check_and_print(S, R),
     % z3_get_global_solver(S),
-    z3_solver_get_model(S,M), z3_model_functions(M,Model),  print(Model),
+    z3_solver_get_model(S,M),
+    z3_model_functions(M, Functions), print(Functions),
+    z3_model_constants(M, Constants), print(Constants),
     true.
 
 doit(R) :-
