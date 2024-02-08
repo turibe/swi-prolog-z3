@@ -1,6 +1,7 @@
 %%% -*- Mode: Prolog; Module: z3; -*-
 
-%% this is the lowest-level wrapper
+%% This is the lowest-level wrapper.
+%% It has no global variables except those in the C code.
 
 :- module(z3_swi_foreign, [
 	      z3_reset_declarations/0,
@@ -12,7 +13,7 @@
 	      z3_assert/2,
 	      z3_function_declaration/2,
 	      z3_declarations_string/1,
-	      z3_print_declarations/1,
+	      z3_print_declarations/0,
 	      z3_context/1,
 	      z3_model_eval/3,
 	      z3_solver_check_and_print/2, % calls Z2_model_to_string
@@ -30,11 +31,12 @@
 :- load_foreign_library(z3_swi_foreign).
 
 
-z3_print_declarations(X) :-
+z3_print_declarations :-
     z3_declarations_string(X), print_message(information, format(X, [])).
 
 
 %% returned pointer is only useful for debugging, so we hide it here:
+%% FIXME: change name, clarify semantics. New declarations don't override old ones?
 z3_function_declaration(A,B) :- z3_function_declaration(A,B,_C).
 
 :- begin_tests(foreign_tests).
@@ -112,7 +114,7 @@ test(assert_test) :-
     z3_assert(S, (a and (b > 0)) and (1.321 < c)),
     z3_solver_check(S, Status),
     assertion(Status == l_true),
-    z3_print_declarations(_Declarations).
+    z3_print_declarations.
 
 test(bad_types, [fail] ) :-
     z3_mk_solver(S),
@@ -149,6 +151,17 @@ test(declare_fail1, [fail]) :-
 
 test(declare_fail2, [fail]) :-
     z3_function_declaration(a, _Y).
+
+test(declare_fail_diffent_types, [fail]) :-
+    z3_reset_declarations,
+    z3_function_declaration(a, bool),
+    z3_function_declaration(a, int).
+
+test(declare_fail_diffent_types1, [fail]) :-
+    z3_reset_declarations,
+    z3_function_declaration(f(int), bool),
+    z3_function_declaration(f(bool), bool).
+
 
 test(solver_push_pop) :-
     z3_mk_solver(S),

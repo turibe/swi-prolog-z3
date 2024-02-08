@@ -5,6 +5,12 @@
 % - Typechecking and declaring Z3 variables and functions
 % - Attributed variables
 % - pushing assertions
+%
+% For incrementality, this module maintains a non-backtrackable global_solver, where the push and pops happen.
+%
+% ???? Do we need/want type_inference_global?
+% It also keeps track of a type map.
+
 
 :- module(z3, [
               typecheck_and_declare/2,
@@ -22,7 +28,7 @@
               z3_is_consistent/1,
               z3_get_global_solver/1,  % returns pointer, not very useful
               z3_get_model/1,
-	          solver_scopes/1,
+	      solver_scopes/1,
 	      
               z3_model_eval/2,
 	      z3_model_eval/3,
@@ -42,9 +48,7 @@
 :- use_module(library(assoc)). % use dicts instead? Both can't handle vars as keys properly.
 :- use_module(library(ordsets)).
 
-%% :- load_foreign_library(z3_swi_foreign).
 :- use_module(z3_swi_foreign).
-
 :- use_module(quickexplain).
 
 %% have a global variable, backtrackable, with the depth level.
@@ -52,7 +56,7 @@
 
 :- initialization(reset_globals).
 
-%% TODO: indent according to solver pushes?
+%% indent according to solver pushes:
 report(T) :- indent, print(T), nl, flush_output.
 
 indent :- assert_depth(N),
@@ -98,11 +102,12 @@ attr_unify_hook(Attr, Formula) :-
 
 %% should only be called at the top-most level:
 reset_global_solver :-
+    (z3_get_global_solver(Old) -> z3_free_solver(Old) ; true),
     z3_mk_solver(S),
     nb_setval(global_solver, S),
     nb_setval(solver_depth, 0).
 
-z3_get_global_solver(S) :- nb_getval(global_solver, S).
+z3_get_global_solver(S) :- nb_current(global_solver, S).
 
 assert_depth(N) :- b_getval(solver_depth, N).
 
@@ -182,9 +187,9 @@ z3_push(F, Status) :-
       report(map(L)),
       fail)),
     get_map(Assoc),
-    % assoc_to_list(Assoc, L),
-    % declare_type_list(L), %% this declares the entire type list again
-    % TODO: use only the ones in F?
+    % TODO: use only the ones in F? FIXME: this redeclares everything at each push.
+    % The proper fix is for type_inference to return the new bindings, and only assert those.
+    % could do a diff between the maps... expensive, but don't see another easy solution right now.
     declare_types(Assoc, Symbols),
     mypush(Solver),
     internal_assert_and_check(Solver, FG, Status).
@@ -325,17 +330,17 @@ test_formulas(Formulas) :-
                 b = a,
                 d:int = f(e:foobarsort),
                 foo(b) = c % this implies b = 0
-               ] %  b = 2 %% TODO: get model out
+               ]
                .
 
 %% TODO: clean up, remove dependency on reset_globals.
 
 doit(Formulas, S, R) :-
+    reset_globals,
     typecheck_and_declare(Formulas, _Assoc),
     Conjunction =.. [and | Formulas],
     z3_assert(S, Conjunction), %% makes a new solver
-    z3_solver_check_and_print(S, R),
-    % z3_get_global_solver(S),
+    z3_solver_check(S, R),
     z3_solver_get_model(S,M),
     z3_model_functions(M, Functions), print(Functions),
     z3_model_constants(M, Constants), print(Constants),
@@ -345,25 +350,22 @@ doit(R) :-
     test_formulas(Formulas),
     doit(Formulas, _Solver, R).
 
-typetest(Formulas, R) :-
-    assert_formula_list_types(Formulas),
-    type_inference_global:get_map(Map),
-    assoc_to_list(Map, R).
+test(sat) :- reset_globals, doit(R), R =@= l_true.
 
-%% fix: choicepoint
 test(typetest) :-
     test_formulas(Formulas),
-    typetest(Formulas, _Assoc).
+    assert_formula_list_types(Formulas),
+    type_inference_global:get_map(Map),
+    assoc_to_list(Map, R),
+    member(a-int, R),
+    member(f-lambda([foobarsort], int), R),
+    !, true.
 
-test(sat) :- reset_globals, doit(R), R = l_true.
-
-test(nonsat) :-
+test(nonsat, [true(R2 == l_false)] ) :-
     test_formulas(Formulas),
-    % typetest(Formulas, _Assoc), % introduces choicepoint
     doit(Formulas, Solver, _R1),
     z3_assert(Solver, b=2),
-    z3_solver_check_and_print(Solver, R2),
-    R2 = l_false.
+    z3_solver_check_and_print(Solver, R2).
 
 :- end_tests(wrapper_tests).
 
@@ -372,11 +374,10 @@ test(nonsat) :-
 % z3_push(y:real > 2, R0), z3_push_and_print(a:real=div(x, y), R), z3_push_and_print(a = div(b:real, 4.0), R1), z3_push_and_print(a >0.0, R2).
 % z3_push_and_print(a:real=div(x, y), R), z3_push_and_print(a = div(b, 4.0), R1).
 
-test(atmost0) :-
+test(atmost0, [true(R == l_true), true(R1 == l_false)] ) :-
     z3_reset_declarations,
-    z3_push(atmost(a:bool, b:bool, c:bool, 0), R), z3_push(a, R1),
-    R = l_true,
-    R1 = l_false.
+    z3_push(atmost(a:bool, b:bool, c:bool, 0), R),
+    z3_push(a, R1).
 
 test(atmost1) :-
     z3_reset_declarations,

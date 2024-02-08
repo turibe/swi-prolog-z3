@@ -18,7 +18,7 @@
 
      It would be nice to embed the declarations in the context object, but this does not seem to be possible.
      We then keep a map of signatures (name, arity, type) to declarations.
-     (We assume for now that functions are not overloaded by type.)
+     (We assume for now that functions are not overloaded by type or arity.)
 
      For now, we go with one global, implicit context object, and one global declaration map;
      everything else, including solvers, is created and destroyed at the Prolog level.
@@ -97,8 +97,8 @@ Z3_lbool solver_check_and_print(Z3_context ctx, Z3_solver s)
 // ***************************** GLOBAL VARIABLES ********************************************
 
 
-// For now, there is only one, global Z3 context object;
-// solver objects are explicit, and we can do push and pop on solvers from Prolog.
+// For now, there is only one, global Z3 context object, implicit in most operations.
+// Solver and model objects are explicit, and we can do push and pop on solvers from Prolog.
 
 Z3_context global_z3_context = NULL;
 long global_symbol_count = 0;
@@ -146,10 +146,12 @@ foreign_t z3_declaration_map_size_foreign(term_t result_term) {
 foreign_t z3_reset_declarations_foreign() {
   Z3_context ctx = get_context();
   Z3_ast_map_reset(ctx, global_declaration_map);
+  global_symbol_count = 0;
   INFO("Cleared Z3 package global declaration map\n");
   return TRUE;
 }
 
+// We need function declarations to make terms.
 
 Z3_func_decl get_function_declaration(Z3_context ctx, const char *name_string, const size_t arity) {
   assert(global_declaration_map != NULL);
@@ -180,8 +182,9 @@ Z3_func_decl get_function_declaration(Z3_context ctx, const char *name_string, c
 void register_function_declaration_string(Z3_context ctx, const char *name_string, const size_t arity, Z3_func_decl declaration) {
   Z3_ast key = Z3_mk_int_var(ctx, name_string);
   Z3_string rstring = Z3_ast_to_string(ctx, Z3_func_decl_to_ast(ctx, declaration));
-  DEBUG("Installing declaration for %s: %s/%lu\n", name_string, rstring, arity);
-  Z3_ast_map_insert(ctx, global_declaration_map, key, (Z3_ast) declaration); // use Z3_fun_decl_to_ast?
+  INFO("Installing declaration for %s: %s/%lu\n", name_string, rstring, arity);
+  // the insert replaces any previous one.
+  Z3_ast_map_insert(ctx, global_declaration_map, key, (Z3_ast) declaration);
   int size = Z3_ast_map_size(ctx, global_declaration_map);
   DEBUG("Declaration map has size %d\n", size);
 }
@@ -207,8 +210,12 @@ foreign_t z3_context_foreign(term_t u) {
   functor_t CONTEXT_FUNCTOR = PL_new_functor(PL_new_atom("context"), 1);
   term_t t  = PL_new_term_ref();
   term_t pt = PL_new_term_ref();
-  int res1 = PL_unify_pointer(pt, ctx);
-  int res = PL_cons_functor(t, CONTEXT_FUNCTOR, pt);
+  int res = PL_unify_pointer(pt, ctx);
+  if (!res) {
+    ERROR("PL_unify_pointer failed getting context");
+    return FALSE;
+  }
+  res = PL_cons_functor(t, CONTEXT_FUNCTOR, pt);
   if (!res) {
     ERROR("error calling PL_cons_functor");
     return FALSE;
@@ -224,15 +231,14 @@ foreign_t z3_mk_solver_foreign(term_t u) {
   int rval;
   Z3_context ctx = get_context();
   Z3_solver solver = Z3_mk_solver(ctx);
-  fprintf(stderr, "made solver %p\n", (void *) solver);
+  DEBUG( "made solver %p\n", (void *) solver );
   Z3_solver_inc_ref(ctx, solver); // should be freed with z3_free_solver
-  rval = PL_unify_pointer(u, solver);
-  return rval;
+  return PL_unify_pointer(u, solver);
 }
 
 
 /**
-   Frees the solver, which should an instantiated solver object.
+   Frees the solver, which must be an instantiated solver object.
    TODO: use setup_call_cleanup to do this automatically.
 **/
 foreign_t z3_free_solver_foreign(term_t u) {
@@ -369,8 +375,7 @@ foreign_t z3_symbol_foreign(term_t i, term_t symbol) {
     // return PL_warning("z3_symbol/2: should specify an int, atom, or string");
     return FALSE;
   }
-  rval = PL_unify_pointer(symbol, s);
-  return rval;
+  return PL_unify_pointer(symbol, s);
 }
 
 
@@ -587,7 +592,7 @@ foreign_t z3_solver_pop_foreign(const term_t solver_term, const term_t npops, te
 }
 
 /*
- assert formula for solver.
+ Assert formula for solver. Creates a new solver if solver_term is a variable.
  FIXME: can crash SWI Prolog by putting in a random int as the solver.
 */
 
@@ -600,7 +605,7 @@ foreign_t z3_assert_foreign(term_t solver_term, term_t formula) {
     solver = Z3_mk_solver(ctx);
     rval = PL_unify_pointer(solver_term, solver);
     if (!rval) {
-      DEBUG("making new solver failed %d\n", rval);
+      ERROR("making new solver failed %d\n", rval);
       return rval;
     }
     Z3_solver_inc_ref(ctx, solver);
@@ -621,7 +626,7 @@ foreign_t z3_assert_foreign(term_t solver_term, term_t formula) {
     int res = PL_get_chars(formula, &formula_string, CVT_ALL | CVT_VARIABLE | CVT_EXCEPTION | CVT_WRITE);
     if (!res) {
       ERROR("PL_get_chars failed");
-      return res;
+      return FALSE;
     }
     // return PL_warning("z3_assert/3: could not make Z3 formula %s", formula_string); // starts the tracer.
     ERROR("z3_assert/3: could not make Z3 formula %s\n", formula_string);
@@ -636,7 +641,7 @@ foreign_t z3_assert_foreign(term_t solver_term, term_t formula) {
     int res = PL_get_chars(formula, &formula_string, CVT_ALL | CVT_VARIABLE | CVT_EXCEPTION | CVT_WRITE);
     if (!res) {
       ERROR("PL_get_chars failed\n");
-      return res;
+      return FALSE;
     }
     ERROR("z3_assert/3: cannot assert non-boolean formula %s\n", formula_string);
     // look into PL_raise_exception
@@ -696,7 +701,7 @@ foreign_t z3_solver_check_and_print_foreign(term_t solver_term, term_t status_ar
 
 Z3_func_decl mk_func_decl(Z3_context ctx, const atom_t name, const size_t arity, const term_t formula, term_t range) {
    const char *name_string = PL_atom_chars(name);
-   DEBUG("making function declaration based on %s/%lu\n", name_string, arity);
+   INFO("making function declaration based on %s/%lu\n", name_string, arity);
    Z3_symbol symbol = Z3_mk_string_symbol(ctx, name_string);
    Z3_sort *domain = malloc(sizeof(Z3_sort) * arity);
    DEBUG("domain is %p\n", domain);
@@ -728,8 +733,7 @@ Z3_func_decl mk_func_decl(Z3_context ctx, const atom_t name, const size_t arity,
    }
    // FIXME: this breaks the tests:
    Z3_func_decl result = get_function_declaration(ctx, name_string, arity);
-   // the question is whether we overwrite existing declarations or not.
-   // Z3_func_decl result = NULL;
+   // FIXME: the question is whether we overwrite existing declarations or not.
    if (result == NULL) {
      result =  Z3_mk_func_decl(ctx, symbol, arity, arity == 0 ?  0 : domain, range_sort);
      if (result != NULL) {
@@ -738,7 +742,12 @@ Z3_func_decl mk_func_decl(Z3_context ctx, const atom_t name, const size_t arity,
      }
    }
    else {
-     DEBUG("Found existing declaration for %s/%ld\n", name_string, arity);
+     ERROR("Found existing declaration for %s/%ld\n", name_string, arity);
+     Z3_func_decl test =  Z3_mk_func_decl(ctx, symbol, arity, arity == 0 ?  0 : domain, range_sort);
+     if (test != result) {
+       ERROR("New declaration for %s different from old one\n", name_string);
+       result = FALSE; // FIXME: this avoids silent failure, but unit tests fail, since we are re-declaring things all the time.
+     }
    }
 
    free(domain);
@@ -746,6 +755,8 @@ Z3_func_decl mk_func_decl(Z3_context ctx, const atom_t name, const size_t arity,
 }
 
 
+
+// Makes a function (or constant) declarations.
 // Example: z3_function_declaration(f(int, bool), int, R).
 // Example: z3_function_declaration(f(int, int), int, X)
 
@@ -900,7 +911,11 @@ foreign_t model_constants(const Z3_context ctx, const Z3_model m, term_t list) {
     }
 
     term_t lhs = PL_new_term_ref();
-    PL_put_atom_chars(lhs, constant_name); // TODO: macro to check results?
+    int res = PL_put_atom_chars(lhs, constant_name); // TODO: macro to check results?
+    if (!res) {
+      ERROR("PL_put_atom_chars failed\n");
+      return FALSE;
+    }
 
     DEBUG("making rhs\n");
     term_t rhs = PL_new_term_ref();
@@ -1140,7 +1155,7 @@ Z3_ast term_to_ast(const Z3_context ctx, const term_t formula) {
     size_t arity;
     int res = PL_get_name_arity(formula, &name, &arity);
     if (!res) {
-      return FALSE;
+      return NULL;
     }
     DEBUG("arity is %lu\n", arity);
 

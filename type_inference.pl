@@ -134,12 +134,16 @@ check_length(all(_), _) :- !, true.
 check_length(allthen(_,_), _) :- !, true.
 check_length(L, Arity) :- length(L, Arity).
 
+% TODO: consider adding a delta?
+
 typecheck(F, _, _, _) :- var(F), !, instantiation_error(F).
-typecheck(Term:Type, Type, Envin, Envout) :- !, typecheck(Term, Type, Envin, Envout).
-typecheck(Term:T, Type, Envin, Envout) :- 
-    atom(Term), !,
-    Type = T,
-    put_assoc(Term, Envin, T, Envout).
+typecheck(Term:Type, T, Envin, Envout) :- !, Type = T,  typecheck(Term, Type, Envin, Envout).
+% typecheck(Term:T, Type, Envin, Envout) :-  %% confusing rule, get rid of it? Unifies Type and T.
+%    atom(Term), !,
+%    Type = T,
+%    (get_assoc(Term, Envin, Existing) -> (Type = Existing, Envout=Envin) ;
+%     put_assoc(Term, Envin, T, Envout)
+%     ).
 typecheck(T, Type, Envin, Envout) :-
     nonvar(T),
     functor(T, F, Arity),
@@ -212,14 +216,14 @@ typecheck_to_list(Term, Type, Result) :- empty_assoc(Empty), typecheck(Term, Typ
 
 :- begin_tests(type_inference_tests).
 
-test(basic, [true(Atype =@= int)]) :-
+test(basic, [true(Atype == int)]) :-
     typecheck(and(a:int > b, c), bool, Map),
     get_assoc(a, Map, Atype), !,
     get_assoc(b, Map, int), !,
     get_assoc(c, Map, bool).
 
 test(conflict1, [fail]) :-
-    typecheck(a:int, int, Map),
+    typecheck(a:int, _, Map),
     typecheck(a, bool, Map, _Mapout).
 
 test(conflict2, [fail]) :-
@@ -232,6 +236,12 @@ test(conflict3, [fail]) :-
 test(nested) :-
     typecheck(f(f(a:int)), int, M),
     get_assoc(f, M, lambda([int], int)).
+
+test(nested1, [fail]) :-
+    typecheck(f(g(a):int, g(b):bool):int, _X, _M).
+
+test(nested2, [fail]) :-
+    typecheck(f(g(a:int):int, g(b:bool)), _X, _M).
 
 
 test(divtest, [nondet]) :-
