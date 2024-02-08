@@ -36,11 +36,11 @@
 
 
 
-// #define DEBUG(...) do {fprintf(stderr, __VA_ARGS__) ; fflush(stderr); } while (false)
+// #define DEBUG(...) do {fprintf(stderr, "DEBUG: "); fprintf(stderr, __VA_ARGS__) ; fflush(stderr); } while (false)
 #define DEBUG(...) {}
-#define INPROGRESS(...) do {fprintf(stderr, __VA_ARGS__); fflush(stderr);} while (false)
-#define ERROR(...) do {fprintf(stderr, __VA_ARGS__); fflush(stderr);} while (false)
-#define INFO(...) do {fprintf(stderr, __VA_ARGS__); fflush(stderr);} while (false)
+#define INPROGRESS(...) do {fprintf(stderr, "INPROGRESS: "); fprintf(stderr, __VA_ARGS__); fflush(stderr);} while (false)
+#define ERROR(...) do {fprintf(stderr, "ERROR: "); fprintf(stderr, __VA_ARGS__); fflush(stderr);} while (false)
+#define INFO(...) do {fprintf(stderr, "INFO: "); fprintf(stderr, __VA_ARGS__); fflush(stderr);} while (false)
 
 // To raise Prolog errors, we could use PL_raise_exception, but the _ex functions are recommended instead.
 
@@ -147,7 +147,7 @@ foreign_t z3_reset_declarations_foreign() {
   Z3_context ctx = get_context();
   Z3_ast_map_reset(ctx, global_declaration_map);
   global_symbol_count = 0;
-  INFO("Cleared Z3 package global declaration map\n");
+  DEBUG("Cleared Z3 package global declaration map\n");
   return TRUE;
 }
 
@@ -182,7 +182,7 @@ Z3_func_decl get_function_declaration(Z3_context ctx, const char *name_string, c
 void register_function_declaration_string(Z3_context ctx, const char *name_string, const size_t arity, Z3_func_decl declaration) {
   Z3_ast key = Z3_mk_int_var(ctx, name_string);
   Z3_string rstring = Z3_ast_to_string(ctx, Z3_func_decl_to_ast(ctx, declaration));
-  INFO("Installing declaration for %s: %s/%lu\n", name_string, rstring, arity);
+  DEBUG("Installing declaration for %s: %s/%lu\n", name_string, rstring, arity);
   // the insert replaces any previous one.
   Z3_ast_map_insert(ctx, global_declaration_map, key, (Z3_ast) declaration);
   int size = Z3_ast_map_size(ctx, global_declaration_map);
@@ -700,10 +700,11 @@ foreign_t z3_solver_check_and_print_foreign(term_t solver_term, term_t status_ar
 // Do we even want to share declarations from one query to the next?
 
 // FIXME: name is redundant... formula only used for subterms...
+// arity also redundant
 
 Z3_func_decl mk_func_decl(Z3_context ctx, const atom_t name, const size_t arity, const term_t formula, term_t range) {
    const char *name_string = PL_atom_chars(name);
-   INFO("making function declaration based on %s/%lu\n", name_string, arity);
+   DEBUG("making function declaration based on %s/%lu\n", name_string, arity);
    Z3_symbol symbol = Z3_mk_string_symbol(ctx, name_string);
    Z3_sort *domain = malloc(sizeof(Z3_sort) * arity);
    DEBUG("domain is %p\n", domain);
@@ -744,7 +745,7 @@ Z3_func_decl mk_func_decl(Z3_context ctx, const atom_t name, const size_t arity,
      }
    }
    else {
-     ERROR("Found existing declaration for %s/%ld\n", name_string, arity);
+     DEBUG("Found existing declaration for %s/%ld\n", name_string, arity);
      Z3_func_decl test =  Z3_mk_func_decl(ctx, symbol, arity, arity == 0 ?  0 : domain, range_sort);
      if (test != result) {
        ERROR("New declaration for %s different from old one\n", name_string);
@@ -793,7 +794,7 @@ foreign_t z3_function_declaration_foreign(const term_t formula, const term_t ran
   const Z3_context ctx = get_context();
   Z3_func_decl decl = mk_func_decl(ctx, name, arity, formula, range);
   if (decl == NULL) {
-    INFO("failing, mk_func_decl is NULL\n");
+    DEBUG("failing, mk_func_decl is NULL\n");
     return FALSE;
   }
   return PL_unify_pointer(result, decl);
@@ -1194,7 +1195,7 @@ Z3_ast term_to_ast(const Z3_context ctx, const term_t formula) {
       // to catch inconsistent uses of the same constant.
       atom_t name_atom;
       res = PL_get_atom(name_term, &name_atom);
-      INFO("Declaring for %s\n", name_string);
+      DEBUG("Declaring for %s\n", name_string);
       Z3_func_decl decl = mk_func_decl(ctx, name_atom, 0, 0, range);
       if (decl == NULL) {
 	ERROR("Failed making decl\n");

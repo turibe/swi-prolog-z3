@@ -175,11 +175,6 @@ test(solver_pop, [fail]) :-
     z3_solver_push(S, 1),
     z3_solver_pop(S, 10, _X).
 
-%% TODO: this does not work because a gets default int:
-% z3_mk_solver(S), z3_assert(S, a),  z3_solver_check(S,R), z3_solver_get_model(S,M), z3_model_eval(M, not(a), V).
-%% this does not work because need a:bool on eval:
-% z3_mk_solver(S), z3_assert(S, a:bool),  z3_solver_check(S,R), z3_solver_get_model(S,M), z3_model_eval(M, not(a), V).
-
 
 test(get_assertions) :-
     z3_reset_declarations,
@@ -212,12 +207,26 @@ test(roundtrips2) :-
     term_to_z3_ast(Term, X), z3_ast_to_term(X,Y),
     assertion(Y == Term).
 
-%% works if we add z3_declare(a,bool) or z3_function_declaration(a, bool).
-%% issue is that z3_assert(S, a:bool) does not declare a.
-test(was_broken, ) :-
-    z3_reset_declarations, z3_mk_solver(S), z3_assert(S, a:bool), z3_solver_check(S,R), z3_solver_get_model(S,M), z3_model_eval(M, not(a), V).
+%% TODO: this does not work because a gets default int:
+test(default_int_fail, [fail]) :-
+    z3_reset_declarations,
+    z3_mk_solver(S), z3_assert(S, a),  z3_solver_check(S, _R), z3_solver_get_model(S, M), z3_model_eval(M, not(a), _V).
 
-test(works) :-
+%% z3_assert(S, a:bool) now declares a
+test(was_broken, [true(V==false), true(R==l_true)]) :-
+    z3_reset_declarations,
+    z3_mk_solver(S), z3_assert(S, a:bool), z3_solver_check(S,R), z3_solver_get_model(S,M), z3_model_eval(M, not(a), V).
+
+test(should_fail, [fail]) :-
+    z3_reset_declarations,
+    z3_mk_solver(S), z3_assert(S, a:bool), z3_assert(S, a:int > 1).
+
+%% TODO: fix this one?
+test(not_caught) :-
+    z3_reset_declarations,
+    z3_mk_solver(S), z3_assert(S, a:bool), z3_assert(S, a > -1), z3_solver_check(S, l_true).
+
+test(works, [true(V==false), true(R==l_true)]) :-
     z3_reset_declarations, z3_mk_solver(S), z3_assert(S, a:bool), z3_solver_check(S,R), z3_solver_get_model(S,M), z3_model_eval(M, not(a:bool), V).
     
 
