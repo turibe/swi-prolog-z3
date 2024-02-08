@@ -702,7 +702,15 @@ foreign_t z3_solver_check_and_print_foreign(term_t solver_term, term_t status_ar
 // FIXME: name is redundant... formula only used for subterms...
 // arity also redundant
 
-Z3_func_decl mk_func_decl(Z3_context ctx, const atom_t name, const size_t arity, const term_t formula, term_t range) {
+Z3_func_decl mk_func_decl(Z3_context ctx, const term_t formula, term_t range) {
+   atom_t name;
+   size_t arity;
+   int res = PL_get_name_arity(formula, &name, &arity);
+   if (!res) {
+     ERROR("Bad argument to mk_func_decl");
+     return NULL;
+   }
+
    const char *name_string = PL_atom_chars(name);
    DEBUG("making function declaration based on %s/%lu\n", name_string, arity);
    Z3_symbol symbol = Z3_mk_string_symbol(ctx, name_string);
@@ -714,12 +722,12 @@ Z3_func_decl mk_func_decl(Z3_context ctx, const atom_t name, const size_t arity,
      DEBUG("Argument %d, res is %d\n", i, res);
      if (!res) {
        ERROR("PL_get_arg in mk_func_decl failed\n");
-       return FALSE;
+       return NULL;
      }
      domain[i-1] = mk_sort(ctx, a);
      if (domain[i-1] == NULL) {
        INFO("mk_func_decl returning NULL\n");
-       return FALSE;
+       return NULL;
      }
      DEBUG("Made domain %s\n", Z3_ast_to_string(ctx, (Z3_ast) domain[i-1]));
    }
@@ -732,7 +740,7 @@ Z3_func_decl mk_func_decl(Z3_context ctx, const atom_t name, const size_t arity,
      ERROR("Formula was %s\n", fchars);
      res = PL_get_chars(range, &fchars, CVT_WRITE);
      ERROR("Range was %s\n", fchars);
-     return FALSE;
+     return NULL;
    }
    // FIXME: this breaks the tests:
    Z3_func_decl result = get_function_declaration(ctx, name_string, arity);
@@ -749,7 +757,7 @@ Z3_func_decl mk_func_decl(Z3_context ctx, const atom_t name, const size_t arity,
      Z3_func_decl test =  Z3_mk_func_decl(ctx, symbol, arity, arity == 0 ?  0 : domain, range_sort);
      if (test != result) {
        ERROR("New declaration for %s different from old one\n", name_string);
-       result = FALSE; // FIXME: this avoids silent failure, but unit tests fail, since we are re-declaring things all the time.
+       result = NULL; // FIXME: this avoids silent failure, but unit tests fail, since we are re-declaring things all the time.
        // TODO: try just letting the new one overwrite the old one. Combined with the backtrackable typemap, should be safe.
      }
    }
@@ -792,7 +800,7 @@ foreign_t z3_function_declaration_foreign(const term_t formula, const term_t ran
     return FALSE;
   }
   const Z3_context ctx = get_context();
-  Z3_func_decl decl = mk_func_decl(ctx, name, arity, formula, range);
+  Z3_func_decl decl = mk_func_decl(ctx, formula, range);
   if (decl == NULL) {
     DEBUG("failing, mk_func_decl is NULL\n");
     return FALSE;
@@ -1196,7 +1204,7 @@ Z3_ast term_to_ast(const Z3_context ctx, const term_t formula) {
       atom_t name_atom;
       res = PL_get_atom(name_term, &name_atom);
       DEBUG("Declaring for %s\n", name_string);
-      Z3_func_decl decl = mk_func_decl(ctx, name_atom, 0, 0, range);
+      Z3_func_decl decl = mk_func_decl(ctx, name_term, range);
       if (decl == NULL) {
 	ERROR("Failed making decl\n");
 	return NULL;
