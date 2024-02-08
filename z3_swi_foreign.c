@@ -756,7 +756,7 @@ Z3_func_decl mk_func_decl(Z3_context ctx, const term_t formula, term_t range) {
      DEBUG("Found existing declaration for %s/%ld\n", name_string, arity);
      Z3_func_decl test =  Z3_mk_func_decl(ctx, symbol, arity, arity == 0 ?  0 : domain, range_sort);
      if (test != result) {
-       ERROR("New declaration for %s different from old one\n", name_string);
+       ERROR("New declaration for \"%s\" is different from old one. Try z3_reset_declarations.\n", name_string);
        result = NULL; // FIXME: this avoids silent failure, but unit tests fail, since we are re-declaring things all the time.
        // TODO: try just letting the new one overwrite the old one. Combined with the backtrackable typemap, should be safe.
      }
@@ -818,8 +818,9 @@ foreign_t model_functions(Z3_context ctx, Z3_model m, term_t list) {
   for (unsigned i = 0; i < num_funcs; i++) {
     Z3_func_decl fdecl = Z3_model_get_func_decl(ctx, m, i);
     Z3_symbol symbol = Z3_get_decl_name(ctx, fdecl);
-    Z3_string function_name = Z3_get_symbol_string(ctx, symbol);
-    DEBUG("Function is %s\n", function_name);
+    // must be careful with this, next call to Z3_get_symbol_string invalidates it:
+    // const Z3_string function_name = Z3_get_symbol_string(ctx, symbol);
+    DEBUG("Function is %s\n", Z3_get_symbol_string(ctx, symbol));
 
     Z3_func_interp finterp = Z3_model_get_func_interp(ctx, m, fdecl);
     if (finterp == NULL) {
@@ -854,7 +855,9 @@ foreign_t model_functions(Z3_context ctx, Z3_model m, term_t list) {
 	  return FALSE;
 	}
       }
-      
+
+      const Z3_string function_name = Z3_get_symbol_string(ctx, symbol);
+      DEBUG("Making func using %s\n", function_name);
       functor_t func = PL_new_functor(PL_new_atom(function_name), arity);
       if (!PL_cons_functor_v(lhs, func, subterms)) {
 	return FALSE;
@@ -890,6 +893,7 @@ foreign_t model_functions(Z3_context ctx, Z3_model m, term_t list) {
     functor_t else_functor = PL_new_functor(PL_new_atom("else"), 2);
     term_t else_term = PL_new_term_ref();
     term_t fname_term = PL_new_term_ref();
+    const Z3_string function_name = Z3_get_symbol_string(ctx, symbol);
     PL_put_atom_chars(fname_term, function_name);
     if (!PL_cons_functor(else_term, else_functor, fname_term, else_value)) {
       return FALSE;
@@ -914,7 +918,8 @@ foreign_t model_constants(const Z3_context ctx, const Z3_model m, term_t list) {
   for (unsigned i = 0; i < num_consts; i++) {
     Z3_func_decl fdecl = Z3_model_get_const_decl(ctx, m, i);
     Z3_symbol symbol = Z3_get_decl_name(ctx, fdecl);
-    Z3_string constant_name = Z3_get_symbol_string(ctx, symbol);
+    // note: must make sure there's no other use of Z3_get_symbol_string between now and when we use constant_name:
+    const Z3_string constant_name = Z3_get_symbol_string(ctx, symbol);
     DEBUG("Constant is %s\n", constant_name);
 
     Z3_ast value = Z3_model_get_const_interp(ctx, m, fdecl);
@@ -956,7 +961,7 @@ foreign_t model_constants(const Z3_context ctx, const Z3_model m, term_t list) {
 
 
 foreign_t z3_model_functions_foreign(term_t model_term, term_t list) {
-  Z3_context ctx = get_context();
+  const Z3_context ctx = get_context();
   Z3_model model;
   int rval = PL_get_pointer_ex(model_term, (void **) &model);
   if (!rval) {
@@ -1003,9 +1008,9 @@ Z3_sort mk_sort(Z3_context ctx, term_t expression) {
       return Z3_mk_real_sort(ctx); // not the same as a floating point number in Z3
       // return Z3_mk_fpa_sort_double(ctx);
     }
-    Z3_symbol Uninterpreted_name = Z3_mk_string_symbol(ctx, name_string);
-    DEBUG("Making uninterpreted sort for %s\n", name_string);
-    return Z3_mk_uninterpreted_sort(ctx, Uninterpreted_name);
+    Z3_symbol uninterpreted_name = Z3_mk_string_symbol(ctx, name_string);
+    INFO("Making uninterpreted sort for %s\n", name_string);
+    return Z3_mk_uninterpreted_sort(ctx, uninterpreted_name);
     break;
   }
   case PL_TERM:
@@ -1330,6 +1335,7 @@ Z3_ast term_to_ast(const Z3_context ctx, const term_t formula) {
       }
     }
     else { // uninterpreted function
+      INFO("making function declaration for %s\n", name_string);
       Z3_func_decl declaration = get_function_declaration(ctx, name_string, arity);
       if (declaration == NULL) {
         INFO("Could not find declaration for %s/%lu\n", name_string, arity);
