@@ -171,7 +171,7 @@ ground_list([], [], S) :- ord_empty(S).
 %% We now use backtrackable types. Confusing that types remain but assertions don't.
 %% or use a combination of both?
 %% Problem is that type declarations in Z3 can't be popped.
-%% on the other hand, new declarations over-write old ones... (we're keeping our own map there).
+%% on the other hand, new declarations could over-write old ones in Z3 (TODO)... (we're keeping our own map there).
 %% so if we make sure that the Z3 declarations are always the latest ones, we're OK.
 %% But it is INEFFICIENT.
 
@@ -202,7 +202,8 @@ z3_push(F) :- z3_push(F, l_true).
 
 % maybe: implement with a forall? Only interested in side effect, no unification needed.
 
-declare_types(M, [X|Rest]) :- (get_assoc(X, M, Def) -> z3_declare(X, Def) ; true), !,
+declare_types(M, [X|Rest]) :- (get_assoc(X, M, Def) -> z3_declare(X, Def) ; true),
+			      !,
                               declare_types(M, Rest).
 declare_types(_M, []) :- true.
 

@@ -162,7 +162,6 @@ test(declare_fail_diffent_types1, [fail]) :-
     z3_function_declaration(f(int), bool),
     z3_function_declaration(f(bool), bool).
 
-
 test(solver_push_pop) :-
     z3_mk_solver(S),
     z3_solver_push(S,1),
@@ -181,9 +180,8 @@ test(solver_pop, [fail]) :-
 %% this does not work because need a:bool on eval:
 % z3_mk_solver(S), z3_assert(S, a:bool),  z3_solver_check(S,R), z3_solver_get_model(S,M), z3_model_eval(M, not(a), V).
 
-% The success of this test depends on previous defs for a, b, c, if we don't specify the types.
 
-test(get_asssertions) :-
+test(get_assertions) :-
     z3_reset_declarations,
     z3_mk_solver(S), z3_assert(S, and(c:bool,x:bool)), z3_assert(S, a:int>3), z3_assert(S, b:int>1),
     z3_solver_check(S,R),  z3_solver_assertions(S, List),
@@ -191,9 +189,12 @@ test(get_asssertions) :-
     assertion(List =@= [b>1, a>3, c and x]).
 
 test(real_assertion) :-
-    z3_mk_solver(S), z3_assert(S, x:real = 1.3).
+    z3_reset_declarations,
+    z3_mk_solver(S),
+    z3_assert(S, x:real = 1.3).
 
 test(roundtrips1) :-
+    z3_reset_declarations,
     term_to_z3_ast("i am a string", AS), z3_ast_to_term(AS, PS),
     assertion(PS == "i am a string"),
     term_to_z3_ast(123, A1), z3_ast_to_term(A1, T1),
@@ -209,6 +210,17 @@ test(roundtrips2) :-
     z3_function_declaration(c,bool),
     Term = f(a,b,g(c)), % a and b are int by default.
     term_to_z3_ast(Term, X), z3_ast_to_term(X,Y),
-    assertion(Y == Term).    
+    assertion(Y == Term).
+
+%% works if we add z3_declare(a,bool) or z3_function_declaration(a, bool).
+%% issue is that z3_assert(S, a:bool) does not declare a.
+test(was_broken, ) :-
+    z3_reset_declarations, z3_mk_solver(S), z3_assert(S, a:bool), z3_solver_check(S,R), z3_solver_get_model(S,M), z3_model_eval(M, not(a), V).
+
+test(works) :-
+    z3_reset_declarations, z3_mk_solver(S), z3_assert(S, a:bool), z3_solver_check(S,R), z3_solver_get_model(S,M), z3_model_eval(M, not(a:bool), V).
+    
+
+%% inconsistency: z3_mk_solver(S), z3_function_declaration(f(int), int), z3_assert(S, f(a:int) > 1), z3_assert(S, f(b:bool) > 2).
 
 :- end_tests(foreign_tests).

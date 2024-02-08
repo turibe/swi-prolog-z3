@@ -699,6 +699,8 @@ foreign_t z3_solver_check_and_print_foreign(term_t solver_term, term_t status_ar
 // unless we reset the declarations at each query.
 // Do we even want to share declarations from one query to the next?
 
+// FIXME: name is redundant... formula only used for subterms...
+
 Z3_func_decl mk_func_decl(Z3_context ctx, const atom_t name, const size_t arity, const term_t formula, term_t range) {
    const char *name_string = PL_atom_chars(name);
    INFO("making function declaration based on %s/%lu\n", name_string, arity);
@@ -735,7 +737,7 @@ Z3_func_decl mk_func_decl(Z3_context ctx, const atom_t name, const size_t arity,
    Z3_func_decl result = get_function_declaration(ctx, name_string, arity);
    // FIXME: the question is whether we overwrite existing declarations or not.
    if (result == NULL) {
-     result =  Z3_mk_func_decl(ctx, symbol, arity, arity == 0 ?  0 : domain, range_sort);
+     result = Z3_mk_func_decl(ctx, symbol, arity, arity == 0 ?  0 : domain, range_sort);
      if (result != NULL) {
        register_function_declaration_string(ctx, name_string, arity, result);
        DEBUG("mk_func_decl result is %s\n", Z3_ast_to_string(ctx, Z3_func_decl_to_ast(ctx, result)));
@@ -747,6 +749,7 @@ Z3_func_decl mk_func_decl(Z3_context ctx, const atom_t name, const size_t arity,
      if (test != result) {
        ERROR("New declaration for %s different from old one\n", name_string);
        result = FALSE; // FIXME: this avoids silent failure, but unit tests fail, since we are re-declaring things all the time.
+       // TODO: try just letting the new one overwrite the old one. Combined with the backtrackable typemap, should be safe.
      }
    }
 
@@ -1162,38 +1165,48 @@ Z3_ast term_to_ast(const Z3_context ctx, const term_t formula) {
     const char *name_string = PL_atom_chars(name);
     DEBUG("functor name: %s\n", name_string);
 
-    term_t a = PL_new_term_ref();
     if (strcmp(name_string, ":")==0) { // Path in case : is not handled at the Prolog level.
       // we expect symbol:sort
       if (arity != 2) {
-        ERROR(": should have arity 2, has arity %lu", arity);
+        ERROR(": should have arity 2, but has arity %lu", arity);
         return NULL;
       }
-      res = PL_get_arg(1, formula, a);
+      term_t name_term = PL_new_term_ref();
+      res = PL_get_arg(1, formula, name_term);
       if (!res) {
         ERROR("PL_get_arg 1 failed\n");
         return NULL;
       }
-      Z3_symbol symbol_name = mk_symbol(ctx, a);
-      res = PL_get_arg(2, formula, a);
+      Z3_symbol symbol_name = mk_symbol(ctx, name_term);
+      term_t range = PL_new_term_ref();
+      res = PL_get_arg(2, formula, range);
       if (!res) {
         ERROR("PL_get_arg 2 failed\n");
         return NULL;
       }
-      Z3_sort sort = mk_sort(ctx, a);
+      Z3_sort sort = mk_sort(ctx, range);
       if (sort == NULL) {
         INFO("mk_sort for symbol is null\n");
         return NULL;
       }
-      // FIXME: here we shoud declare...
+      // FIXME: We are converting PL to Z3. We should declare...
       // mk_func_decl(ctx, symbol_name, ...);
       // to catch inconsistent uses of the same constant.
+      atom_t name_atom;
+      res = PL_get_atom(name_term, &name_atom);
+      INFO("Declaring for %s\n", name_string);
+      Z3_func_decl decl = mk_func_decl(ctx, name_atom, 0, 0, range);
+      if (decl == NULL) {
+	ERROR("Failed making decl\n");
+	return NULL;
+      }
       DEBUG("making const\n");
       result = Z3_mk_const(ctx, symbol_name, sort);
       DEBUG("making const result is %s\n", Z3_ast_to_string(ctx, result));
       return result;
     }
 
+    term_t a = PL_new_term_ref();
     Z3_ast *subterms = calloc(arity, sizeof(Z3_ast));
     for (int n=1; n<=arity; ++n) {
       res = PL_get_arg(n, formula, a);

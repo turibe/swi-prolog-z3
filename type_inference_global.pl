@@ -1,7 +1,6 @@
 %%% -*- Mode: Prolog; Module: z3; -*-
     
 :- module(type_inference_global, [
-              reset_types/0,
               show_map/1,
               assert_formula_list_types/1,
               assert_type/2,
@@ -21,20 +20,19 @@
 
 :- use_module(type_inference).
 
-:- initialization(reset_types).
+:- initialization(initialize_map).
 
 %% NEW: we use a backtrackable version.
-%% TODO: Would be nice, for efficiency, to only get the deltas from one type map to the next, and assert only those. But not critical.
+%% TODO: Would be nice, for efficiency, to only get the deltas from one type map to the next, and assert only those.
 
-reset_types :- print_message(information, format("resetting type inference map",[])),
-	       empty_assoc(Empty),
-	       initialize_map(Empty).
+initialize_map :- empty_assoc(Empty),
+		  initialize_map(Empty).
+
+initialize_map(Map) :- nb_setval(global_typemap, Map).
 
 get_map(Map) :- b_getval(global_typemap, Map).
     
 set_map(Map) :- b_setval(global_typemap, Map).
-
-initialize_map(Map) :- nb_setval(global_typemap, Map).
 
 show_map(L) :- get_map(Map),
                assoc_to_list(Map, L).
@@ -55,4 +53,19 @@ assert_type(Term, _Type) :- instantiation_error(Term).
 
 get_type(T, Type) :- get_map(E), typecheck(T, Type, E, _).
 
-%%%%%%%%%%%% TODO: add tests %%%%%%%%%%%
+%%%%%%%%%%%% unit tests %%%%%%%%%%%
+
+:- begin_tests(type_inference_global).
+
+test(init) :-
+    get_map(E), empty_assoc(E).
+
+test(failtest, [fail]) :-
+    assert_type(a, bool), assert_type(a, real).
+
+test(inferencetest, [true(X == int), true(Y = lambda([int], int)) ]) :-
+    assert_formula_list_types([f(a) > 1, b:int > a]),
+    get_type(a, X),
+    get_type(f, Y).
+
+:- end_tests(type_inference_global).
