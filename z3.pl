@@ -29,7 +29,7 @@
               z3_get_global_solver/1,  % returns pointer, not very useful
               z3_get_model/1,
 	      solver_scopes/1,
-	      
+	      z3_model/2,
               z3_model_eval/2,
 	      z3_model_eval/3,
               z3_check_and_print/1,
@@ -151,6 +151,15 @@ internal_assert_and_check(Solver, Formula, Status) :-
     z3_solver_check(Solver, Status).
 
 
+z3_check(Status) :- z3_get_global_solver(S), z3_solver_check(S, Status).
+z3_model(Constants, Functions) :-
+    resolve_solver_depth(_),
+    z3_check(l_true), z3_get_global_solver(S), z3_solver_get_model(S, M),
+    z3_model_constants(M, Constants),
+    z3_model_functions(M, Functions).
+    
+
+
 % TODO: we don't allow overloading by arity. If we keep track of arity here and in type map, can do it.
 ground_version(X, Attr, [Attr]) :- var(X), !, add_attribute(X, Attr).
 ground_version(X, X, []) :- number(X), !, true.
@@ -168,17 +177,18 @@ ground_list([F|Rest], [FG|Grest], Result) :- ground_version(F, FG, GFG), ground_
 ground_list([], [], S) :- ord_empty(S).
 
 
-%% We now use backtrackable types. Confusing that types remain but assertions don't.
-%% or use a combination of both?
+%% We now use backtrackable types, resetting declarations at the first push.
 %% Problem is that type declarations in Z3 can't be popped.
 %% on the other hand, new declarations could over-write old ones in Z3 (TODO)... (we're keeping our own map there).
 %% so if we make sure that the Z3 declarations are always the latest ones, we're OK.
-%% But it is INEFFICIENT.
+
+%% TODO: We could allow different types on different branches if new declarations overwrite old ones without error.
 
 %% FIXME: assert_type should ignore builtins like "atleast", otherwise they can't be overloaded.
 %% also ignore constants 1,2,3, ...
 
 z3_push(F, Status) :-
+    (nb_getval(solver_depth, 0) -> z3_reset_declarations ; true),
     %% report(status("asserting", F)),
     ground_version(F, FG, Symbols),
     (type_inference_global:assert_type(FG, bool) -> true ;
@@ -342,7 +352,7 @@ doit(Formulas, S, R) :-
     Conjunction =.. [and | Formulas],
     z3_assert(S, Conjunction), %% makes a new solver
     z3_solver_check(S, R),
-    z3_solver_get_model(S,M),
+    z3_solver_get_model(S, M),
     z3_model_functions(M, Functions), print(Functions),
     z3_model_constants(M, Constants), print(Constants),
     true.
@@ -430,3 +440,4 @@ test(attributes) :-
 
 :- end_tests(attribute_tests).
 
+:- include(z3_unit_tests).
