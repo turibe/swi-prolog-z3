@@ -44,12 +44,12 @@ fpower(F,A,N,R) :- N > 1, J is N-1, !, fpower(F,A,J,Z), R=..[F,Z].
 
 %% For a given M and N, X will range over the powers of the GCD of M and N between 1 and max(M,N):
 z3gcd(M,N,X) :- fpower(f,a:int,M, Tm),
-		fpower(f,a:int, N, Tn),
-		z3_push(and(a=Tm,a=Tn)),
-		Top is max(M,N),
-		between(2,Top,X),
-		fpower(f,a,X,Tx),
-		z3_is_implied(a=Tx).
+                fpower(f,a:int, N, Tn),
+                z3_push(and(a=Tm,a=Tn)),
+                Top is max(M,N),
+                between(2,Top,X),
+                fpower(f,a,X,Tx),
+                z3_is_implied(a=Tx).
 
 
 test(gcd) :-

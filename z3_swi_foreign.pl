@@ -39,8 +39,8 @@ z3_print_declarations :-
 z3_function_declaration(A,B) :- z3_function_declaration(A,B,_C).
 
 z3_model_map(M, Map) :- z3_model_functions(M, F),
-			z3_model_constants(M, C),
-			Map = model{functions:F, constants:C}.
+                        z3_model_constants(M, C),
+                        Map = model{functions:F, constants:C}.
 
 :- begin_tests(foreign_tests).
 
@@ -218,9 +218,9 @@ test(default_int_fail, [fail]) :-
     z3_assert(S, a),
     z3_solver_check(S, _R),
     setup_call_cleanup(
-	z3_solver_get_model(S, M),
-	z3_model_eval(M, not(a), _V),
-	free_model(M)
+        z3_solver_get_model(S, M),
+        z3_model_eval(M, not(a), _V),
+        free_model(M)
     ).
 
 %% z3_assert(S, a:bool) now declares a

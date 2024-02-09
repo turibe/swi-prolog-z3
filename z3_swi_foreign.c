@@ -848,38 +848,38 @@ foreign_t model_functions(Z3_context ctx, Z3_model m, term_t list) {
       term_t subterms = PL_new_term_refs(arity);
 
       for (unsigned w = 0; w < args; w++) {
-	DEBUG("getting subterm %u\n", w);
-	Z3_ast keyw = Z3_func_entry_get_arg(ctx, point, w);
-	if (!z3_ast_to_term_internal(keyw, subterms+w)) {
-	  return FALSE;
-	}
+        DEBUG("getting subterm %u\n", w);
+        Z3_ast keyw = Z3_func_entry_get_arg(ctx, point, w);
+        if (!z3_ast_to_term_internal(keyw, subterms+w)) {
+          return FALSE;
+        }
       }
 
       const Z3_string function_name = Z3_get_symbol_string(ctx, symbol);
       DEBUG("Making func using %s\n", function_name);
       functor_t func = PL_new_functor(PL_new_atom(function_name), arity);
       if (!PL_cons_functor_v(lhs, func, subterms)) {
-	return FALSE;
+        return FALSE;
       }
 
       DEBUG("making rhs\n");
       term_t rhs = PL_new_term_ref();
       if (!z3_ast_to_term_internal(value, rhs)) {
-	return FALSE;
+        return FALSE;
       }
 
       DEBUG("consing arrow\n");
       functor_t arrow = PL_new_functor(PL_new_atom("->"), 2);
       term_t pair = PL_new_term_ref();
       if (!PL_cons_functor(pair, arrow, lhs, rhs)) {
-	DEBUG("error consing functor\n");
-	return FALSE;
+        DEBUG("error consing functor\n");
+        return FALSE;
       }
       
       DEBUG("consing list\n");
       int r = PL_cons_list(l, pair, l);
       if (!r) {
-	return r;
+        return r;
       }
     }
     
@@ -898,7 +898,7 @@ foreign_t model_functions(Z3_context ctx, Z3_model m, term_t list) {
       return FALSE;
     }
     if (!PL_cons_list(l, else_term, l)) {
-	return FALSE;
+        return FALSE;
     }
     
     Z3_func_interp_dec_ref(ctx, finterp);
@@ -1210,8 +1210,8 @@ Z3_ast term_to_ast(const Z3_context ctx, const term_t formula) {
       DEBUG("Declaring for %s\n", name_string);
       Z3_func_decl decl = mk_func_decl(ctx, name_term, range);
       if (decl == NULL) {
-	ERROR("Failed making decl\n");
-	return NULL;
+        ERROR("Failed making decl\n");
+        return NULL;
       }
       DEBUG("making const\n");
       result = Z3_mk_const(ctx, symbol_name, sort);

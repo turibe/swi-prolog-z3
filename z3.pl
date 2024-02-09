@@ -131,10 +131,10 @@ assert_depth(N) :- b_getval(solver_depth, N).
 %% So, hide push_solver, expose asserts.
 
 push_solver(S) :- z3_get_global_solver(S),
-		  resolve_solver_depth(X),
-		  New is X + 1,
-		  b_setval(solver_depth, New),
-		  z3_solver_push(S, _D).
+                  resolve_solver_depth(X),
+                  New is X + 1,
+                  b_setval(solver_depth, New),
+                  z3_solver_push(S, _D).
 
 %% Note: after z3_push(a:int=14), z3_push(b:int=a-5).
 %%       solver_scopes(X) gives 2.
@@ -143,19 +143,19 @@ push_solver(S) :- z3_get_global_solver(S),
 solver_scopes(N) :- z3_get_global_solver(S), z3_solver_scopes(S,N).
 
 resolve_solver_depth(X) :- b_getval(solver_depth, X),
-                            solver_scopes(N),
-                            resolve_solver_depth(X, N).
+                           solver_scopes(N),
+                           resolve_solver_depth(X, N).
 
 resolve_solver_depth(X, Scopes) :- X >= Scopes,
                                        % report(status("scopes OK", Scopes, X)),
                                        !.
 resolve_solver_depth(X, Scopes) :- X < Scopes,
-                                      % report(status("need to pop", Scopes, X)),
-                                      Numpops is Scopes - X,
-                                      popn(Numpops).
+                                   % report(status("need to pop", Scopes, X)),
+                                   Numpops is Scopes - X,
+                                   popn(Numpops).
 
 popn(Numpops) :- z3_get_global_solver(S),
-		 z3_solver_pop(S, Numpops, _) -> true ; report("error popping Z3 solver\n").
+                 z3_solver_pop(S, Numpops, _) -> true ; report("error popping Z3 solver\n").
 
 
 % should not be used directly. Types in Formula could clash with previously defined types,
@@ -169,9 +169,9 @@ z3_check(Status) :- z3_get_global_solver(S), z3_solver_check(S, Status).
 
 z3_model_map_for_solver(S, Model) :-
     setup_call_cleanup(z3_solver_get_model(S,M),
-		       z3_swi_foreign:z3_model_map(M, Model),
-		       z3_free_model(M)
-		      ).
+                       z3_swi_foreign:z3_model_map(M, Model),
+                       z3_free_model(M)
+                      ).
 
 
 z3_model_map(Model) :-
@@ -187,12 +187,12 @@ ground_version(X, Attr, [Attr]) :- var(X), !, add_attribute(X, Attr).
 ground_version(X, X, []) :- number(X), !, true.
 ground_version(X, X, [X]) :- atom(X), !, true.
 ground_version(C, XG:T, Result) :- compound(C), C = X:T, !,
-				   (ground(T) -> true ; type_error(ground, T)),
-				   ground_version(X, XG, Result).
+                                   (ground(T) -> true ; type_error(ground, T)),
+                                   ground_version(X, XG, Result).
 ground_version(X, G, Result) :- X =.. [F|Rest],
-				ground_list(Rest, Grest, R),
-				G =.. [F|Grest],
-				ord_add_element(R, F, Result).
+                                ground_list(Rest, Grest, R),
+                                G =.. [F|Grest],
+                                ord_add_element(R, F, Result).
 
 
 ground_list([F|Rest], [FG|Grest], Result) :- ground_version(F, FG, GFG), ground_list(Rest, Grest, Arest), ord_union(GFG, Arest, Result).
@@ -235,7 +235,7 @@ z3_push(F) :- z3_push(F, l_true).
 % maybe: implement with a forall? Only interested in side effect, no unification needed.
 
 declare_types(M, [X|Rest]) :- (get_assoc(X, M, Def) -> z3_declare(X, Def) ; true),
-			      !,
+                              !,
                               declare_types(M, Rest).
 declare_types(_M, []) :- true.
 
@@ -247,15 +247,15 @@ z3_check_and_print(Status) :- z3_print_status(Status).
 print_declarations :- z3_declarations_string(S), current_output(Out), write(Out, S).
 
 z3_eval(Expression, Result) :-  \+ is_list(Expression),
-                               z3_get_global_solver(S),
-                               z3_solver_check(S, Status),
-                               Status == l_true, % TODO: investigate l_undef
-			       replace_var_attributes(Expression, E1),
-			       setup_call_cleanup(
-				   z3_solver_get_model(S, Model),
-				   z3_swi_foreign:z3_model_eval(Model, E1, Result),
-				   z3_free_model(Model)
-			       ).
+                                z3_get_global_solver(S),
+                                z3_solver_check(S, Status),
+                                Status == l_true, % TODO: investigate l_undef
+                                replace_var_attributes(Expression, E1),
+                                setup_call_cleanup(
+                                    z3_solver_get_model(S, Model),
+                                    z3_swi_foreign:z3_model_eval(Model, E1, Result),
+                                    z3_free_model(Model)
+                                ).
 
 z3_eval([], []) :- !, true.
 z3_eval([X|Rest],[EX|Erest]) :-
@@ -267,8 +267,8 @@ z3_eval([X|Rest],[EX|Erest]) :-
 replace_var_attributes(X, A) :- var(X), get_attr(X, z3, A), !, true.
 replace_var_attributes(X, X) :- \+ compound(X), !, true.
 replace_var_attributes(X, R) :- compound(X),
-				mapargs(replace_var_attributes, X, R).
-				    
+                                mapargs(replace_var_attributes, X, R).
+
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% lower level (used to be z3_wrapper.pl) %%%%%%
 
