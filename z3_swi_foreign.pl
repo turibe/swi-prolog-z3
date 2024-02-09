@@ -21,8 +21,7 @@
 	      z3_solver_push/2,
 	      z3_solver_pop/3,
 	      z3_solver_assertions/2,
-	      z3_model_functions/2,
-	      z3_model_constants/2,
+	      z3_model_map/2,
 	      op(750, xfy, and), % =, >, etc. are 700 ; Local to the module
               op(751, xfy, or),
               op(740, xfy, <>)
@@ -38,6 +37,10 @@ z3_print_declarations :-
 %% returned pointer is only useful for debugging, so we hide it here:
 %% FIXME: change name, clarify semantics. New declarations don't override old ones?
 z3_function_declaration(A,B) :- z3_function_declaration(A,B,_C).
+
+z3_model_map(M, Map) :- z3_model_functions(M, F),
+			z3_model_constants(M, C),
+			Map = model{functions:F, constants:C}.
 
 :- begin_tests(foreign_tests).
 
@@ -164,11 +167,11 @@ test(declare_fail_diffent_types1, [fail]) :-
 
 test(solver_push_pop) :-
     z3_mk_solver(S),
-    z3_solver_push(S,1),
-    z3_solver_push(S,2),
-    z3_solver_scopes(S,2),
-    z3_solver_pop(S,1,X),
-    assertion(X == 1).
+    z3_solver_push(S, 1),
+    z3_solver_push(S, 2),
+    z3_solver_scopes(S, 2),
+    z3_solver_pop(S, 1, New_scopes),
+    assertion(New_scopes == 1).
 
 test(solver_pop, [fail]) :-
     z3_mk_solver(S),
@@ -207,7 +210,7 @@ test(roundtrips2) :-
     term_to_z3_ast(Term, X), z3_ast_to_term(X,Y),
     assertion(Y == Term).
 
-%% TODO: this does not work because a gets default int:
+%% TODO: this does not work because "a" gets type int by default
 test(default_int_fail, [fail]) :-
     z3_reset_declarations,
     z3_mk_solver(S), z3_assert(S, a),  z3_solver_check(S, _R), z3_solver_get_model(S, M), z3_model_eval(M, not(a), _V).

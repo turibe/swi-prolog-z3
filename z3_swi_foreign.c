@@ -712,7 +712,7 @@ Z3_func_decl mk_func_decl(Z3_context ctx, const term_t formula, term_t range) {
    }
 
    const char *name_string = PL_atom_chars(name);
-   DEBUG("making function declaration based on %s/%lu\n", name_string, arity);
+   DEBUG("Making function declaration based on %s/%lu\n", name_string, arity);
    Z3_symbol symbol = Z3_mk_string_symbol(ctx, name_string);
    Z3_sort *domain = malloc(sizeof(Z3_sort) * arity);
    DEBUG("domain is %p\n", domain);
@@ -807,7 +807,6 @@ foreign_t z3_function_declaration_foreign(const term_t formula, const term_t ran
   }
   return PL_unify_pointer(result, decl);
 }
-
 
 
 foreign_t model_functions(Z3_context ctx, Z3_model m, term_t list) {
@@ -1009,7 +1008,7 @@ Z3_sort mk_sort(Z3_context ctx, term_t expression) {
       // return Z3_mk_fpa_sort_double(ctx);
     }
     Z3_symbol uninterpreted_name = Z3_mk_string_symbol(ctx, name_string);
-    INFO("Making uninterpreted sort for %s\n", name_string);
+    DEBUG("Making uninterpreted sort for %s\n", name_string);
     return Z3_mk_uninterpreted_sort(ctx, uninterpreted_name);
     break;
   }
@@ -1335,7 +1334,7 @@ Z3_ast term_to_ast(const Z3_context ctx, const term_t formula) {
       }
     }
     else { // uninterpreted function
-      INFO("making function declaration for %s\n", name_string);
+      DEBUG("Making function declaration for %s\n", name_string);
       Z3_func_decl declaration = get_function_declaration(ctx, name_string, arity);
       if (declaration == NULL) {
         INFO("Could not find declaration for %s/%lu\n", name_string, arity);

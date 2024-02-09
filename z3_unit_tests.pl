@@ -1,8 +1,10 @@
 %%% -*- Mode: Prolog; Module: z3; -*-
 
+%% This file is included by z3.pl, for additional unit tests:
+
 % :- use_module(z3).
 
-:- begin_tests(additional_z3_tests).
+:- begin_tests(z3_pl_tests).
 
 test(findall, [true(R == [a,c]) ] ) :-
     z3_push(f(a:int) = b:int),
@@ -14,7 +16,7 @@ test(findall, [true(R == [a,c]) ] ) :-
 test(declare_lambda) :-
     z3_push(a:int>10),
     z3_push(b:int > 12),
-    z3_push_and_print(a=b),
+    z3_push(a=b),
     z3_declare(f,lambda([int],int)),
     % z3_push_and_print(f(a)>b).
     z3_push(f(a) > b).
@@ -22,11 +24,11 @@ test(declare_lambda) :-
 test(get_model, [true(C == [(a->13), (b->13), (d->4)] ), true(F == [else(f, 20), (f(4)->5)] )]) :-
     z3_push(a:int > 10),
     z3_push(b:int > 12),
-    z3_push_and_print(a=b),
+    z3_push(a=b),
     %% z3_declare(f,lambda([int],int)),
     z3_push((f(a) = 20) and (f(d) = 5)),
     z3_push(f(a) > b),
-    z3_model(C,F).
+    z3_model_map(_X{constants:C,functions:F}).
 
 %%  f^m(a) = a = f^n(a) ⟹  f^(gcd(m,n))(a) = a
 
@@ -40,14 +42,19 @@ fpower(_F,A,0,A) :- !, true.
 fpower(F,A,1,R) :- !, R =..[F,A].
 fpower(F,A,N,R) :- N > 1, J is N-1, !, fpower(F,A,J,Z), R=..[F,Z].
 
+%% For a given M and N, X will range over the powers of the GCD of M and N between 1 and max(M,N):
+z3gcd(M,N,X) :- fpower(f,a:int,M, Tm),
+		fpower(f,a:int, N, Tn),
+		z3_push(and(a=Tm,a=Tn)),
+		Top is max(M,N),
+		between(2,Top,X),
+		fpower(f,a,X,Tx),
+		z3_is_implied(a=Tx).
 
-gcd(M,N,X) :- fpower(f,a:int,M, Tm),
-              fpower(f,a:int, N, Tn),
-              z3_push(and(a=Tm,a=Tn)),
-              Top is max(M,N),
-              between(2,Top,X),
-              fpower(f,a,X,Tx),
-              z3_is_implied(a=Tx).
+
+test(gcd) :-
+    z3gcd(9, 21, 3),
+    z3gcd(100, 2100, 100).
 
 
 test(not_implied, [true(R==l_true)]) :-
@@ -76,10 +83,12 @@ test(conjunction) :-
     z3_push(and(a:int>b,and(b>c,c>d))),
     z3_is_implied(a > d).
 
-%% fixme: "f" is not in the model!
+
 test(model) :-
     z3_push(and(f(a) = b, f(b)=c)),
-    z3_model(C,F).
+    z3_model_map(_X{constants:C, functions:F}),
+    C = [(a->'uninterpreted!val!0'), (b->'uninterpreted!val!1'), (c->'uninterpreted!val!2')],
+    F = [else(f, 'uninterpreted!val!1'), (f('uninterpreted!val!1')->'uninterpreted!val!2')].
 
 
 % consult(swi_relax).
@@ -89,4 +98,4 @@ test(model) :-
 % test_explain(z3_push, [a=1, a=2, a > 1, a = b, b= 1], R).
 
 
-:- end_tests(additional_z3_tests).
+:- end_tests(z3_pl_tests).
