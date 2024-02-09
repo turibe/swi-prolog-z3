@@ -4,24 +4,24 @@
 %% It has no global variables except those in the C code.
 
 :- module(z3_swi_foreign, [
-	      z3_reset_declarations/0,
-	      z3_solver_check/2,
-	      z3_solver_get_model/2,
-	      z3_mk_solver/1,
-	      z3_free_solver/1,
-	      z3_free_model/1,
 	      z3_assert/2,
-	      z3_function_declaration/2,
-	      z3_declarations_string/1,
-	      z3_print_declarations/0,
 	      z3_context/1,
+	      z3_declarations_string/1,
+	      z3_free_model/1,
+	      z3_free_solver/1,
+	      z3_function_declaration/2,
+	      z3_mk_solver/1,
 	      z3_model_eval/3,
-	      z3_solver_check_and_print/2, % calls Z2_model_to_string
-	      z3_solver_scopes/2,
-	      z3_solver_push/2,
-	      z3_solver_pop/3,
-	      z3_solver_assertions/2,
 	      z3_model_map/2,
+	      z3_print_declarations/0,
+	      z3_reset_declarations/0,
+	      z3_solver_assertions/2,
+	      z3_solver_check/2,
+	      z3_solver_check_and_print/2, % calls Z2_model_to_string
+	      z3_solver_get_model/2,
+	      z3_solver_pop/3,
+	      z3_solver_push/2,
+	      z3_solver_scopes/2,
 	      op(750, xfy, and), % =, >, etc. are 700 ; Local to the module
               op(751, xfy, or),
               op(740, xfy, <>)
@@ -105,7 +105,8 @@ test(model_eval) :-
     assertion(z3_model_eval(Model, a+a, 6)),    
     assertion(z3_model_eval(Model, a+b, 5)),
     assertion(z3_model_eval(Model, a*b, 6)),
-    assertion(z3_model_eval(Model, a**b, 9)).
+    assertion(z3_model_eval(Model, a**b, 9)),
+    z3_free_model(Model).
 
 
 test(assert_test) :-
@@ -213,16 +214,30 @@ test(roundtrips2) :-
 %% TODO: this does not work because "a" gets type int by default
 test(default_int_fail, [fail]) :-
     z3_reset_declarations,
-    z3_mk_solver(S), z3_assert(S, a),  z3_solver_check(S, _R), z3_solver_get_model(S, M), z3_model_eval(M, not(a), _V).
+    z3_mk_solver(S),
+    z3_assert(S, a),
+    z3_solver_check(S, _R),
+    setup_call_cleanup(
+	z3_solver_get_model(S, M),
+	z3_model_eval(M, not(a), _V),
+	free_model(M)
+    ).
 
 %% z3_assert(S, a:bool) now declares a
 test(was_broken, [true(V==false), true(R==l_true)]) :-
     z3_reset_declarations,
-    z3_mk_solver(S), z3_assert(S, a:bool), z3_solver_check(S,R), z3_solver_get_model(S,M), z3_model_eval(M, not(a), V).
+    z3_mk_solver(S),
+    z3_assert(S, a:bool),
+    z3_solver_check(S,R),
+    z3_solver_get_model(S,M),
+    z3_model_eval(M, not(a), V),
+    z3_free_model(M).
 
 test(should_fail, [fail]) :-
     z3_reset_declarations,
-    z3_mk_solver(S), z3_assert(S, a:bool), z3_assert(S, a:int > 1).
+    z3_mk_solver(S),
+    z3_assert(S, a:bool),
+    z3_assert(S, a:int > 1).
 
 %% TODO: fix this one?
 test(not_caught) :-
@@ -230,8 +245,14 @@ test(not_caught) :-
     z3_mk_solver(S), z3_assert(S, a:bool), z3_assert(S, a > -1), z3_solver_check(S, l_true).
 
 test(works, [true(V==false), true(R==l_true)]) :-
-    z3_reset_declarations, z3_mk_solver(S), z3_assert(S, a:bool), z3_solver_check(S,R), z3_solver_get_model(S,M), z3_model_eval(M, not(a:bool), V).
-    
+    z3_reset_declarations,
+    z3_mk_solver(S),
+    z3_assert(S, a:bool),
+    z3_solver_check(S,R),
+    z3_solver_get_model(S,M),
+    z3_model_eval(M, not(a:bool), V),
+    z3_free_model(M).
+
 
 %% inconsistency: z3_mk_solver(S), z3_function_declaration(f(int), int), z3_assert(S, f(a:int) > 1), z3_assert(S, f(b:bool) > 2).
 

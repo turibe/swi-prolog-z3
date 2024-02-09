@@ -13,20 +13,19 @@
 
 
 :- module(z3, [
-	      solver_scopes/1,
-	      z3_model_eval/3,
-	      z3_model_map/1,
               declare_type_list/1,
+              solver_scopes/1,
               typecheck_and_declare/2,
               z3_check_and_print/1,
               z3_declare/2,
               z3_entails/1,
               z3_eval/2,
+              z3_eval/2,
               z3_get_global_solver/1,  % returns pointer, not very useful
               z3_implies/1,
               z3_is_consistent/1,
               z3_is_implied/1,
-              z3_model_eval/2,
+              z3_model_map/1,
               z3_print_status/1,
               z3_push/1,
               z3_push/2,
@@ -40,7 +39,7 @@
 
 :- use_module(type_inference_global, [
                   assert_formula_list_types/1,
-                  assert_type/2,		  
+                  assert_type/2,
                   get_map/1
               ]).
 
@@ -168,17 +167,19 @@ internal_assert_and_check(Solver, Formula, Status) :-
 
 z3_check(Status) :- z3_get_global_solver(S), z3_solver_check(S, Status).
 
-z3_model_internal(M, Model) :-
+z3_model_map_for_solver(S, Model) :-
+    setup_call_cleanup(z3_solver_get_model(S,M),
+		       z3_swi_foreign:z3_model_map(M, Model),
+		       z3_free_model(M)
+		      ).
+
+
+z3_model_map(Model) :-
     resolve_solver_depth(_),
     z3_check(l_true),
     z3_get_global_solver(S),
-    z3_solver_get_model(S, M),
-    z3_model_map(M, Model).
+    z3_model_map_for_solver(S, Model).
 
-z3_model_map(Model) :-
-    setup_call_cleanup(true, z3_model_internal(M, Model),
-		       z3_free_model(M)
-		      ).
 
 
 % TODO: we don't allow overloading by arity. If we keep track of arity here and in type map, can do it.
@@ -249,9 +250,10 @@ z3_eval(Expression, Result) :-  \+ is_list(Expression),
                                z3_get_global_solver(S),
                                z3_solver_check(S, Status),
                                Status == l_true, % TODO: investigate l_undef
+			       replace_var_attributes(Expression, E1),
 			       setup_call_cleanup(
 				   z3_solver_get_model(S, Model),
-				   z3_model_eval(Model, Expression, Result),
+				   z3_swi_foreign:z3_model_eval(Model, E1, Result),
 				   z3_free_model(Model)
 			       ).
 
@@ -260,18 +262,8 @@ z3_eval([X|Rest],[EX|Erest]) :-
         z3_eval(X, EX),
         z3_eval(Rest, Erest). % FIXME: make more efficient, do only one check and one get model
 
-z3_get_model(M) :- z3_get_global_solver(S), z3_solver_get_model(S,M).
 
-%% TODO/FIXME: replace variables by their attributes:
-%% Example: z3_push(X=14), z3_push(Y=X-5), Y=9, get_attr(X,z3,A), z3_model_eval(A+1,R). (works)
-%% vs. z3_push(X=14), z3_push(Y=X-5), Y=9, get_attr(X,z3,A), z3_model_eval(X+1,R). (doesn't work)
-
-%% FIXME: clean model
-z3_model_eval(Expression, Result) :- z3_get_model(M),
-				     replace_var_attributes(Expression, E1),
-				     z3_swi_foreign:z3_model_eval(M, E1, Result).
-
-%% A little inefficient for big terms, would be better to do in the C code eval:
+%% A little inefficient for big terms, might be better to do in the C code eval:
 replace_var_attributes(X, A) :- var(X), get_attr(X, z3, A), !, true.
 replace_var_attributes(X, X) :- \+ compound(X), !, true.
 replace_var_attributes(X, R) :- compound(X),
@@ -295,9 +287,6 @@ z3_declare(F:T) :- z3_declare(F, T).
 z3_declare(F, T) :- var(F), !,
                     add_attribute(F, Attr),
                     z3_declare(Attr, T).
-% z3_declare(F, T) :- var(F), \+ var(T), !,
-%                    report(status("Cannot declare vars to have compound type", T)),
-%                    fail.
 z3_declare(F, int) :- integer(F), !, true.
 z3_declare(F, real) :- float(F), !, true.
 z3_declare(F, T) :- atom(T), \+ var(T), !, 
@@ -309,9 +298,6 @@ z3_declare(F, lambda(Arglist, Range)) :- (var(F) -> type_error(nonvar, F) ; true
                                          z3_function_declaration(Fapp, Range).
 
 typecheck_and_declare(Formulas, Assoc) :-
-    %% BUG: these don't work, they do not unify across the assoc.
-    %% forall(gen_assoc(K, Assoc, Val), z3_declare(K, Val)).
-    %% foreach(gen_assoc(K, Assoc, Val), z3_declare(K, Val)).
     assert_formula_list_types(Formulas), !, %% updates the global (backtrackable) type map
     type_inference_global:get_map(Assoc),
     assoc_to_list(Assoc, L),
@@ -366,22 +352,19 @@ test_formulas(Formulas) :-
                .
 
 %% TODO: clean up, remove dependency on reset_globals.
-
 doit(Formulas, S, R) :-
+    test_formulas(Formulas),
     z3_reset_declarations,
     typecheck_and_declare(Formulas, _Assoc),
     Conjunction =.. [and | Formulas],
     z3_assert(S, Conjunction), %% makes a new solver
     z3_solver_check(S, R),
     current_output(Out),
-    z3_model_map(Model), print(Out, Model),
+    z3_model_map_for_solver(S, Model), print(Out, Model),
     true.
 
-doit(R) :-
-    test_formulas(Formulas),
-    doit(Formulas, _Solver, R).
 
-test(sat) :- z3_reset_declarations, doit(R), R =@= l_true.
+test(sat) :- z3_reset_declarations, doit(_F, _S, R), R =@= l_true.
 
 test(typetest) :-
     test_formulas(Formulas),
@@ -460,10 +443,17 @@ test(fail, [fail] ) :-
     X = 10,
     Y = 14.
 
-test(attributes) :-
-    z3_push(X=14), z3_push(Y=X-5), z3_model_eval(X * Y, R),
-    assertion(R == 126).
+test(attributes1, [true(R==126)] ) :-
+    z3_push(X=14), z3_push(Y=X-5), z3_eval(X * Y, R).
 
+test(attributes2, [true(R==15) ] ) :-
+    z3_push(X=14), z3_push(Y=X-5), Y=9, get_attr(X,z3,A), z3_eval(A+1,R).
+
+test(attributes3, [true(R = 14)] ) :-
+    z3_push(X=14), z3_push(Y > X), z3_push(_Z > Y), X = a, z3_eval(a,R).
+
+test(attributes4, [fail] ) :-
+    z3_push(X=14), z3_push(Y > X), z3_push(Z > Y), X = a, Z = a.
 
 :- end_tests(attribute_tests).
 
