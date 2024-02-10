@@ -106,7 +106,8 @@ test(model_eval) :-
     assertion(z3_model_eval(Model, a+b, 5)),
     assertion(z3_model_eval(Model, a*b, 6)),
     assertion(z3_model_eval(Model, a**b, 9)),
-    z3_free_model(Model).
+    z3_free_model(Model),
+    z3_free_solver(S).
 
 
 test(assert_test) :-
@@ -118,18 +119,27 @@ test(assert_test) :-
     z3_assert(S, (a and (b > 0)) and (1.321 < c)),
     z3_solver_check(S, Status),
     assertion(Status == l_true),
-    z3_print_declarations.
+    z3_print_declarations,
+    z3_free_solver(S).
 
 test(bad_types, [fail] ) :-
-    z3_mk_solver(S),
-    z3_function_declaration(a, real),
-    z3_assert(S, a=3).
+    setup_call_cleanup(
+        z3_mk_solver(S),
+        (z3_function_declaration(a, real),
+         z3_assert(S, a=3)
+        ),
+        z3_free_solver(S)
+    ).
 
 test(no_check, [fail]) :-
-    z3_mk_solver(S),
-    z3_function_declaration(a, int),
-    z3_assert(S, a = 3),
-    z3_solver_get_model(S, _Model).
+    setup_call_cleanup(
+        z3_mk_solver(S),
+        (z3_function_declaration(a, int),
+         z3_assert(S, a = 3),
+         z3_solver_get_model(S, _Model)
+        ),
+        z3_free_solver(S)
+    ).
 
 test(incompatible_types1, [fail]) :-
     z3_mk_solver(S),
@@ -231,27 +241,38 @@ test(was_broken, [true(V==false), true(R==l_true)]) :-
     z3_solver_check(S,R),
     z3_solver_get_model(S,M),
     z3_model_eval(M, not(a), V),
-    z3_free_model(M).
+    z3_free_model(M),
+    z3_free_solver(S).
 
 test(should_fail, [fail]) :-
     z3_reset_declarations,
-    z3_mk_solver(S),
-    z3_assert(S, a:bool),
-    z3_assert(S, a:int > 1).
+    setup_call_cleanup(
+        z3_mk_solver(S),
+        (z3_assert(S, a:bool),
+         z3_assert(S, a:int > 1)
+        ),
+        z3_free_solver(S)
+    ).
 
 %% TODO: fix this one?
 test(not_caught) :-
     z3_reset_declarations,
-    z3_mk_solver(S), z3_assert(S, a:bool), z3_assert(S, a > -1), z3_solver_check(S, l_true).
+    z3_mk_solver(S),
+    z3_assert(S, a:bool),
+    z3_assert(S, a > -1),
+    z3_solver_check(S, l_true),
+    z3_free_solver(S).
 
 test(works, [true(V==false), true(R==l_true)]) :-
     z3_reset_declarations,
     z3_mk_solver(S),
     z3_assert(S, a:bool),
-    z3_solver_check(S,R),
-    z3_solver_get_model(S,M),
-    z3_model_eval(M, not(a:bool), V),
-    z3_free_model(M).
+    z3_solver_check(S, R),
+    setup_call_cleanup(
+        z3_solver_get_model(S, M),
+        z3_model_eval(M, not(a:bool), V),
+        z3_free_model(M)
+    ).
 
 
 %% inconsistency: z3_mk_solver(S), z3_function_declaration(f(int), int), z3_assert(S, f(a:int) > 1), z3_assert(S, f(b:bool) > 2).

@@ -4,12 +4,13 @@
 %
 % - Typechecking and declaring Z3 variables and functions
 % - Attributed variables
-% - pushing assertions
+% - pushing and popping assertions on the solver as we assert and backtrack
 %
-% For incrementality, this module maintains a non-backtrackable global_solver, where the push and pops happen.
+% For incrementality, this module maintains a global_solver, where the push and pops happen.
+% So even though it is a single Z3 C object, kept in a non-backtrackable Prolog variable, it is meant to works as a backtrackable one.
 %
-% ???? Do we need/want type_inference_global?
-% It also keeps track of a type map.
+% type_inference_global does keep a backtrackable type map.
+%
 
 
 :- module(z3, [
@@ -63,7 +64,6 @@
 		  z3_solver_push/2,
 		  z3_solver_scopes/2
 	      ]).
-:- use_module(quickexplain).
 
 %% have a global variable, backtrackable, with the depth level.
 %% before the assert, check that variable, and pop the solver as many times as needed.
@@ -88,6 +88,8 @@ inc_var_count(X) :- nb_getval(varcount, X),
                     New is X + 1,
                     nb_setval(varcount, New).
 
+%%%%% Attribute (Prolog) variables %%%%%%%%%%
+
 add_attribute(V, Attr) :- var(V),
                           get_attr(V, z3, Attr), !, %  equality should already be asserted
                           true.
@@ -95,8 +97,6 @@ add_attribute(V, Attr) :- var(V),
                           inc_var_count(Count),
                           atom_concat(v_, Count, Attr),
                           put_attr(V, z3, Attr).
-                          % z3_push(==(V, Attr), R), % need push, pop, etc. // FIXME: we are declaring a lot of things over and over
-                          % \+ R = l_false.
 
 attribute_goals(V) :- get_attr(V, z3, Attr),
                       z3_push(==(V, Attr), R),
@@ -113,6 +113,7 @@ attr_unify_hook(Attr, Formula) :-
     %% report(status("Hook got", Attr, Formula)),
     z3_push(==(Attr, Formula), R), \+ (R = l_false).
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %% should only be called at the top-most level:
 reset_global_solver :-
@@ -167,13 +168,14 @@ internal_assert_and_check(Solver, Formula, Status) :-
 
 z3_check(Status) :- z3_get_global_solver(S), z3_solver_check(S, Status).
 
+% gets a Prolog term representing a model for the given solver S:
 z3_model_map_for_solver(S, Model) :-
     setup_call_cleanup(z3_solver_get_model(S,M),
                        z3_swi_foreign:z3_model_map(M, Model),
                        z3_free_model(M)
                       ).
 
-
+% returns a model for the current solver, if check succeeds:
 z3_model_map(Model) :-
     resolve_solver_depth(_),
     z3_check(l_true),
@@ -181,10 +183,9 @@ z3_model_map(Model) :-
     z3_model_map_for_solver(S, Model).
 
 
-
 % TODO: we don't allow overloading by arity. If we keep track of arity here and in type map, can do it.
 ground_version(X, Attr, [Attr]) :- var(X), !, add_attribute(X, Attr).
-ground_version(X, X, []) :- number(X), !, true.
+ground_version(X, X, S) :- number(X), !, ord_empty(S).
 ground_version(X, X, [X]) :- atom(X), !, true.
 ground_version(C, XG:T, Result) :- compound(C), C = X:T, !,
                                    (ground(T) -> true ; type_error(ground, T)),
@@ -211,6 +212,7 @@ ground_list([], [], S) :- ord_empty(S).
 
 z3_push(F, Status) :-
     (nb_getval(solver_depth, 0) -> z3_reset_declarations ; true),
+    type_inference_global:get_map(OldAssoc),
     %% report(status("asserting", F)),
     ground_version(F, FG, Symbols),
     (type_inference_global:assert_type(FG, bool) -> true ;
@@ -219,14 +221,14 @@ z3_push(F, Status) :-
       report(map(L)),
       fail)),
     type_inference_global:get_map(Assoc),
-    % TODO: use only the ones in F? FIXME: this redeclares everything at each push!!! ???
-    % The proper fix is for type_inference to return the new bindings, and only assert those.
-    % could do a diff between the maps... expensive, but don't see another easy solution right now.
-    declare_types(Assoc, Symbols),
+    %% we only need to declare new symbols:
+    exclude(>>({OldAssoc}/[X], get_assoc(X, OldAssoc, _Y)), Symbols, NewSymbols),
+    %% writeln(compare(Symbols, NewSymbols)),
+    declare_types(Assoc, NewSymbols),
     push_solver(Solver),
     internal_assert_and_check(Solver, FG, Status).
 
-% z3_push fails if solver reports inconsistency
+% z3_push fails if solver reports inconsistency:
 z3_push(F) :- z3_push(F, l_true).
 
 % does not work:
@@ -284,14 +286,18 @@ z3_declare(F:T) :- z3_declare(F, T).
 % TODO/QUESTION: do we need attributed variables at all? Guess so, if other solvers will connect to it.
 % Old: If T is a var, the variable works as its own sort. % The z3_function_declaration code unifies it with an undef_sort_X atom.
 % New: we unify it here.
+% TODO: add tests.
 z3_declare(F, T) :- var(F), !,
                     add_attribute(F, Attr),
                     z3_declare(Attr, T).
 z3_declare(F, int) :- integer(F), !, true.
 z3_declare(F, real) :- float(F), !, true.
-z3_declare(F, T) :- atom(T), \+ var(T), !, 
+z3_declare(F, T) :- atom(T), !,
+                    writeln(declaring(F)),
                     z3_function_declaration(F, T).
-z3_declare(F, T) :- var(T), !, T = uninterpreted, z3_function_declaration(F, T).
+z3_declare(F, T) :- var(T), !,
+                    T = uninterpreted,
+                    z3_function_declaration(F, T).
 z3_declare(F, lambda(Arglist, Range)) :- (var(F) -> type_error(nonvar, F) ; true), !,
                                          Fapp =.. [F|Arglist],
                                          (var(Range) -> Range = uninterpreted ; true), !,
@@ -317,6 +323,7 @@ z3_push_and_print(F,R) :- z3_push(F,R), z3_print_status(R).
 
 z3_push_and_print(F) :- z3_push_and_print(F, _R).
 
+%% succeeds if F is consistent with the current context:
 z3_is_consistent(F) :- z3_push(F, l_true) -> (
                                                   popn(1),
                                                   true
@@ -324,6 +331,7 @@ z3_is_consistent(F) :- z3_push(F, l_true) -> (
                            popn(1),
                            false
                        ).
+
 z3_is_implied(F) :- \+ z3_is_consistent(not(F)).
 
 z3_entails(X) :- z3_is_implied(X).
@@ -410,10 +418,14 @@ test(atleast) :-
 
 test(consistent) :-
     z3_reset_declarations,
-    z3_push(and(a:int>b,b>c,c>d)), \+ z3_is_consistent(d>a).
+    z3_push(and(a:int>b, b>c, c>d)), \+ z3_is_consistent(d>a),
+    z3_is_consistent(a > d),
+    z3_push(a > d).
+
 test(implied) :-
     z3_reset_declarations,
     z3_push(and(a:int>b,b>c,c>d)), z3_is_implied(a>d).
+
 test(boolean) :-
     z3_reset_declarations,
     z3_push(or(and(a:bool, b:bool), not(c:bool))),
