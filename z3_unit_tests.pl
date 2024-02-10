@@ -20,8 +20,7 @@ test(declare_lambda) :-
     z3_push(a:int>10),
     z3_push(b:int > 12),
     z3_push(a=b),
-    z3_declare(f,lambda([int],int)),
-    % z3_push_and_print(f(a)>b).
+    z3_declare(f/1,lambda([int],int)),
     z3_push(f(a) > b).
 
 test(get_model, [true(C == [(a->13), (b->13), (d->4)] ), true(F == [else(f, 20), (f(4)->5)] )]) :-
@@ -91,8 +90,14 @@ test(uninterpreted_model) :-
     z3_reset_declarations,
     z3_push(and(f(a) = b, f(b)=c)),
     z3_model_map(_X{constants:C, functions:F}),
-    C = [(a->'uninterpreted!val!0'), (b->'uninterpreted!val!1'), (c->'uninterpreted!val!2')],
-    F = [else(f, 'uninterpreted!val!1'), (f('uninterpreted!val!1')->'uninterpreted!val!2')].
+    sort(C, C1),
+    assertion(
+        C1 == [(a->'uninterpreted!val!0'), (b->'uninterpreted!val!1'), (c->'uninterpreted!val!2')]
+    ),
+    sort(F, F1),
+    assertion(
+        F1 == [(f('uninterpreted!val!1')->'uninterpreted!val!2'), else(f, 'uninterpreted!val!1')]
+    ).
 
 
 % use_module(quickexplain).

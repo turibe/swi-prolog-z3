@@ -860,6 +860,9 @@ foreign_t model_functions(Z3_context ctx, Z3_model m, term_t list) {
         return r;
       }
     }
+
+    // In a scenario likez3_push(and(f(a:int) = 3, f(a,a) = 4)), z3_model_map(M), z3_check_and_print(R).
+    // need to distinguish the two fs.
     
     DEBUG("getting the else\n");
     Z3_ast felse = Z3_func_interp_get_else(ctx, finterp);
@@ -868,11 +871,20 @@ foreign_t model_functions(Z3_context ctx, Z3_model m, term_t list) {
       return FALSE;
     }
     functor_t else_functor = PL_new_functor(PL_new_atom("else"), 2);
-    term_t else_term = PL_new_term_ref();
+    functor_t slash_functor = PL_new_functor(PL_new_atom("/"), 2);
+    term_t else_term = PL_new_term_ref(); // now needs to include arity
     term_t fname_term = PL_new_term_ref();
+    term_t arity_term = PL_new_term_ref();
+    term_t fname_arity_term = PL_new_term_ref();
     const Z3_string function_name = Z3_get_symbol_string(ctx, symbol);
     PL_put_atom_chars(fname_term, function_name);
-    if (!PL_cons_functor(else_term, else_functor, fname_term, else_value)) {
+    if (!PL_put_integer(arity_term, arity)) {
+      return FALSE;
+    }
+    if (!PL_cons_functor(fname_arity_term, slash_functor, fname_term, arity_term)) {
+      return FALSE;
+    }
+    if (!PL_cons_functor(else_term, else_functor, fname_arity_term, else_value)) {
       return FALSE;
     }
     if (!PL_cons_list(l, else_term, l)) {

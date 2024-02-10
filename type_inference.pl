@@ -102,8 +102,8 @@ declare(Functor, ArgTypes, Result) :-
 :- declare(atleast, allthen(bool, int), bool).
 :- declare(atmost, allthen(bool, int), bool).
 
+% new: we allow overloading by arity.
 % TODO: use attributed variables with finite domains, to represent cases where a var can be one of several types.
-
 
 
 /*******************
@@ -125,9 +125,9 @@ typecheck(T, Type, Envin, Envout) :- member(Type, [int, float, bool]),
 atomic_mappable(X, X) :- atom(X), !, true. % we want to exclude int, string, etc., so just atomic won't do.a
 % atomic_mappable(X, A) :- var(X), !, z3:add_attribute(X, A).
 
-compound_mappable(X) :- compound(X),
-                        functor(X, F, _N),
-                        \+ declared(F).
+compound_mappable(X, N) :- compound(X),
+                           functor(X, F, N),
+                           \+ declared(F).
 
 
 check_length(all(_), _) :- !, true.
@@ -163,16 +163,16 @@ typecheck(X1, T, Envin, Envout) :- atomic_mappable(X1, X), !,
 				   ;
                                    put_assoc(X, Envin, T, Envout)
 				   ).				   
-typecheck(X, Type, Envin, Envout) :- compound_mappable(X), !,
+typecheck(X, Type, Envin, Envout) :- compound_mappable(X,Arity), !,
                                      X =.. [F|Subterms],
-                                     (get_assoc(F, Envin, Funtype) ->
+                                     (get_assoc(F/Arity, Envin, Funtype) ->
 					  Funtype = lambda(Argtypes, Type),
 					  check_signature(Subterms, Argtypes, Envin, Envout)
 				     ;
-                                     length(Subterms, Arity),
+                                     %% length(Subterms, Arity),
                                      length(Argtypes, Arity),
                                      Newtype = lambda(Argtypes, Type),
-                                     put_assoc(F, Envin, Newtype, EnvIntermediate),
+                                     put_assoc(F/Arity, Envin, Newtype, EnvIntermediate),
                                      check_signature(Subterms, Argtypes, EnvIntermediate, Envout)
 				     ).
 
@@ -235,7 +235,7 @@ test(conflict3, [fail]) :-
 
 test(nested) :-
     typecheck(f(f(a:int)), int, M),
-    get_assoc(f, M, lambda([int], int)).
+    get_assoc(f/1, M, lambda([int], int)).
 
 test(nested1, [fail]) :-
     typecheck(f(g(a):int, g(b):bool):int, _X, _M).
@@ -250,7 +250,7 @@ test(divtest, [nondet]) :-
 
 test(ftest) :-
     typecheck(f(a):int, int, M),
-    get_assoc(f, M, lambda([_A], int)).
+    get_assoc(f/1, M, lambda([_A], int)).
 
 test(nodottest) :-
     typecheck(f(a):int, int, M),

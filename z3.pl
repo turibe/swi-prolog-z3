@@ -181,17 +181,20 @@ z3_model_map(Model) :-
     z3_model_map_for_solver(S, Model).
 
 
-% TODO: we don't allow overloading by arity. If we keep track of arity here and in type map, then we can do it.
+% We now allow overloading by arity.
+% Grounds any variables in X, and returns the symbols it finds, using f/N for arities bigger than 1.
 ground_version(X, Attr, [Attr]) :- var(X), !, add_attribute(X, Attr).
 ground_version(X, X, S) :- number(X), !, ord_empty(S).
 ground_version(X, X, [X]) :- atom(X), !, true.
 ground_version(C, XG:T, Result) :- compound(C), C = X:T, !,
                                    (ground(T) -> true ; type_error(ground, T)),
                                    ground_version(X, XG, Result).
-ground_version(X, G, Result) :- X =.. [F|Rest],
+ground_version(X, G, Result) :- compound(X),
+                                functor(X, F, Arity),
+                                X =.. [F|Rest],
                                 ground_list(Rest, Grest, R),
                                 G =.. [F|Grest],
-                                ord_add_element(R, F, Result).
+                                ord_add_element(R, F/Arity, Result).
 
 
 ground_list([], [], S) :- ord_empty(S).
@@ -297,7 +300,10 @@ z3_declare(F, T) :- var(T), !,
                     T = uninterpreted,
                     z3_function_declaration(F, T).
 z3_declare(F, lambda(Arglist, Range)) :- (var(F) -> type_error(nonvar, F) ; true), !,
-                                         Fapp =.. [F|Arglist],
+                                         F = F1/N,
+                                         length(Arglist, Len),
+                                         assertion(N == Len),
+                                         Fapp =.. [F1|Arglist],
                                          (var(Range) -> Range = uninterpreted ; true), !,
                                          z3_function_declaration(Fapp, Range).
 
@@ -368,9 +374,8 @@ test(typetest) :-
     assert_formula_list_types(Formulas),
     type_inference_global:get_map(Map),
     assoc_to_list(Map, R),
-    member(a-int, R),
-    member(f-lambda([foobarsort], int), R),
-    !, true.
+    assertion(member(a-int, R)),
+    assertion(member(f/1-lambda([foobarsort], int), R)).
 
 test(nonsat, [true(R2 == l_false)] ) :-
     check_test_formulas(_Formulas, Solver, _R1),
