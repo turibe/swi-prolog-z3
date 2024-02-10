@@ -194,8 +194,9 @@ ground_version(X, G, Result) :- X =.. [F|Rest],
                                 ord_add_element(R, F, Result).
 
 
-ground_list([F|Rest], [FG|Grest], Result) :- ground_version(F, FG, GFG), ground_list(Rest, Grest, Arest), ord_union(GFG, Arest, Result).
 ground_list([], [], S) :- ord_empty(S).
+ground_list([F|Rest], [FG|Grest], Result) :- ground_version(F, FG, GFG), ground_list(Rest, Grest, Arest), ord_union(GFG, Arest, Result).
+
 
 
 %% We now use backtrackable types, resetting declarations at the first push.
@@ -222,7 +223,7 @@ z3_push(F, Status) :-
     %% we only need to declare new symbols:
     exclude(>>({OldAssoc}/[X], get_assoc(X, OldAssoc, _Y)), Symbols, NewSymbols),
     %% writeln(compare(Symbols, NewSymbols)),
-    declare_types(Assoc, NewSymbols),
+    declare_types(NewSymbols, Assoc),
     push_solver(Solver),
     internal_assert_and_check(Solver, FG, Status).
 
@@ -233,9 +234,9 @@ z3_push(F) :- z3_push(F, R), \+ (R == l_false).
 % {X} :- z3_push{X}.
 
 
-declare_types(M, [X|Rest]) :- (get_assoc(X, M, Def) -> z3_declare(X, Def) ; true), !,
-                              declare_types(M, Rest).
-declare_types(_M, []) :- true.
+declare_types([], _M).
+declare_types([X|Rest], M) :- (get_assoc(X, M, Def) -> z3_declare(X, Def) ; true), !,
+                              declare_types(Rest, M).
 
 
 z3_check_and_print(Status) :-
@@ -256,7 +257,7 @@ z3_eval(Expression, Result) :-  \+ is_list(Expression),
                                     z3_free_model(Model)
                                 ).
 
-z3_eval([], []) :- !, true.
+z3_eval([], []).
 z3_eval([X|Rest],[EX|Erest]) :-
         z3_eval(X, EX),
         z3_eval(Rest, Erest). % FIXME: make more efficient, do only one check and one get model
@@ -307,7 +308,7 @@ typecheck_and_declare(Formulas, Assoc) :-
     declare_type_list(L).
 
 
-declare_type_list([]) :- !, true.
+declare_type_list([]).
 declare_type_list([A-B|R]) :- z3_declare(A, B), declare_type_list(R).
 declare_type_list([A:B|R]) :- z3_declare(A, B), declare_type_list(R).
 
@@ -321,18 +322,13 @@ z3_push_and_print(F,R) :- z3_push(F,R), z3_check_and_print(R1), assertion(R == R
 
 z3_push_and_print(F) :- z3_push_and_print(F, l_true).
 
-%% succeeds if F is consistent with the current context:
+%% succeeds if F is consistent with the current context. Fails if l_undef.
 z3_is_consistent(F) :- setup_call_cleanup(true,
                                           z3_push(F, l_true),
                                           popn(1)
                                          ).
 
 z3_is_implied(F) :- \+ z3_is_consistent(not(F)).
-
-
-%% TODO: could go through all declarations,
-%% call Z3_model_get_const_interp(), but that also returns a Z3_ast.
-%% Looks like to get functions back, have to deal with Z3_func_interp objects.
 
 {}(X) :- z3_push(X).
 
