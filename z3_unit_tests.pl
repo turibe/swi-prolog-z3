@@ -23,14 +23,15 @@ test(declare_lambda) :-
     z3_declare(f/1,lambda([int],int)),
     z3_push(f(a) > b).
 
-test(get_model, [true(C == [(a->13), (b->13), (d->4)] ), true(F == [else(f, 20), (f(4)->5)] )]) :-
+test(get_model, [true(C1 == [(a->13), (b->13), (d->4)] ), true(F1 == [(f(4)->5), else(f/1, 20)] )]) :-
     z3_push(a:int > 10),
     z3_push(b:int > 12),
     z3_push(a=b),
     %% z3_declare(f,lambda([int],int)),
     z3_push((f(a) = 20) and (f(d) = 5)),
     z3_push(f(a) > b),
-    z3_model_map(_X{constants:C,functions:F}).
+    z3_model_map(_X{constants:C,functions:F}),
+    sort(C,C1), sort(F, F1).
 
 %%  f^m(a) = a = f^n(a) ⟹  f^(gcd(m,n))(a) = a
 
@@ -96,7 +97,7 @@ test(uninterpreted_model) :-
     ),
     sort(F, F1),
     assertion(
-        F1 == [(f('uninterpreted!val!1')->'uninterpreted!val!2'), else(f, 'uninterpreted!val!1')]
+        F1 == [(f('uninterpreted!val!1')->'uninterpreted!val!2'), else(f/1, 'uninterpreted!val!1')]
     ).
 
 

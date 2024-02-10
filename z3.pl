@@ -163,7 +163,15 @@ internal_assert_and_check(Solver, Formula, Status) :-
     z3_solver_check(Solver, Status).
 
 
-z3_check(Status) :- z3_get_global_solver(S), z3_solver_check(S, Status).
+z3_check(Status) :-
+    check_status_arg(Status),
+    z3_get_global_solver(S),
+    z3_solver_check(S, Status).
+
+z3_check_and_print(Status) :-
+    check_status_arg(Status),
+    z3_get_global_solver(Solver),
+    z3_swi_foreign:z3_solver_check_and_print(Solver, Status).
 
 
 % gets a Prolog term representing a model for the given solver S:
@@ -200,6 +208,16 @@ ground_version(X, G, Result) :- compound(X),
 ground_list([], [], S) :- ord_empty(S).
 ground_list([F|Rest], [FG|Grest], Result) :- ground_version(F, FG, GFG), ground_list(Rest, Grest, Arest), ord_union(GFG, Arest, Result).
 
+valid_status_list([l_true, l_false, l_undef]).
+valid_status(X) :- valid_status_list(L), member(X, L).
+
+
+check_status_arg(Status) :- var(Status), !, true.
+check_status_arg(Status) :- nonvar(Status),
+                            (valid_status(Status) -> true ; (
+                                valid_status_list(L),
+                                domain_error(L, Status)
+                            )), !.
 
 
 %% We now use backtrackable types, resetting declarations at the first push.
@@ -213,6 +231,7 @@ ground_list([F|Rest], [FG|Grest], Result) :- ground_version(F, FG, GFG), ground_
 %% also ignore constants 1,2,3, ...
 
 z3_push(F, Status) :-
+    check_status_arg(Status),
     (nb_getval(solver_depth, 0) -> z3_reset_declarations ; true),
     type_inference_global:get_map(OldAssoc),
     %% report(status("asserting", F)),
@@ -240,11 +259,6 @@ z3_push(F) :- z3_push(F, R), \+ (R == l_false).
 declare_types([], _M).
 declare_types([X|Rest], M) :- (get_assoc(X, M, Def) -> z3_declare(X, Def) ; true), !,
                               declare_types(Rest, M).
-
-
-z3_check_and_print(Status) :-
-    z3_get_global_solver(Solver),
-    z3_swi_foreign:z3_solver_check_and_print(Solver, Status).
 
 
 print_declarations :- z3_declarations_string(S), current_output(Out), write(Out, S).
