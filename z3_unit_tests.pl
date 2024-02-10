@@ -4,6 +4,9 @@
 
 % :- use_module(z3).
 
+
+%% for coverage: show_coverage(run_tests, [dir(cov)]).
+
 :- begin_tests(z3_pl_tests).
 
 test(findall, [true(R == [a,c]) ] ) :-
@@ -84,18 +87,19 @@ test(conjunction) :-
     z3_is_implied(a > d).
 
 
-test(model) :-
+test(uninterpreted_model) :-
+    z3_reset_declarations,
     z3_push(and(f(a) = b, f(b)=c)),
     z3_model_map(_X{constants:C, functions:F}),
     C = [(a->'uninterpreted!val!0'), (b->'uninterpreted!val!1'), (c->'uninterpreted!val!2')],
     F = [else(f, 'uninterpreted!val!1'), (f('uninterpreted!val!1')->'uninterpreted!val!2')].
 
 
-% consult(swi_relax).
+% use_module(quickexplain).
 
-% test_relax(z3_push, [a=1, a=2, a > 1, a = b], R).
+% qrelax(z3_push, [a=1, a=2, a > 1, a = b], R).
 
-% test_explain(z3_push, [a=1, a=2, a > 1, a = b, b= 1], R).
+% qxplain(z3_push, [a=1, a=2, a > 1, a = b, b= 1], R).
 
 
 :- end_tests(z3_pl_tests).

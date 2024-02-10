@@ -12,24 +12,22 @@
 % type_inference_global does keep a backtrackable type map.
 %
 
-
+% All the user-visible functions rely on an implicit solver, pushed accordingly, and a backtrackable type map:
 :- module(z3, [
-              declare_type_list/1,
-              solver_scopes/1,
-              typecheck_and_declare/2, % typechecks formula and returns assoc
-              z3_check/1,
-              z3_check_and_print/1,
-              z3_declare/2,
-              z3_eval/2,
-              z3_get_global_solver/1,  % returns pointer, not very useful
-              z3_is_consistent/1,
-              z3_is_implied/1,
-              z3_model_map/1,
-              z3_print_status/1,
-              z3_push/1,
-              z3_push/2,
-              z3_push_and_print/1,
-              z3_push_and_print/2,
+              declare_type_list/1,     % +List of Term-Type or Term:Type pairs
+              solver_scopes/1,         % +Num_scopes, starting at 0
+              typecheck_and_declare/2, % +Formula,-Assoc  : Typechecks Formula, declares types, and returns new Assoc
+              z3_check/1,              % +Status Returns status of global solver: l_true, l_false, l_undet
+              z3_check_and_print/1,    % +Status Returns status, prints model if possible
+              z3_declare/2,            % +Formula,+Type    Declares Formula to have Type.
+              z3_eval/2,               % +Expression,-Result  Evals Expression in a current model, if the current solver is SAT.
+              z3_is_consistent/1,      % +Formula  Succeeds if Formula is consistent with current solver/context. Fails if l_undet.
+              z3_is_implied/1,         % +Formula  Succeeds if Formula is implied by current solver/context. Fails if l_undet.
+              z3_model_map/1,          % +ModelTerm  Gets a model if possible. Fails if not l_sat.
+              z3_push/1,               % +Formula   Pushes the formula, fails if status is l_false.
+              z3_push/2,               % +Formula,+Status  Attempts to push the formula, returns status
+              z3_push_and_print/1,     % +Formula   Convenience
+              z3_push_and_print/2,     % +Formula,+Status  Convenience
               op(750, xfy, and), % =, >, etc. are 700
               op(751, xfy, or),
               op(740, xfy, <>)
@@ -183,7 +181,7 @@ z3_model_map(Model) :-
     z3_model_map_for_solver(S, Model).
 
 
-% TODO: we don't allow overloading by arity. If we keep track of arity here and in type map, can do it.
+% TODO: we don't allow overloading by arity. If we keep track of arity here and in type map, then we can do it.
 ground_version(X, Attr, [Attr]) :- var(X), !, add_attribute(X, Attr).
 ground_version(X, X, S) :- number(X), !, ord_empty(S).
 ground_version(X, X, [X]) :- atom(X), !, true.
@@ -228,23 +226,21 @@ z3_push(F, Status) :-
     push_solver(Solver),
     internal_assert_and_check(Solver, FG, Status).
 
-% z3_push fails if solver reports inconsistency:
-z3_push(F) :- z3_push(F, l_true).
+% z3_push/1 fails if solver reports inconsistency:
+z3_push(F) :- z3_push(F, R), \+ (R == l_false).
 
 % does not work:
 % {X} :- z3_push{X}.
-
-% maybe: implement with a forall? Only interested in side effect, no unification needed.
 
 
 declare_types(M, [X|Rest]) :- (get_assoc(X, M, Def) -> z3_declare(X, Def) ; true), !,
                               declare_types(M, Rest).
 declare_types(_M, []) :- true.
 
-z3_print_status(Status) :- z3_get_global_solver(Solver),
-                           z3_swi_foreign:z3_solver_check_and_print(Solver, Status).
 
-z3_check_and_print(Status) :- z3_print_status(Status).
+z3_check_and_print(Status) :-
+    z3_get_global_solver(Solver),
+    z3_swi_foreign:z3_solver_check_and_print(Solver, Status).
 
 
 print_declarations :- z3_declarations_string(S), current_output(Out), write(Out, S).
@@ -313,6 +309,7 @@ typecheck_and_declare(Formulas, Assoc) :-
 
 declare_type_list([]) :- !, true.
 declare_type_list([A-B|R]) :- z3_declare(A, B), declare_type_list(R).
+declare_type_list([A:B|R]) :- z3_declare(A, B), declare_type_list(R).
 
 
 internal_assert_and_check_list(Solver, List, Status) :-
@@ -320,9 +317,9 @@ internal_assert_and_check_list(Solver, List, Status) :-
     internal_assert_and_check(Solver, Conj, Status).
 
 
-z3_push_and_print(F,R) :- z3_push(F,R), z3_print_status(R).
+z3_push_and_print(F,R) :- z3_push(F,R), z3_check_and_print(R1), assertion(R == R1).
 
-z3_push_and_print(F) :- z3_push_and_print(F, _R).
+z3_push_and_print(F) :- z3_push_and_print(F, l_true).
 
 %% succeeds if F is consistent with the current context:
 z3_is_consistent(F) :- setup_call_cleanup(true,
@@ -439,6 +436,7 @@ test(eval, [true(R == 6)]) :-
 
 %% to see how the model changes:
 %% z3:z3_push(b:int>c,R), z3:z3_push(and(a>d:int,b>e:int),R1), z3_push(f > b), z3_model_map(M), z3_is_consistent(f < a), z3_model_map(M1), z3_push(f > a), z3_model_map(M2).
+%% or z3_push_and_print(a > 1), z3_push_and_print(b > 2), z3_push_and_print(a > b), solver_scopes(N).
 
 test(scopes, [true(N1 == 1), true(N2==2)] ) :-
     solver_scopes(0),
