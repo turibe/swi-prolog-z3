@@ -16,14 +16,12 @@
 :- module(z3, [
               declare_type_list/1,
               solver_scopes/1,
-              typecheck_and_declare/2,
+              typecheck_and_declare/2, % typechecks formula and returns assoc
+              z3_check/1,
               z3_check_and_print/1,
               z3_declare/2,
-              z3_entails/1,
-              z3_eval/2,
               z3_eval/2,
               z3_get_global_solver/1,  % returns pointer, not very useful
-              z3_implies/1,
               z3_is_consistent/1,
               z3_is_implied/1,
               z3_model_map/1,
@@ -137,15 +135,14 @@ push_solver(S) :- z3_get_global_solver(S),
                   b_setval(solver_depth, New),
                   z3_solver_push(S, _D).
 
-%% Note: after z3_push(a:int=14), z3_push(b:int=a-5).
-%%       solver_scopes(X) gives 2.
-%%       resolve_solver_depth fixes this at the next push.
 
-solver_scopes(N) :- z3_get_global_solver(S), z3_solver_scopes(S,N).
+raw_solver_scopes(N) :- z3_get_global_solver(S), z3_solver_scopes(S,N).
 
+%% Pops the Z3 context to match the PL solver_depth:
 resolve_solver_depth(X) :- b_getval(solver_depth, X),
-                           solver_scopes(N),
+                           raw_solver_scopes(N),
                            resolve_solver_depth(X, N).
+
 
 resolve_solver_depth(X, Scopes) :- X >= Scopes,
                                        % report(status("scopes OK", Scopes, X)),
@@ -158,6 +155,8 @@ resolve_solver_depth(X, Scopes) :- X < Scopes,
 popn(Numpops) :- z3_get_global_solver(S),
                  z3_solver_pop(S, Numpops, _) -> true ; report("error popping Z3 solver\n").
 
+%% user-visible:
+solver_scopes(N) :- resolve_solver_depth(_), raw_solver_scopes(N).
 
 % should not be used directly. Types in Formula could clash with previously defined types,
 % so should use z3_push. Also the matter of push and pop.
@@ -167,6 +166,7 @@ internal_assert_and_check(Solver, Formula, Status) :-
 
 
 z3_check(Status) :- z3_get_global_solver(S), z3_solver_check(S, Status).
+
 
 % gets a Prolog term representing a model for the given solver S:
 z3_model_map_for_solver(S, Model) :-
@@ -236,15 +236,16 @@ z3_push(F) :- z3_push(F, l_true).
 
 % maybe: implement with a forall? Only interested in side effect, no unification needed.
 
-declare_types(M, [X|Rest]) :- (get_assoc(X, M, Def) -> z3_declare(X, Def) ; true),
-                              !,
+
+declare_types(M, [X|Rest]) :- (get_assoc(X, M, Def) -> z3_declare(X, Def) ; true), !,
                               declare_types(M, Rest).
 declare_types(_M, []) :- true.
 
 z3_print_status(Status) :- z3_get_global_solver(Solver),
-                           z3_solver_check_and_print(Solver, Status).
+                           z3_swi_foreign:z3_solver_check_and_print(Solver, Status).
 
 z3_check_and_print(Status) :- z3_print_status(Status).
+
 
 print_declarations :- z3_declarations_string(S), current_output(Out), write(Out, S).
 
@@ -293,7 +294,7 @@ z3_declare(F, T) :- var(F), !,
 z3_declare(F, int) :- integer(F), !, true.
 z3_declare(F, real) :- float(F), !, true.
 z3_declare(F, T) :- atom(T), !,
-                    writeln(declaring(F)),
+                    %% writeln(declaring(F)),
                     z3_function_declaration(F, T).
 z3_declare(F, T) :- var(T), !,
                     T = uninterpreted,
@@ -324,18 +325,13 @@ z3_push_and_print(F,R) :- z3_push(F,R), z3_print_status(R).
 z3_push_and_print(F) :- z3_push_and_print(F, _R).
 
 %% succeeds if F is consistent with the current context:
-z3_is_consistent(F) :- z3_push(F, l_true) -> (
-                                                  popn(1),
-                                                  true
-                                              ); (
-                           popn(1),
-                           false
-                       ).
+z3_is_consistent(F) :- setup_call_cleanup(true,
+                                          z3_push(F, l_true),
+                                          popn(1)
+                                         ).
 
 z3_is_implied(F) :- \+ z3_is_consistent(not(F)).
 
-z3_entails(X) :- z3_is_implied(X).
-z3_implies(X) :- z3_is_implied(X).
 
 %% TODO: could go through all declarations,
 %% call Z3_model_get_const_interp(), but that also returns a Z3_ast.
@@ -360,7 +356,7 @@ test_formulas(Formulas) :-
                .
 
 %% TODO: clean up, remove dependency on reset_globals.
-doit(Formulas, S, R) :-
+check_test_formulas(Formulas, S, R) :-
     test_formulas(Formulas),
     z3_reset_declarations,
     typecheck_and_declare(Formulas, _Assoc),
@@ -368,11 +364,11 @@ doit(Formulas, S, R) :-
     z3_assert(S, Conjunction), %% makes a new solver
     z3_solver_check(S, R),
     current_output(Out),
-    z3_model_map_for_solver(S, Model), print(Out, Model),
+    z3_model_map_for_solver(S, Model), writeln(Out, Model),
     true.
 
 
-test(sat) :- z3_reset_declarations, doit(_F, _S, R), R =@= l_true.
+test(sat) :- z3_reset_declarations, check_test_formulas(_F, _S, R), R =@= l_true.
 
 test(typetest) :-
     test_formulas(Formulas),
@@ -384,10 +380,9 @@ test(typetest) :-
     !, true.
 
 test(nonsat, [true(R2 == l_false)] ) :-
-    test_formulas(Formulas),
-    doit(Formulas, Solver, _R1),
+    check_test_formulas(_Formulas, Solver, _R1),
     z3_assert(Solver, b=2),
-    z3_solver_check_and_print(Solver, R2).
+    z3_solver_check(Solver, R2).
 
 :- end_tests(wrapper_tests).
 
@@ -442,15 +437,25 @@ test(eval, [true(R == 6)]) :-
 %% todo: undef, as in:
 %% z3_push(power(a:real,b:int) = c, R), z3_push(c=2.0, R1), z3_push(a=2.0, R2).
 
+%% to see how the model changes:
+%% z3:z3_push(b:int>c,R), z3:z3_push(and(a>d:int,b>e:int),R1), z3_push(f > b), z3_model_map(M), z3_is_consistent(f < a), z3_model_map(M1), z3_push(f > a), z3_model_map(M2).
+
+test(scopes, [true(N1 == 1), true(N2==2)] ) :-
+    solver_scopes(0),
+    z3_push(a:int=14), solver_scopes(N1), z3_push(b:int=a-5), solver_scopes(N2).
+
 :- end_tests(push_assert_tests).
 
 
 :- begin_tests(attribute_tests).
 
-test(a1) :- % [nondet]
+test(avar_succeeds) :-
     z3_push(X>10, R), X = 12, R = l_true.
 
-test(fail, [fail] ) :-
+test(aver_fails, [fail]) :-
+    z3_push(X>10, _), X = 9.
+
+test(avars_fail, [fail] ) :-
     z3_push(X:int>Y, _R),
     X = 10,
     Y = 14.

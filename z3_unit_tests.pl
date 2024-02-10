@@ -67,7 +67,7 @@ test(not_implied, [true(R==l_true)]) :-
     z3_is_implied(T3=T2),
     z3_is_implied(T1=T2),
     \+ z3_is_implied(T1=T4),
-    z3_print_status(R).
+    z3_check(R).
 
 
 test(implied) :-
