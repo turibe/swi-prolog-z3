@@ -893,8 +893,7 @@ foreign_t model_functions(Z3_context ctx, Z3_model m, term_t list) {
         return FALSE;
       }
 
-      DEBUG("consing arrow\n");
-      functor_t arrow = PL_new_functor(PL_new_atom("->"), 2);
+      functor_t arrow = PL_new_functor(PL_new_atom("-"), 2);
       term_t pair = PL_new_term_ref();
       if (!PL_cons_functor(pair, arrow, lhs, rhs)) {
         DEBUG("error consing functor\n");
@@ -910,6 +909,9 @@ foreign_t model_functions(Z3_context ctx, Z3_model m, term_t list) {
 
     // In a scenario likez3_push(and(f(a:int) = 3, f(a,a) = 4)), z3_model_map(M), z3_check_and_print(R).
     // need to distinguish the two fs.
+
+    // The else terms will be of the form "(f/N-else)-val". This way they can be included in any map/assoc,
+    // and can still be distinguished from the other cases, which are of the form "f(x...)-val)".
     
     DEBUG("getting the else\n");
     Z3_ast felse = Z3_func_interp_get_else(ctx, finterp);
@@ -917,24 +919,38 @@ foreign_t model_functions(Z3_context ctx, Z3_model m, term_t list) {
     if (!z3_ast_to_term_internal(ctx, felse, else_value)) {
       return FALSE;
     }
-    functor_t else_functor = PL_new_functor(PL_new_atom("else"), 2);
+    functor_t pair_functor = PL_new_functor(PL_new_atom("-"), 2);
     functor_t slash_functor = PL_new_functor(PL_new_atom("/"), 2);
-    term_t else_term = PL_new_term_ref(); // now needs to include arity
+    term_t top_pair_term = PL_new_term_ref(); // now needs to include arity
+    term_t else_term = PL_new_term_ref();
     term_t fname_term = PL_new_term_ref();
     term_t arity_term = PL_new_term_ref();
     term_t fname_arity_term = PL_new_term_ref();
     const Z3_string function_name = Z3_get_symbol_string(ctx, symbol);
-    PL_put_atom_chars(fname_term, function_name);
+    int res = PL_put_atom_chars(fname_term, function_name);
+    if (!res) return res;
     if (!PL_put_integer(arity_term, arity)) {
       return FALSE;
     }
+    // arity term is f/N
     if (!PL_cons_functor(fname_arity_term, slash_functor, fname_term, arity_term)) {
       return FALSE;
     }
-    if (!PL_cons_functor(else_term, else_functor, fname_arity_term, else_value)) {
+    // if (!PL_cons_functor(else_term, pair_functor, fname_arity_term, else_value)) {      return FALSE;    }
+
+    // else_term is a pair " F/N-else ":
+    term_t else_singleton = PL_new_term_ref();
+    res = PL_put_atom_chars(else_singleton, "else");
+    if (!res) return res;
+    if (!PL_cons_functor(else_term, pair_functor, fname_arity_term, else_singleton)) {
       return FALSE;
     }
-    if (!PL_cons_list(l, else_term, l)) {
+    // we now make a pair " <else_term> - else_value ":
+    if (!PL_cons_functor(top_pair_term, pair_functor, else_term, else_value)) {
+      return FALSE;
+    }
+
+    if (!PL_cons_list(l, top_pair_term, l)) {
         return FALSE;
     }
     
@@ -977,7 +993,7 @@ foreign_t model_constants(const Z3_context ctx, const Z3_model m, term_t list) {
     }
 
     DEBUG("consing arrow\n");
-    functor_t arrow = PL_new_functor(PL_new_atom("->"), 2);
+    functor_t arrow = PL_new_functor(PL_new_atom("-"), 2);
     term_t pair = PL_new_term_ref();
     if (!PL_cons_functor(pair, arrow, lhs, rhs)) {
       DEBUG("error consing functor\n");

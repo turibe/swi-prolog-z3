@@ -24,6 +24,7 @@
               z3_is_consistent/1,      % +Formula  Succeeds if Formula is consistent with current solver/context. Fails if l_undet.
               z3_is_implied/1,         % +Formula  Succeeds if Formula is implied by current solver/context. Fails if l_undet.
               z3_model_map/1,          % +ModelTerm  Gets a model if possible. Fails if not l_sat.
+              z3_model_assoc/1,
               z3_push/1,               % +Formula   Pushes the formula, fails if status is l_false.
               z3_push/2,               % +Formula,+Status  Attempts to push the formula, returns status
               z3_push_and_print/1,     % +Formula   Convenience
@@ -199,6 +200,7 @@ z3_model_map_for_solver(S, Model) :-
                        z3_swi_foreign:z3_model_map(M, Model),
                        z3_free_model(M)
                       ).
+    
 
 % returns a model for the current solver, if check succeeds:
 z3_model_map(Model) :-
@@ -206,6 +208,12 @@ z3_model_map(Model) :-
     z3_check(l_true),
     get_global_solver(S),
     z3_model_map_for_solver(S, Model).
+
+z3_model_assoc(Model) :-
+    z3_model_map(ModelLists),
+    list_to_assoc(ModelLists.constants, CA),
+    list_to_assoc(ModelLists.functions, FA),
+    Model = model{constants:CA, functions:FA}.
 
 
 % We now allow overloading by arity.
