@@ -19,10 +19,10 @@
      We then keep a map of signatures (name, arity, type) to declarations.
      (We assume for now that functions are not overloaded by type or arity.)
 
-     For now, we go with one global, implicit context object, and one global declaration map;
-     everything else, including solvers, is created and destroyed at the Prolog level.
+     For now, we go with one global, implicit context object.
+     everything else, including the declaration map, solvers, and models, is created and destroyed at the Prolog level.
      
-     A more functional approach would get rid of the global vars, and pass them as arguments.
+     A more functional approach would get rid of the context too, and pass it as an argument.
      
 *****/
 
@@ -122,7 +122,7 @@ Z3_context global_z3_context = NULL;
 
 Z3_ast term_to_ast(Z3_context ctx, decl_map map, term_t formula);
 foreign_t z3_ast_to_term_foreign(term_t ast_term, term_t formula);
-foreign_t z3_ast_to_term_internal(Z3_ast ast, term_t formula);
+foreign_t z3_ast_to_term_internal(Z3_context ctx, Z3_ast ast, term_t formula);
 Z3_sort mk_sort(Z3_context ctx, term_t formula);
 Z3_symbol mk_symbol(Z3_context ctx, term_t formula);
 
@@ -154,9 +154,9 @@ foreign_t z3_make_declaration_map_foreign(term_t decl_map_term) {
     ERROR("z3_make_declaration_map should be called on a variable");
     return FALSE;
   }
-
-  decl_map declaration_map = Z3_mk_ast_map(global_z3_context);
-  Z3_ast_map_inc_ref(global_z3_context, declaration_map);
+  Z3_context ctx = get_context();
+  decl_map declaration_map = Z3_mk_ast_map(ctx);
+  Z3_ast_map_inc_ref(ctx, declaration_map);
   return PL_unify_pointer(decl_map_term, declaration_map);
 }
 
@@ -355,7 +355,7 @@ foreign_t z3_model_eval_foreign(term_t dmap_term, term_t model_term, term_t term
   if (!result) {
     return FALSE;
   }
-  return z3_ast_to_term_internal(result_ast, result_term);
+  return z3_ast_to_term_internal(ctx, result_ast, result_term);
 }
 
 
@@ -447,8 +447,12 @@ int z3_lbool_to_atom(const Z3_lbool status, term_t plterm) {
 
 foreign_t z3_ast_to_term_foreign(term_t ast_term, term_t term) {
   Z3_ast ast;
-  PL_get_pointer_ex(ast_term, (void**) &ast);
-  return z3_ast_to_term_internal(ast, term);
+  Z3_context ctx = get_context();
+  int rval = PL_get_pointer_ex(ast_term, (void**) &ast);
+  if (!rval) {
+    return rval;
+  }
+  return z3_ast_to_term_internal(ctx, ast, term);
 }
 
 
@@ -457,7 +461,9 @@ foreign_t z3_ast_to_term_foreign(term_t ast_term, term_t term) {
 foreign_t z3_solver_assertions_foreign(term_t solver_term, term_t list) {
   Z3_solver solver;
   int rval = PL_get_pointer_ex(solver_term, (void **) &solver);
-  assert(rval);
+  if (!rval) {
+    return rval;
+  }
   Z3_context ctx = get_context();
   Z3_ast_vector v = Z3_solver_get_assertions(ctx, solver);
   int size = Z3_ast_vector_size(ctx, v);
@@ -467,7 +473,7 @@ foreign_t z3_solver_assertions_foreign(term_t solver_term, term_t list) {
   for (unsigned i = 0; i < size; ++i) {
     term_t a = PL_new_term_ref(); // putting this outside the loop does not work.
     Z3_ast termi = Z3_ast_vector_get(ctx, v, i);
-    z3_ast_to_term_internal(termi, a);
+    z3_ast_to_term_internal(ctx, termi, a);
     int r = PL_cons_list(l, a, l);
     assert(r);
   }
@@ -481,8 +487,7 @@ foreign_t z3_solver_assertions_foreign(term_t solver_term, term_t list) {
   Converts a Z3 ast to a Prolog term:
 */
 
-foreign_t z3_ast_to_term_internal(Z3_ast ast, term_t term) {
-  Z3_context ctx = get_context();
+foreign_t z3_ast_to_term_internal(const Z3_context ctx, Z3_ast ast, term_t term) {
   if (Z3_is_numeral_ast(ctx, ast)) {
     int64_t i;
     if (Z3_get_numeral_int64(ctx, ast, &i)) {
@@ -524,7 +529,7 @@ foreign_t z3_ast_to_term_internal(Z3_ast ast, term_t term) {
     term_t subterms = PL_new_term_refs(arity);
     for (int i=0; i<arity; ++i) {
       Z3_ast subterm_ast = Z3_get_app_arg(ctx, app, i);
-      if (!z3_ast_to_term_internal(subterm_ast, subterms+i)) {
+      if (!z3_ast_to_term_internal(ctx, subterm_ast, subterms+i)) {
         return FALSE;
       }
     }
@@ -599,7 +604,9 @@ foreign_t z3_solver_pop_foreign(const term_t solver_term, const term_t npops, te
   }
   int nbacktrack;
   rval = PL_get_integer_ex(npops, &nbacktrack);
-  assert(rval);
+  if (!rval) {
+    return rval;
+  }
   const Z3_context ctx = get_context();
   const int scopes = Z3_solver_get_num_scopes(ctx, solver);
   if (nbacktrack > scopes) {
@@ -613,7 +620,7 @@ foreign_t z3_solver_pop_foreign(const term_t solver_term, const term_t npops, te
 }
 
 /*
- Assert formula for solver. Creates a new solver if solver_term is a variable.
+ Assert formula for solver.
  FIXME: can crash SWI Prolog by putting in a random int as the solver.
 */
 
@@ -627,22 +634,10 @@ foreign_t z3_assert_foreign(term_t decl_map_term, term_t solver_term, term_t for
 
   
   Z3_solver solver;
-  if (PL_is_variable(solver_term)) {
-    solver = Z3_mk_solver(ctx);
-    rval = PL_unify_pointer(solver_term, solver);
-    if (!rval) {
-      ERROR("making new solver failed %d\n", rval);
-      return rval;
-    }
-    Z3_solver_inc_ref(ctx, solver);
-    DEBUG("made new solver %p\n", (void *) solver);
-  }
-  else {
-    rval = PL_get_pointer_ex(solver_term, (void **) &solver);
-    if (!rval) {
-      DEBUG("unify solver failed %d\n", rval);
-      return rval;
-    }
+  rval = PL_get_pointer_ex(solver_term, (void **) &solver);
+  if (!rval) {
+    DEBUG("unify solver failed %d\n", rval);
+    return rval;
   }
 
   Z3_ast z3_formula = term_to_ast(ctx, declaration_map, formula);
@@ -878,7 +873,7 @@ foreign_t model_functions(Z3_context ctx, Z3_model m, term_t list) {
       for (unsigned w = 0; w < args; w++) {
         DEBUG("getting subterm %u\n", w);
         Z3_ast keyw = Z3_func_entry_get_arg(ctx, point, w);
-        if (!z3_ast_to_term_internal(keyw, subterms+w)) {
+        if (!z3_ast_to_term_internal(ctx, keyw, subterms+w)) {
           return FALSE;
         }
       }
@@ -892,7 +887,7 @@ foreign_t model_functions(Z3_context ctx, Z3_model m, term_t list) {
 
       DEBUG("making rhs\n");
       term_t rhs = PL_new_term_ref();
-      if (!z3_ast_to_term_internal(value, rhs)) {
+      if (!z3_ast_to_term_internal(ctx, value, rhs)) {
         return FALSE;
       }
 
@@ -917,7 +912,7 @@ foreign_t model_functions(Z3_context ctx, Z3_model m, term_t list) {
     DEBUG("getting the else\n");
     Z3_ast felse = Z3_func_interp_get_else(ctx, finterp);
     term_t else_value = PL_new_term_ref();
-    if (!z3_ast_to_term_internal(felse, else_value)) {
+    if (!z3_ast_to_term_internal(ctx, felse, else_value)) {
       return FALSE;
     }
     functor_t else_functor = PL_new_functor(PL_new_atom("else"), 2);
@@ -975,7 +970,7 @@ foreign_t model_constants(const Z3_context ctx, const Z3_model m, term_t list) {
 
     DEBUG("making rhs\n");
     term_t rhs = PL_new_term_ref();
-    if (!z3_ast_to_term_internal(value, rhs)) {
+    if (!z3_ast_to_term_internal(ctx, value, rhs)) {
       return FALSE;
     }
 
@@ -1420,7 +1415,7 @@ foreign_t z3_simplify_term_foreign(term_t decl_map_term, term_t tin, term_t tout
   if (ast_out == NULL) {
     return FALSE;
   }
-  return z3_ast_to_term_internal(ast_out, tout);
+  return z3_ast_to_term_internal(ctx, ast_out, tout);
 }
 
 
@@ -1447,11 +1442,11 @@ install_t install()
   
   PRED("z3_assert", 3, z3_assert_foreign, 0); // +decl_map, +solver, +formula
 
-  // for debugging, testing round-trips:
+  // for debugging and unit tests, testing round-trips between Prolog and Z3:
   PRED("term_to_z3_ast", 3, term_to_z3_ast_foreign, 0); // +decl_map, +formula, -z3_ast_pointer
   PRED("z3_ast_string", 2, z3_ast_string_foreign, 0); // +formula, -string
   PRED("z3_ast_to_term", 2, z3_ast_to_term_foreign, 0); // +ast, -formula
-  PRED("z3_symbol", 2, z3_symbol_foreign, 0); // +formula, -symbol_pointer // for debugging, unit tests
+  PRED("z3_symbol", 2, z3_symbol_foreign, 0); // +formula, -symbol_pointer
   
   PRED("z3_function_declaration", 4, z3_function_declaration_foreign, 0); // +decl_map, +pl_term, +range_atom, -declaration_pointer
 

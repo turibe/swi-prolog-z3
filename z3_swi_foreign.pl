@@ -62,7 +62,6 @@ test(reset, [cleanup(z3_free_declaration_map(M))]) :-
 
 is_pointer(X) :- integer(X).
 
-
 test(context) :-
     z3_context(context(C)),
     is_pointer(C).
