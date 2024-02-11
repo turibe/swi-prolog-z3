@@ -23,7 +23,7 @@ test(declare_lambda) :-
     z3_declare(f/1,lambda([int],int)),
     z3_push(f(a) > b).
 
-test(get_model, [true(C1 == [(a->13), (b->13), (d->4)] ), true(F1 == [(f(4)->5), else(f/1, 20)] )]) :-
+test(get_model, [true(C1 == [(a-13), (b-13), (d-4)] ), true(F1 == [(f(4)-5), ((f/1-else)-20)] )]) :-
     z3_push(a:int > 10),
     z3_push(b:int > 12),
     z3_push(a=b),
@@ -61,7 +61,6 @@ test(gcd) :-
 
 
 test(not_implied, [true(R==l_true)]) :-
-    % declare_types, % not needed
     fpower(f,a:int,6,T1),
     fpower(f,a:int,9,T2),
     fpower(f,a:int,3,T3),
@@ -74,7 +73,6 @@ test(not_implied, [true(R==l_true)]) :-
 
 
 test(implied) :-
-    % declare_types,
     fpower(f,a:int,6,T1),
     fpower(f,a:int,15,T2),
     z3_push(T1=T2),
@@ -93,11 +91,11 @@ test(uninterpreted_model) :-
     z3_model_map(_X{constants:C, functions:F}),
     sort(C, C1),
     assertion(
-        C1 == [(a->'uninterpreted!val!0'), (b->'uninterpreted!val!1'), (c->'uninterpreted!val!2')]
+        C1 == [(a-'uninterpreted!val!0'), (b-'uninterpreted!val!1'), (c-'uninterpreted!val!2')]
     ),
     sort(F, F1),
     assertion(
-        F1 == [(f('uninterpreted!val!1')->'uninterpreted!val!2'), else(f/1, 'uninterpreted!val!1')]
+        F1 == [(f('uninterpreted!val!1')-'uninterpreted!val!2'), ((f/1-else)-'uninterpreted!val!1')]
     ).
 
 

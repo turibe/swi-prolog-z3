@@ -419,12 +419,11 @@ test(nonsat, [true(R1 == l_true), true(R2 == l_false)] ) :-
     z3_push(b=2, R2).
 
 
-test(reals) :-
-    z3_push(y:real > 2, R0),
-    z3_push(a:real=div(x, y), R),
-    z3_push(a = div(b:real, 4.0), R1),
-    z3_push(a > 0.0, R2),
-    assertion(R2 == l_true).
+test(reals, [true(R == l_true)] ) :-
+    z3_push(y:real > 2),
+    z3_push(a:real=div(x, y)),
+    z3_push(a = div(b:real, 4.0)),
+    z3_push(a > 0.0, R).
 
 % interesting scenario: z3_push(a:real = div(x, y), R), z3_push(a = div(b:real, 4.0), R1), z3_model_map(M).
 % reports on division-by-zero value.

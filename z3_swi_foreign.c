@@ -115,6 +115,9 @@ typedef Z3_ast_map decl_map;
 // For now, there is only one, global Z3 context object, implicit in most operations.
 // Solver and model objects are explicit, and we can do push and pop on solvers from Prolog.
 
+
+functor_t pair_functor;
+
 Z3_context global_z3_context = NULL;
 
 // Keeps around the declarations; not affected by push and pop:
@@ -141,6 +144,8 @@ void z3_swi_initialize() {
   global_z3_context = Z3_mk_context(config);
   Z3_set_error_handler(global_z3_context, z3_swi_error_handler);
   Z3_del_config(config);
+
+  pair_functor = PL_new_functor(PL_new_atom("-"), 2);
 }
 
 
@@ -893,9 +898,8 @@ foreign_t model_functions(Z3_context ctx, Z3_model m, term_t list) {
         return FALSE;
       }
 
-      functor_t arrow = PL_new_functor(PL_new_atom("-"), 2);
       term_t pair = PL_new_term_ref();
-      if (!PL_cons_functor(pair, arrow, lhs, rhs)) {
+      if (!PL_cons_functor(pair, pair_functor, lhs, rhs)) {
         DEBUG("error consing functor\n");
         return FALSE;
       }
@@ -919,8 +923,8 @@ foreign_t model_functions(Z3_context ctx, Z3_model m, term_t list) {
     if (!z3_ast_to_term_internal(ctx, felse, else_value)) {
       return FALSE;
     }
-    functor_t pair_functor = PL_new_functor(PL_new_atom("-"), 2);
-    functor_t slash_functor = PL_new_functor(PL_new_atom("/"), 2);
+
+    const functor_t slash_functor = PL_new_functor(PL_new_atom("/"), 2);
     term_t top_pair_term = PL_new_term_ref(); // now needs to include arity
     term_t else_term = PL_new_term_ref();
     term_t fname_term = PL_new_term_ref();
@@ -992,10 +996,8 @@ foreign_t model_constants(const Z3_context ctx, const Z3_model m, term_t list) {
       return FALSE;
     }
 
-    DEBUG("consing arrow\n");
-    functor_t arrow = PL_new_functor(PL_new_atom("-"), 2);
     term_t pair = PL_new_term_ref();
-    if (!PL_cons_functor(pair, arrow, lhs, rhs)) {
+    if (!PL_cons_functor(pair, pair_functor, lhs, rhs)) {
       DEBUG("error consing functor\n");
       return FALSE;
     }
