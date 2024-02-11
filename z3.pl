@@ -44,15 +44,17 @@
 :- use_module(library(ordsets)).
 
 :- use_module(z3_swi_foreign, [
-		  z3_assert/2,
-		  z3_declarations_string/1,
+		  z3_assert/3,
+		  z3_declarations_string/2,
+                  z3_declaration_map_size/2,
 		  z3_free_model/1,
 		  z3_free_solver/1,
-		  z3_function_declaration/2,
-		  z3_mk_solver/1,
+		  z3_function_declaration/3,
+		  z3_make_solver/1,
 		  z3_model_eval/3,
 		  z3_model_map/2,
-		  z3_reset_declarations/0,
+                  z3_make_declaration_map/1,
+		  z3_reset_declaration_map/1,
 		  z3_solver_check/2,
 		  z3_solver_check_and_print/2,
 		  z3_solver_get_model/2,
@@ -60,6 +62,20 @@
 		  z3_solver_push/2,
 		  z3_solver_scopes/2
 	      ]).
+
+
+initialize_z3_declaration_map :- nb_getval(global_decl_map, M) -> z3_reset_declaration_map(M)
+                                 ;
+                                 ( z3_make_declaration_map(M),
+                                   nb_setval(global_decl_map, M)
+                                 ).
+
+get_declaration_map(M) :- nb_getval(global_decl_map, M).
+
+reset_declarations(M) :- get_declaration_map(M), z3_reset_declaration_map(M).
+reset_declarations :- reset_declarations(_M).
+
+z3_reset_declarations :- reset_declarations. %% temporary
 
 %% have a global variable, backtrackable, with the depth level.
 %% before the assert, check that variable, and pop the solver as many times as needed.
@@ -75,7 +91,7 @@ indent :- assert_depth(N),
 reset_globals :-
     reset_global_solver,
     reset_var_counts,
-    z3_reset_declarations,
+    reset_declarations,
     type_inference:initialize.
 
 reset_var_counts :- nb_setval(varcount, 0).
@@ -114,7 +130,7 @@ attr_unify_hook(Attr, Formula) :-
 %% should only be called at the top-most level:
 reset_global_solver :-
     (z3_get_global_solver(Old) -> z3_free_solver(Old) ; true),
-    z3_mk_solver(S),
+    z3_make_solver(S),
     nb_setval(global_solver, S),
     nb_setval(solver_depth, 0).
 
@@ -159,7 +175,8 @@ solver_scopes(N) :- resolve_solver_depth(_), raw_solver_scopes(N).
 % should not be used directly. Types in Formula could clash with previously defined types,
 % so should use z3_push. Also the matter of push and pop.
 internal_assert_and_check(Solver, Formula, Status) :-
-    z3_assert(Solver, Formula),
+    get_declaration_map(Map),
+    z3_assert(Map, Solver, Formula),
     z3_solver_check(Solver, Status).
 
 
@@ -261,7 +278,7 @@ declare_types([X|Rest], M) :- (get_assoc(X, M, Def) -> z3_declare(X, Def) ; true
                               declare_types(Rest, M).
 
 
-print_declarations :- z3_declarations_string(S), current_output(Out), write(Out, S).
+print_declarations :- get_declaration_map(M), z3_declarations_string(M, S), current_output(Out), write(Out, S).
 
 z3_eval(Expression, Result) :-  \+ is_list(Expression),
                                 z3_get_global_solver(S),
@@ -308,18 +325,20 @@ z3_declare(F, T) :- var(F), !,
 z3_declare(F, int) :- integer(F), !, true.
 z3_declare(F, real) :- float(F), !, true.
 z3_declare(F, T) :- atom(T), !,
-                    %% writeln(declaring(F)),
-                    z3_function_declaration(F, T).
+                    get_declaration_map(M),
+                    z3_function_declaration(M, F, T).
 z3_declare(F, T) :- var(T), !,
                     T = uninterpreted,
-                    z3_function_declaration(F, T).
+                    get_declaration_map(M),
+                    z3_function_declaration(M, F, T).
 z3_declare(F, lambda(Arglist, Range)) :- (var(F) -> type_error(nonvar, F) ; true), !,
                                          F = F1/N,
                                          length(Arglist, Len),
                                          assertion(N == Len),
                                          Fapp =.. [F1|Arglist],
                                          (var(Range) -> Range = uninterpreted ; true), !,
-                                         z3_function_declaration(Fapp, Range).
+                                         get_declaration_map(M),
+                                         z3_function_declaration(M, Fapp, Range).
 
 typecheck_and_declare(Formulas, Assoc) :-
     assert_formula_list_types(Formulas), !, %% updates the global (backtrackable) type map
@@ -356,12 +375,12 @@ z3_is_implied(F) :- \+ z3_is_consistent(not(F)).
 %%%%%%%%%%%%%%%%%%%%%%%%%% unit tests %%%%%%%%%%%%%%%%%
 
 
-:- begin_tests(wrapper_tests).
+:- begin_tests(wrapper_tests). %% TODO: move to wrapper file.
 
 test_formulas(Formulas) :-
     Formulas = [foo(a) = b+c,
                 foo(b) = 2,
-                a = (b:int), %% int should remove choicepoint?
+                a = (b:int), %% int should remove choicepoint
                 b = a,
                 d:int = f(e:foobarsort),
                 foo(b) = c % this implies b = 0
@@ -369,13 +388,13 @@ test_formulas(Formulas) :-
                .
 
 %% TODO: clean up, remove dependency on reset_globals.
-check_test_formulas(Formulas, S, R) :-
+check_test_formulas(Formulas, Solver, R) :-
     test_formulas(Formulas),
-    z3_reset_declarations,
+    z3_reset_declarations(DeclMap),
     typecheck_and_declare(Formulas, _Assoc),
     Conjunction =.. [and | Formulas],
-    z3_assert(S, Conjunction), %% makes a new solver
-    z3_solver_check(S, R),
+    z3_assert(DeclMap, Solver, Conjunction), %% makes a new solver
+    z3_solver_check(Solver, R),
     current_output(Out),
     z3_model_map_for_solver(S, Model), writeln(Out, Model),
     true.
@@ -393,7 +412,8 @@ test(typetest) :-
 
 test(nonsat, [true(R2 == l_false)] ) :-
     check_test_formulas(_Formulas, Solver, _R1),
-    z3_assert(Solver, b=2),
+    get_declaration_map(Map),
+    z3_assert(Map, Solver, b=2),
     z3_solver_check(Solver, R2).
 
 :- end_tests(wrapper_tests).
