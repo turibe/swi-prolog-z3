@@ -1,7 +1,7 @@
 %%% -*- Mode: Prolog; Module: quickexplain; -*-
 
-% SWI Prolog implementation of Junker's Quickxplain, for finding minimally unsatisfiable subsets,
-% and maximally satisfiable ones.
+% SWI Prolog implementation of Junker's Quickxplain,
+% for finding minimally unsatisfiable subsets, and maximally satisfiable ones.
 
 :- module(quickexplain, [
 	      qexplain/3,
@@ -9,6 +9,11 @@
 	      qrelax/3,
 	      qrelax/4
 	  ]).
+
+:- meta_predicate qexplain(1, ?, ?).
+:- meta_predicate qexplain(1, ?, ?, ?).
+:- meta_predicate qrelax(1, ?, ?).
+:- meta_predicate qrelax(1, ?, ?, ?).
 
 :- use_module(utils).
 
@@ -65,6 +70,8 @@ checksat(Assert, L1, L2) :-
         debuginfo("Calling checksat/3"),
         maplist({Assert}/[X]>>assert_constraint(Assert, X), L1),
         maplist({Assert}/[X]>>assert_constraint(Assert, X), L2),
+        % term_variables((L1,L2),Variables),
+        % labeling(Variables),
         true.
 
 assert_constraint(Assert, Constraint) :-
@@ -83,25 +90,34 @@ debuginfo(X, Y) :- write(X), writeln(Y), flush_output.
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% unit tests %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 :- begin_tests(quickexplain_tests).
+:- use_module(library(clpfd)).
 
 test(explain1) :-
-    quickexplain:qrelax(call,[member(X,[1,2,3,4,5])], [X > 30, X>2, X>=4], R),
-    R = [X>2, X>=4].
+    qrelax(call, [member(X, [1,2,3,4,5])], [X > 30, X > 2, X >= 4], R),
+    R =@= [X>2, X>=4].
 
 test(explain2) :-
-    qexplain(call,[member(X,[1,2,3,4,5])], [X=1, X=2, X>1], R),
-    R = [X=1, X=2].
-
-test(explain2) :-
-    qexplain(call,[member(X,[1,2,3,4,5])], [X=1, X=2, X>1, X < 0], R),
-    R = [X=1, X=2].
+    qrelax(call, [X in 1..3], [X #> 30, X#>2, X#>=4], R),
+    R =@= [X #> 2].
 
 test(explain3) :-
-    qexplain(call,[member(X,[1,2,3,4,5])], [X=1, X < 0, X=2, X>1], R),
-    R = [X<0].
+    qexplain(call,[X in 1..5], [X=1, X=2, X>1], R),
+    R =@= [X=1, X=2].
 
+test(explain4) :-
+    qexplain(call, [member(X,[1,2,3,4,5])], [X=1, X=2, X>1, X < 0], R),
+    R =@= [X=1, X=2].
 
-test(relax1) :-
-    time(quickexplain:qexplain(call, [X = 10], [X > 30, X=5, X>2, X>4], R)),
-    R = [X > 30].
+test(explain5) :-
+    qexplain(call, [member(X,[1,2,3,4,5])], [X=1, X < 0, X=2, X>1], R),
+    R =@= [X<0].
 
+test(myrelax1) :-
+    qexplain(call, [(X + Y) #>= 10], [X#<5, Y#<5, X#>2, X#>4], R),
+    R =@= [X#<5, Y#<5].
+
+%% todo, add:
+% test_explain(call, [{a:int = Y} , Y in 1..6, {Z = a:int}, Z in 6..8, label([Y,Z]), {Y:int > Z:int}],R).
+% test_explain(call, [{a:int = Y} , Y in 1..5, {Z = a:int}, Z in 6..8, label([Y,Z]), {Y:int > Z:int}],R).
+
+:- end_tests(quickexplain_tests).
