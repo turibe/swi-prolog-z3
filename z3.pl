@@ -74,6 +74,9 @@ reset_z3_declaration_map :- nb_current(global_decl_map, M) -> z3_reset_declarati
 
 get_z3_declaration_map(M) :- nb_getval(global_decl_map, M).
 
+
+% if solver push/pop and backtrackable type inference work as they should,
+% end-users don't need to call this:
 z3_reset_declarations :- get_z3_declaration_map(M), z3_reset_declaration_map(M).
 
 %% have a global variable, backtrackable, with the depth level.
@@ -375,7 +378,7 @@ z3_is_implied(F) :- \+ z3_is_consistent(not(F)).
 %%%%%%%%%%%%%%%%%%%%%%%%%% unit tests %%%%%%%%%%%%%%%%%
 
 
-:- begin_tests(wrapper_tests). %% TODO: move to wrapper file.
+:- begin_tests(push_assert_tests).
 
 test_formulas(Formulas) :-
     Formulas = [foo(a) = b+c,
@@ -387,19 +390,12 @@ test_formulas(Formulas) :-
                ]
                .
 
-%% TODO: clean up, remove dependency on reset_globals.
 check_test_formulas(Formulas, R) :-
     test_formulas(Formulas),
     Conjunction =.. [and | Formulas],
-    z3_push(Conjunction, R),
-    z3_model_map(Model),
-    current_output(Out),
-    writeln(Out, Model),
-    true.
-
+    z3_push(Conjunction, R).
 
 test(sat, [true(R == l_true)] ) :-
-    z3_reset_declarations,
     check_test_formulas(_F, R).
 
 test(typetest) :-
@@ -411,31 +407,33 @@ test(typetest) :-
     assertion(member(f/1-lambda([foobarsort], int), R)).
 
 test(nonsat, [true(R1 == l_true), true(R2 == l_false)] ) :-
-    z3_reset_declarations,
     check_test_formulas(_Formulas, R1),
     z3_push(b=2, R2).
 
-:- end_tests(wrapper_tests).
 
-:- begin_tests(push_assert_tests).
+test(reals) :-
+    z3_push(y:real > 2, R0),
+    z3_push(a:real=div(x, y), R),
+    z3_push(a = div(b:real, 4.0), R1),
+    z3_push(a > 0.0, R2),
+    assertion(R2 == l_true).
 
-% z3_push(y:real > 2, R0), z3_push_and_print(a:real=div(x, y), R), z3_push_and_print(a = div(b:real, 4.0), R1), z3_push_and_print(a >0.0, R2).
+% interesting scenario: z3_push(a:real = div(x, y), R), z3_push(a = div(b:real, 4.0), R1), z3_model_map(M).
+% reports on division-by-zero value.
+
 % z3_push_and_print(a:real=div(x, y), R), z3_push_and_print(a = div(b, 4.0), R1).
 
 test(atmost0, [true(R == l_true), true(R1 == l_false)] ) :-
-    z3_reset_declarations,
     z3_push(atmost(a:bool, b:bool, c:bool, 0), R),
     z3_push(a, R1).
 
 test(atmost1) :-
-    z3_reset_declarations,
     z3_push(atmost(a:bool, b:bool, c:bool, 1), R), z3_push(a, R1), z3_push(b, R2),
     R = l_true,
     R1 = l_true,
     R2 = l_false.
 
 test(atleast) :-
-    z3_reset_declarations,
     z3_push(atleast(a:bool, b:bool, c:bool, 2), R), z3_push(a, R1), z3_push(not(b), R2), z3_push(not(c), R3),
     R = l_true,
     R1 = l_true,
@@ -443,23 +441,19 @@ test(atleast) :-
     R3 = l_false.
 
 test(consistent) :-
-    z3_reset_declarations,
     z3_push(and(a:int>b, b>c, c>d)), \+ z3_is_consistent(d>a),
     z3_is_consistent(a > d),
     z3_push(a > d).
 
 test(implied) :-
-    z3_reset_declarations,
     z3_push(and(a:int>b,b>c,c>d)), z3_is_implied(a>d).
 
 test(boolean) :-
-    z3_reset_declarations,
     z3_push(or(and(a:bool, b:bool), not(c:bool))),
     z3_push(c:bool),
     z3_is_implied(a).
 
 test(eval, [true(R == 6)]) :-
-    z3_reset_declarations,
     z3_push(a = 2),
     z3_push(b = 3),
     z3_eval(a * b, R).

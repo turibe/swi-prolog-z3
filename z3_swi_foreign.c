@@ -878,6 +878,8 @@ foreign_t model_functions(Z3_context ctx, Z3_model m, term_t list) {
         }
       }
 
+      // NEXT: Use PL_put_dict to make a map directly.
+
       const Z3_string function_name = Z3_get_symbol_string(ctx, symbol);
       DEBUG("Making func using %s\n", function_name);
       functor_t func = PL_new_functor(PL_new_atom(function_name), arity);
