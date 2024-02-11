@@ -13,6 +13,7 @@
 	      z3_function_declaration/3,
 	      z3_make_solver/1,
               z3_make_declaration_map/1,
+              z3_declaration_map_size/2,
 	      z3_model_eval/4,             %% +decl_map, +model_pointer, +formula, -value 
 	      z3_model_map/2,
 	      z3_reset_declaration_map/1,

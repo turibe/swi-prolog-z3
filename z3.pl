@@ -51,7 +51,7 @@
 		  z3_free_solver/1,
 		  z3_function_declaration/3,
 		  z3_make_solver/1,
-		  z3_model_eval/3,
+		  z3_model_eval/4,
 		  z3_model_map/2,
                   z3_make_declaration_map/1,
 		  z3_reset_declaration_map/1,
@@ -64,7 +64,7 @@
 	      ]).
 
 
-initialize_z3_declaration_map :- nb_getval(global_decl_map, M) -> z3_reset_declaration_map(M)
+initialize_z3_declaration_map :- nb_current(global_decl_map, M) -> z3_reset_declaration_map(M)
                                  ;
                                  ( z3_make_declaration_map(M),
                                    nb_setval(global_decl_map, M)
@@ -72,10 +72,8 @@ initialize_z3_declaration_map :- nb_getval(global_decl_map, M) -> z3_reset_decla
 
 get_declaration_map(M) :- nb_getval(global_decl_map, M).
 
-reset_declarations(M) :- get_declaration_map(M), z3_reset_declaration_map(M).
-reset_declarations :- reset_declarations(_M).
-
-z3_reset_declarations :- reset_declarations. %% temporary
+z3_reset_declarations(M) :- get_declaration_map(M), z3_reset_declaration_map(M).
+z3_reset_declarations :- z3_reset_declarations(_M).
 
 %% have a global variable, backtrackable, with the depth level.
 %% before the assert, check that variable, and pop the solver as many times as needed.
@@ -89,9 +87,10 @@ indent :- assert_depth(N),
           forall(between(1, N, _X), (print(---), print(N))).
 
 reset_globals :-
+    initialize_z3_declaration_map,
     reset_global_solver,
     reset_var_counts,
-    reset_declarations,
+    z3_reset_declarations,
     type_inference:initialize.
 
 reset_var_counts :- nb_setval(varcount, 0).
@@ -129,12 +128,12 @@ attr_unify_hook(Attr, Formula) :-
 
 %% should only be called at the top-most level:
 reset_global_solver :-
-    (z3_get_global_solver(Old) -> z3_free_solver(Old) ; true),
+    (get_global_solver(Old) -> z3_free_solver(Old) ; true),
     z3_make_solver(S),
     nb_setval(global_solver, S),
     nb_setval(solver_depth, 0).
 
-z3_get_global_solver(S) :- nb_current(global_solver, S).
+get_global_solver(S) :- nb_current(global_solver, S).
 
 assert_depth(N) :- b_getval(solver_depth, N).
 
@@ -143,14 +142,14 @@ assert_depth(N) :- b_getval(solver_depth, N).
 %% and it should always be called before an assert, if we want it to be retractable.
 %% So, hide push_solver, expose asserts.
 
-push_solver(S) :- z3_get_global_solver(S),
+push_solver(S) :- get_global_solver(S),
                   resolve_solver_depth(X),
                   New is X + 1,
                   b_setval(solver_depth, New),
                   z3_solver_push(S, _D).
 
 
-raw_solver_scopes(N) :- z3_get_global_solver(S), z3_solver_scopes(S,N).
+raw_solver_scopes(N) :- get_global_solver(S), z3_solver_scopes(S,N).
 
 %% Pops the Z3 context to match the PL solver_depth:
 resolve_solver_depth(X) :- b_getval(solver_depth, X),
@@ -166,7 +165,7 @@ resolve_solver_depth(X, Scopes) :- X < Scopes,
                                    Numpops is Scopes - X,
                                    popn(Numpops).
 
-popn(Numpops) :- z3_get_global_solver(S),
+popn(Numpops) :- get_global_solver(S),
                  z3_solver_pop(S, Numpops, _) -> true ; report("error popping Z3 solver\n").
 
 %% user-visible:
@@ -182,12 +181,12 @@ internal_assert_and_check(Solver, Formula, Status) :-
 
 z3_check(Status) :-
     check_status_arg(Status),
-    z3_get_global_solver(S),
+    get_global_solver(S),
     z3_solver_check(S, Status).
 
 z3_check_and_print(Status) :-
     check_status_arg(Status),
-    z3_get_global_solver(Solver),
+    get_global_solver(Solver),
     z3_swi_foreign:z3_solver_check_and_print(Solver, Status).
 
 
@@ -202,7 +201,7 @@ z3_model_map_for_solver(S, Model) :-
 z3_model_map(Model) :-
     resolve_solver_depth(_),
     z3_check(l_true),
-    z3_get_global_solver(S),
+    get_global_solver(S),
     z3_model_map_for_solver(S, Model).
 
 
@@ -281,13 +280,14 @@ declare_types([X|Rest], M) :- (get_assoc(X, M, Def) -> z3_declare(X, Def) ; true
 print_declarations :- get_declaration_map(M), z3_declarations_string(M, S), current_output(Out), write(Out, S).
 
 z3_eval(Expression, Result) :-  \+ is_list(Expression),
-                                z3_get_global_solver(S),
+                                get_global_solver(S),
+                                get_declaration_map(Map),
                                 z3_solver_check(S, Status),
                                 Status == l_true, % TODO: investigate l_undef
                                 replace_var_attributes(Expression, E1),
                                 setup_call_cleanup(
                                     z3_solver_get_model(S, Model),
-                                    z3_swi_foreign:z3_model_eval(Model, E1, Result),
+                                    z3_swi_foreign:z3_model_eval(Map, Model, E1, Result),
                                     z3_free_model(Model)
                                 ).
 
@@ -396,11 +396,13 @@ check_test_formulas(Formulas, Solver, R) :-
     z3_assert(DeclMap, Solver, Conjunction), %% makes a new solver
     z3_solver_check(Solver, R),
     current_output(Out),
-    z3_model_map_for_solver(S, Model), writeln(Out, Model),
+    z3_model_map_for_solver(Solver, Model), writeln(Out, Model),
     true.
 
 
-test(sat) :- z3_reset_declarations, check_test_formulas(_F, _S, R), R =@= l_true.
+test(sat, [true(R == l_true)] ) :-
+    z3_reset_declarations,
+    check_test_formulas(_F, _S, R).
 
 test(typetest) :-
     test_formulas(Formulas),
