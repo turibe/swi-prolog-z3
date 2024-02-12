@@ -7,11 +7,13 @@ without having to declare all of the atom and function types.
 For example, typecheck(and(a>b, b>c, c>d ,d > 1.0, f(a) = c), X, Y) infers "real" types for a,b,c, and d,
 and real->real for the function f.
 
-Typechecking atmost(a,b,c,d, ... ,n) infers bool types for a,b,c,d... and integer type for n.
+For example, typechecking "atmost(a,b,c,d, ... ,n)" infers bool types for a,b,c,d... and integer type for n.
 
 Notes:
        - The mapping is returned as an association map (library(assoc)). which requires keys to be ground.
-       - Formulas should therefore be ground. (Variables could be supported via attributes.)
+       - Formulas should therefore be ground.
+       - Variables can be supported via attributes, and typechecking the ground formula where the variables are replaced by their attributes.
+       - We allow overloading by arity.
 
 @author Tomas Uribe
 @license MIT
@@ -31,13 +33,10 @@ Notes:
 
 :- use_module(library(assoc)).
 
-
 %% Note that assoc lists require ground keys.
 %% When typing a var, we can add an attribute to it, and then type the attribute.
 
 :- dynamic signature/3.
-
-% :- initialization(...) ?
 
 :- retractall(signature(_,_,_)).
 
@@ -49,35 +48,57 @@ declare(Functor, ArgTypes, Result) :-
     assert(signature(Functor, ArgTypes, Result)).
 
 % Notation: "all(T)" means there can be an arbitrary number of arguments, all of type T. 
-% A possible improvement is to support expressions like all(number) AND oneof(float).
+
 
 :- declare(=, [T, T], bool).
 :- declare(<>, [T, T], bool).
 :- declare(==, [T, T], bool).
 :- declare(equal, [T, T], bool).
 :- declare(distinct, all(_T), bool).
-:- declare(+, all(T), T).
 
+% A possible improvement is to support expressions like all(number) AND oneof(float),
+% but makes the typechecking more expensive:
 % :- declare(+, oneof(real), real).
-% :- declare(+, [real, T], real).
-% :- declare(+, [T, real], real).
 % :- declare(*, oneof(real), real).
 
+:- declare(+, all(T), T).
 :- declare(*, all(T), T).
+
+:- declare(+, [real, _T], real).
+:- declare(+, [_T, real], real).
+:- declare(*, [real, _T], real).
+:- declare(*, [_T, real], real).
+
+%% go with subset declarations?
+:- declare(+, [int, bool], int).
+:- declare(+, [bool, int], int).
+:- declare(+, [bool, bool], int).
+
+:- declare(*, [int, bool], int).
+:- declare(*, [bool, int], int).
+:- declare(*, [bool, bool], int).
+
+%% TODO: would need 6 of these for all the comparision operators.
+:- declare(>, [bool, int], bool).
+:- declare(>, [bool, real], bool).
+:- declare(>, [int, bool], bool).
+:- declare(>, [int, real], bool).
+:- declare(>, [real, bool], bool).
+:- declare(>, [real, int], bool).
+
 :- declare(power, [int, int], int).
 :- declare(power, [real, int], real).
 :- declare(power, [_T, real], real).
-% :- declare(*, [real, T], real).
-% :- declare(*, [T, real], real).
 
 % div poses a problem that we can infer int types, but constraints asserted later might imply they are real.
 % really need an OR type.
+% From the Z3 docs:
 % "The arguments must either both have int type or both have real type. If the arguments have int type, then the result type is an int type, otherwise the the result type is real."
 :- declare(div, [real, real], real).
 :- declare(div, [int, int], int).
-
 :- declare(/, [real, real], real).
 :- declare(/, [int, int], int).
+
 :- declare(-, [T, T], T).
 :- declare(<, [T, T], bool).
 :- declare(>, [T, T], bool).
@@ -102,48 +123,54 @@ declare(Functor, ArgTypes, Result) :-
 :- declare(atleast, allthen(bool, int), bool).
 :- declare(atmost, allthen(bool, int), bool).
 
-% new: we allow overloading by arity.
+sub_type(int, real).
+sub_type(bool, int).
+sub_type(bool, real).
+sub_type(T,T).
+
+unify_or_error(T1, T2) :- T1 = T2, !, true.
+unify_or_error(T1, T2) :- write(user_error, "Could not unify "), write(user_error, types(T1,T2)), fail.
+
 % TODO: use attributed variables with finite domains, to represent cases where a var can be one of several types.
 
-
-/*******************
-% TODO: foldl could do this job?
-check_subterm_list([], _Type, E, E).
-check_subterm_list([S|Rest], Type, E, Eout) :-
-    typecheck(S, Type, E, E1),
-    check_subterm_list(Rest, Type, E1, Eout).
-
-typecheck(T, Type, Envin, Envout) :- member(Type, [int, float, bool]),
-                                      T =.. [F|Subterms],
-                                      functor_type(F, Type),
-                                      check_subterm_list(Subterms, Type, Envin, Envout).
-********************/
-
-
-
-% "mappable" here means a non-declared atom or function whose type signature needs to be inferred --- not one of the pre-defined ones.
-atomic_mappable(X, X) :- atom(X), !, true. % we want to exclude int, string, etc., so just atomic won't do.a
-% atomic_mappable(X, A) :- var(X), !, z3:add_attribute(X, A).
+% "mappable" are non-declared atoms or functions whose type signature needs to be inferred; that is, not pre-defined.
+atomic_mappable(X, X) :- atom(X).
 
 compound_mappable(X, N) :- compound(X),
                            functor(X, F, N),
                            \+ declared(F).
 
-
 check_length(all(_), _) :- !, true.
 check_length(allthen(_,_), _) :- !, true.
 check_length(L, Arity) :- length(L, Arity).
 
-% TODO: consider adding a delta?
-
 typecheck(F, _, _, _) :- var(F), !, instantiation_error(F).
-typecheck(Term:Type, T, Envin, Envout) :- !, Type = T,  typecheck(Term, Type, Envin, Envout).
-% typecheck(Term:T, Type, Envin, Envout) :-  %% confusing rule, get rid of it? Unifies Type and T.
-%    atom(Term), !,
-%    Type = T,
-%    (get_assoc(Term, Envin, Existing) -> (Type = Existing, Envout=Envin) ;
-%     put_assoc(Term, Envin, T, Envout)
-%     ).
+typecheck(Term:Type, T, Envin, Envout) :- !, Type = T,
+    typecheck(Term, Type, Envin, Envout).
+typecheck(X1, T, Envin, Envout) :- atomic_mappable(X1, X), !,
+                                   (get_assoc(X, Envin, T1) ->
+					unify_or_error(T, T1), % print error if this fails
+					Envin = Envout
+				   ;
+                                   (
+                                     put_assoc(X, Envin, T, Envout)
+                                   )
+				   ).
+typecheck(X, int, E, E) :- integer(X).
+typecheck(X, real, E, E) :- integer(X).
+typecheck(X, real, E, E) :- float(X).
+typecheck(X, string, E, E) :- string(X).
+typecheck(X, Type, Envin, Envout) :- compound_mappable(X,Arity), !,
+                                     X =.. [F|Subterms],
+                                     (get_assoc(F/Arity, Envin, Funtype) ->
+					  Funtype = lambda(Argtypes, Type),
+					  check_signature(Subterms, Argtypes, Envin, Envout)
+				     ;
+                                     length(Argtypes, Arity),
+                                     Newtype = lambda(Argtypes, Type),
+                                     put_assoc(F/Arity, Envin, Newtype, EnvIntermediate),
+                                     check_signature(Subterms, Argtypes, EnvIntermediate, Envout)
+				     ).
 typecheck(T, Type, Envin, Envout) :-
     nonvar(T),
     functor(T, F, Arity),
@@ -151,35 +178,13 @@ typecheck(T, Type, Envin, Envout) :-
     signature(F, ArgTypes, Result),
     check_length(ArgTypes, Arity),
     Type = Result,
-    check_signature(Subterms, ArgTypes, Envin, Envout), !.
-typecheck(X, int, E, E) :- integer(X), !.
-typecheck(X, real, E, E) :- integer(X), !.
-typecheck(X, real, E, E) :- float(X), !.
-typecheck(X, string, E, E) :- string(X), !.
-typecheck(X1, T, Envin, Envout) :- atomic_mappable(X1, X), !,
-                                   (get_assoc(X, Envin, T1) ->
-					T = T1, % TODO: print error if this fails
-					Envin = Envout
-				   ;
-                                   put_assoc(X, Envin, T, Envout)
-				   ).				   
-typecheck(X, Type, Envin, Envout) :- compound_mappable(X,Arity), !,
-                                     X =.. [F|Subterms],
-                                     (get_assoc(F/Arity, Envin, Funtype) ->
-					  Funtype = lambda(Argtypes, Type),
-					  check_signature(Subterms, Argtypes, Envin, Envout)
-				     ;
-                                     %% length(Subterms, Arity),
-                                     length(Argtypes, Arity),
-                                     Newtype = lambda(Argtypes, Type),
-                                     put_assoc(F/Arity, Envin, Newtype, EnvIntermediate),
-                                     check_signature(Subterms, Argtypes, EnvIntermediate, Envout)
-				     ).
+    %% sub_type(Type, Result),
+    check_signature(Subterms, ArgTypes, Envin, Envout).
 
 
-% TODO: works but want to avoid blowups.
+% TODO: this works, but we want to avoid blowups from too many choice points.
 % ideally one would just assert the constraint, check that it's satisfiable, and continue.
-% the map would have to support those constraints. Use attributed variables?
+% The map would have to support those constraints, perhaps using attributed variables.
 % check_signature([], oneof(T), _, _) :- fail.
 % check_signature([Arg|Rest], oneof(T), Ein, Eout) :-
 %    typecheck(Arg, T, Ein, Eout) -> true ; check_signature(Rest, oneof(T), Ein, Eout).
@@ -216,10 +221,10 @@ typecheck_to_list(Term, Type, Result) :- empty_assoc(Empty), typecheck(Term, Typ
 
 :- begin_tests(type_inference_tests).
 
-test(basic, [true(Atype == int)]) :-
+test(basic, [true(Atype == int), nondet]) :-
     typecheck(and(a:int > b, c), bool, Map),
-    get_assoc(a, Map, Atype), !,
-    get_assoc(b, Map, int), !,
+    get_assoc(a, Map, Atype),
+    get_assoc(b, Map, int),
     get_assoc(c, Map, bool).
 
 test(conflict1, [fail]) :-
@@ -243,9 +248,8 @@ test(nested1, [fail]) :-
 test(nested2, [fail]) :-
     typecheck(f(g(a:int):int, g(b:bool)), _X, _M).
 
-
 test(divtest, [nondet]) :-
-    type_inference:typecheck(a=div(x, y), _T, t, M), % choicepoint between int and real
+    type_inference:typecheck(a = div(x, y), _T, t, M), % choicepoint between int and real
     type_inference:typecheck(a = div(b:real, 2), _T1, M, _M1).
 
 test(ftest) :-
@@ -265,5 +269,17 @@ test(atleast) :-
     get_assoc(a, Map, bool),
     get_assoc(d, Map, int),
     true.
+
+test(intreal, set(T == [bool, int, real]) ) :-
+    typecheck(a>1, bool, t, R),
+    get_assoc(a,R,T).
+
+typecheck(bool_plus, all(T == [bool, int]) ) :-
+    typecheck((a:int) + b, int, R),
+    get_assoc(b, R, T).
+
+typecheck(bool_times, all(T == [bool, int]) ) :-
+    typecheck((a:int) * b, int, R),
+    get_assoc(b, R, T).
 
 :- end_tests(type_inference_tests).

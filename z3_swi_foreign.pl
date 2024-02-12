@@ -62,6 +62,7 @@ test(reset, [cleanup(z3_free_declaration_map(M))]) :-
 
 is_pointer(X) :- integer(X).
 
+
 test(context) :-
     z3_context(context(C)),
     is_pointer(C).
@@ -126,11 +127,11 @@ test(assert_test, [cleanup(z3_free_declaration_map(Map))]) :-
     z3_print_declarations(Map),
     z3_free_solver(S).
 
-test(bad_types, [fail, cleanup((z3_free_solver(S), z3_free_declaration_map(M)))] ) :-
-         z3_make_solver(S),
-         z3_make_declaration_map(M),
-         z3_function_declaration(M, a, real),
-         z3_assert(M, S, a=3).
+test(int_real_types, [cleanup((z3_free_solver(S), z3_free_declaration_map(M)))] ) :-
+    z3_make_solver(S),
+    z3_make_declaration_map(M),
+    z3_function_declaration(M, a, real),
+    z3_assert(M, S, a=3).
 
 test(no_check, [fail]) :-
     setup_call_cleanup(
@@ -216,7 +217,7 @@ test(roundtrips1) :-
     term_to_z3_ast(M, 123, A1), z3_ast_to_term(A1, T1),
     assertion(T1 == 123),
     term_to_z3_ast(M, 1.4, A2), z3_ast_to_term(A2, T2),
-    assertion(T2 == 7 div 5).
+    assertion(T2 == 7 / 5).
 
 
 test(roundtrips2) :-

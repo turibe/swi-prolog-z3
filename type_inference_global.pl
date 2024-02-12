@@ -4,7 +4,6 @@
               show_map/1,
               assert_formula_list_types/1,
               assert_type/2,
-              get_type/2,
               get_map/1,
               show_map/1
           ]).
@@ -51,8 +50,6 @@ assert_type(Term, Type) :- ground(Term), !,
 assert_type(Term, _Type) :- instantiation_error(Term).
 
 
-get_type(T, Type) :- get_map(E), typecheck(T, Type, E, _).
-
 %%%%%%%%%%%% unit tests %%%%%%%%%%%
 
 :- begin_tests(type_inference_global).
@@ -63,9 +60,10 @@ test(init) :-
 test(failtest, [fail]) :-
     assert_type(a, bool), assert_type(a, real).
 
-test(inferencetest, [true(X == int), true(Y = lambda([int], int)) ]) :-
+test(inferencetest, [true(X-Y == int-lambda([int], int)) , nondet ]) :-
     assert_formula_list_types([f(a) > 1, b:int > a]),
-    get_type(a, X),
-    get_type(f, Y).
+    get_map(M),
+    get_assoc(a, M, X),
+    get_assoc(f/1, M, Y).
 
 :- end_tests(type_inference_global).

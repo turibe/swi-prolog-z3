@@ -30,7 +30,7 @@ test(get_model, [true(C1 == [(a-13), (b-13), (d-4)] ), true(F1 == [(f(4)-5), ((f
     %% z3_declare(f,lambda([int],int)),
     z3_push((f(a) = 20) and (f(d) = 5)),
     z3_push(f(a) > b),
-    z3_model_map(_X{constants:C,functions:F}),
+    z3_model(_X{constants:C,functions:F}),
     sort(C,C1), sort(F, F1).
 
 %%  f^m(a) = a = f^n(a) ⟹  f^(gcd(m,n))(a) = a
@@ -88,7 +88,7 @@ test(conjunction) :-
 test(uninterpreted_model) :-
     z3_reset_declarations,
     z3_push(and(f(a) = b, f(b)=c)),
-    z3_model_map(_X{constants:C, functions:F}),
+    z3_model(_X{constants:C, functions:F}),
     sort(C, C1),
     assertion(
         C1 == [(a-'uninterpreted!val!0'), (b-'uninterpreted!val!1'), (c-'uninterpreted!val!2')]
@@ -98,6 +98,10 @@ test(uninterpreted_model) :-
         F1 == [(f('uninterpreted!val!1')-'uninterpreted!val!2'), ((f/1-else)-'uninterpreted!val!1')]
     ).
 
+test(reals) :-
+    z3_push(a:real > 1), z3_push(a = b), z3_push(a= 3.1), z3_model(M),
+    assertion(
+        M.constants == [a-31/10, b-31/10] ).
 
 % use_module(quickexplain).
 

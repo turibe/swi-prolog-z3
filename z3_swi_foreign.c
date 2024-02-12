@@ -45,6 +45,13 @@
 
 // *************************************************************************
 
+Z3_sort BOOL_SORT, INT_SORT, REAL_SORT;
+
+int numeric_sort(Z3_context ctx, Z3_sort s) {
+  // return(s == BOOL_SORT || s == INT_SORT || s == REAL_SORT);
+  Z3_sort_kind k = Z3_get_sort_kind(ctx, s);
+  return (k == Z3_BOOL_SORT || k == Z3_INT_SORT || k == Z3_REAL_SORT);
+}
 
 // from Z3's test_capi.c:
 Z3_ast mk_var(Z3_context ctx, const char * name, Z3_sort ty)
@@ -55,7 +62,7 @@ Z3_ast mk_var(Z3_context ctx, const char * name, Z3_sort ty)
 
 
 Z3_ast mk_int_var(Z3_context ctx, const char * name) {
-  Z3_sort ty = Z3_mk_int_sort(ctx);
+  Z3_sort ty = INT_SORT; //  Z3_mk_int_sort(ctx);
   return mk_var(ctx, name, ty);
 }
 
@@ -146,6 +153,10 @@ void z3_swi_initialize() {
   Z3_del_config(config);
 
   pair_functor = PL_new_functor(PL_new_atom("-"), 2);
+  BOOL_SORT = Z3_mk_bool_sort(global_z3_context);
+  INT_SORT = Z3_mk_int_sort(global_z3_context);
+  REAL_SORT = Z3_mk_real_sort(global_z3_context);
+  
 }
 
 
@@ -501,7 +512,7 @@ foreign_t z3_ast_to_term_internal(const Z3_context ctx, Z3_ast ast, term_t term)
     }
     int64_t num, den;
     if (Z3_get_numeral_rational_int64(ctx, ast, &num, &den)) {
-      functor_t div = PL_new_functor(PL_new_atom("div"), 2); // how to construct a Prolog rational?
+      functor_t div = PL_new_functor(PL_new_atom("/"), 2); // how to construct a Prolog rational in C?
       term_t t = PL_new_term_ref();
       term_t t1 = PL_new_term_refs(2);
       term_t t2 = t1+1;
@@ -662,7 +673,7 @@ foreign_t z3_assert_foreign(term_t decl_map_term, term_t solver_term, term_t for
 
   DEBUG("made formula %p\n", (void *) z3_formula);
   Z3_sort formula_sort = Z3_get_sort(ctx, z3_formula);
-  if (formula_sort != Z3_mk_bool_sort(ctx)) {
+  if (formula_sort != BOOL_SORT) {
     char * formula_string;
     int res = PL_get_chars(formula, &formula_string, CVT_ALL | CVT_VARIABLE | CVT_EXCEPTION | CVT_WRITE);
     if (!res) {
@@ -731,7 +742,10 @@ Z3_func_decl mk_func_decl(Z3_context ctx, decl_map declaration_map, const term_t
    size_t arity;
    int res = PL_get_name_arity(formula, &name, &arity);
    if (!res) {
-     ERROR("Bad argument to mk_func_decl");
+     char **formula_string = NULL;
+     if (PL_get_chars(formula, formula_string, BUF_STACK)) {
+       ERROR("Bad argument to mk_func_decl: %s\n", *formula_string);
+     }
      return NULL;
    }
 
@@ -1045,21 +1059,22 @@ Z3_sort mk_sort(Z3_context ctx, term_t expression) {
   case PL_ATOM: {
     char *name_string;
     int res = PL_get_atom_chars(expression, &name_string);
-    DEBUG("making sort for atom %s\n", name_string);
     if (!res) {
       return FALSE;
     }
+    DEBUG("making sort for atom %s\n", name_string);
     if (strcmp(name_string, "bool") == 0 || strcmp(name_string, "boolean") == 0) {
       DEBUG("returning bool sort\n");
-      return Z3_mk_bool_sort(ctx);
+      return BOOL_SORT;
     }
     if (strcmp(name_string, "int") == 0 || strcmp(name_string, "integer") == 0) {
       DEBUG("returning int sort\n");
-      return Z3_mk_int_sort(ctx);
+      // return Z3_mk_int_sort(ctx);
+      return INT_SORT;
     }
     if (strcmp(name_string, "float") == 0 || strcmp(name_string, "real") == 0 || strcmp(name_string, "double") == 0) {
       DEBUG("returning sort for float/real/double\n");
-      return Z3_mk_real_sort(ctx); // not the same as a floating point number in Z3
+      return REAL_SORT;  // not the same as a floating point number in Z3
       // return Z3_mk_fpa_sort_double(ctx);
     }
     Z3_symbol uninterpreted_name = Z3_mk_string_symbol(ctx, name_string);
@@ -1188,7 +1203,7 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
   case PL_INTEGER:
     if (PL_get_long_ex(formula, &lval)) {
       DEBUG("Got PL_get_long\n");
-      Z3_sort intsort = Z3_mk_int_sort(ctx);
+      Z3_sort intsort = INT_SORT; // Z3_mk_int_sort(ctx);
       return Z3_mk_int64(ctx, lval, intsort);
     }
     else {
@@ -1204,7 +1219,7 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
     // don't use PL_get_float because apparently Z3 can't make reals from floats.
     // Z3_sort sort = Z3_mk_fpa_sort_double(ctx);
     DEBUG("making float\n");
-    Z3_sort sort = Z3_mk_real_sort(ctx);
+    Z3_sort sort = REAL_SORT;
     char *formula_string;
     if (PL_get_chars(formula, &formula_string, CVT_FLOAT) ) {
       result = Z3_mk_numeral(ctx, formula_string, sort);
@@ -1332,9 +1347,13 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
       // Check that types are compatible; otherwise Z3 quits/crashes
       Z3_sort s1 = Z3_get_sort(ctx, subterms[0]);
       Z3_sort s2 = Z3_get_sort(ctx, subterms[1]);
-      if (s1 != s2) {
-        ERROR("different types for equals, failing\n");
-        return NULL;
+      if ((!numeric_sort(ctx, s1)) && (!numeric_sort(ctx, s2)) && (s1 != s2)) // equalities between expresions of numeric sorts seem to be OK for Z3:
+        {
+          ERROR("different types for equals, failing\n");
+          ERROR("sort1: %s\n", Z3_sort_to_string(ctx, s1)); // as with ast_to_string, one sort_to_string invaliates the previous one
+          ERROR("sort2: %s\n", Z3_sort_to_string(ctx, s2)); 
+          // ERROR("sort kinds: %u and %u\n", Z3_get_sort_kind(ctx, s1), Z3_get_sort_kind(ctx, s2));
+          return NULL;
       }
       DEBUG("making equals\n");
       result = Z3_mk_eq(ctx, subterms[0], subterms[1]);

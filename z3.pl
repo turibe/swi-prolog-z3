@@ -23,17 +23,17 @@
               z3_eval/2,               % +Expression,-Result  Evals Expression in a current model, if the current solver is SAT.
               z3_is_consistent/1,      % +Formula  Succeeds if Formula is consistent with current solver/context. Fails if l_undet.
               z3_is_implied/1,         % +Formula  Succeeds if Formula is implied by current solver/context. Fails if l_undet.
-              z3_model_map/1,          % +ModelTerm  Gets a model if possible. Fails if not l_sat.
+              z3_model/1,              % +ModelTerm  Gets a model if possible. Fails if not l_sat.
               z3_model_assoc/1,
               z3_push/1,               % +Formula   Pushes the formula, fails if status is l_false.
               z3_push/2,               % +Formula,+Status  Attempts to push the formula, returns status
               z3_push_and_print/1,     % +Formula   Convenience
               z3_push_and_print/2,     % +Formula,+Status  Convenience
-              %% reset_globals/0,
               print_declarations/0,
               op(750, xfy, and), % =, >, etc. are 700
               op(751, xfy, or),
-              op(740, xfy, <>)
+              op(740, xfy, <>),
+              op(100, xfy, :)
               % {}/1, % clashes
               ]).
 
@@ -203,14 +203,14 @@ z3_model_map_for_solver(S, Model) :-
     
 
 % returns a model for the current solver, if check succeeds:
-z3_model_map(Model) :-
+z3_model(Model) :-
     resolve_solver_depth(_),
     z3_check(l_true),
     get_global_solver(S),
     z3_model_map_for_solver(S, Model).
 
 z3_model_assoc(Model) :-
-    z3_model_map(ModelLists),
+    z3_model(ModelLists),
     list_to_assoc(ModelLists.constants, CA),
     list_to_assoc(ModelLists.functions, FA),
     Model = model{constants:CA, functions:FA}.
@@ -394,7 +394,7 @@ test_formulas(Formulas) :-
                 a = (b:int), %% int should remove choicepoint
                 b = a,
                 d:int = f(e:foobarsort),
-                foo(b) = c % this implies b = 0
+                foo(b) = (c:int) % this implies b = 0
                ]
                .
 
@@ -406,16 +406,16 @@ check_test_formulas(Formulas, R) :-
 test(sat, [true(R == l_true)] ) :-
     check_test_formulas(_F, R).
 
-test(typetest) :-
+test(typetest, [true(A-F == int-lambda([foobarsort], int)) , nondet ] ) :-
     test_formulas(Formulas),
     assert_formula_list_types(Formulas),
     type_inference_global:get_map(Map),
-    assoc_to_list(Map, R),
-    assertion(member(a-int, R)),
-    assertion(member(f/1-lambda([foobarsort], int), R)).
+    get_assoc(a, Map, A),
+    get_assoc(f/1, Map, F).
 
 test(nonsat, [true(R1 == l_true), true(R2 == l_false)] ) :-
     check_test_formulas(_Formulas, R1),
+    assertion(z3_is_implied(b = 0)),
     z3_push(b=2, R2).
 
 
@@ -425,7 +425,7 @@ test(reals, [true(R == l_true)] ) :-
     z3_push(a = div(b:real, 4.0)),
     z3_push(a > 0.0, R).
 
-% interesting scenario: z3_push(a:real = div(x, y), R), z3_push(a = div(b:real, 4.0), R1), z3_model_map(M).
+% interesting scenario: z3_push(a:real = div(x, y), R), z3_push(a = div(b:real, 4.0), R1), z3_model(M).
 % reports on division-by-zero value.
 
 % z3_push_and_print(a:real=div(x, y), R), z3_push_and_print(a = div(b, 4.0), R1).
@@ -470,7 +470,7 @@ test(eval, [true(R == 6)]) :-
 %% z3_push(power(a:real,b:int) = c, R), z3_push(c=2.0, R1), z3_push(a=2.0, R2).
 
 %% to see how the model changes:
-%% z3:z3_push(b:int>c,R), z3:z3_push(and(a>d:int,b>e:int),R1), z3_push(f > b), z3_model_map(M), z3_is_consistent(f < a), z3_model_map(M1), z3_push(f > a), z3_model_map(M2).
+%% z3:z3_push(b:int>c,R), z3:z3_push(and(a>d:int,b>e:int),R1), z3_push(f > b), z3_model(M), z3_is_consistent(f < a), z3_model(M1), z3_push(f > a), z3_model(M2).
 %% or z3_push_and_print(a > 1), z3_push_and_print(b > 2), z3_push_and_print(a > b), solver_scopes(N).
 
 test(scopes, [true(N1 == 1), true(N2==2)] ) :-
@@ -504,6 +504,19 @@ test(attributes3, [true(R = 14)] ) :-
 
 test(attributes4, [fail] ) :-
     z3_push(X=14), z3_push(Y > X), z3_push(Z > Y), X = a, Z = a.
+
+test(bool_plus) :-
+    z3_push((a:real) + (b:bool) = 3.0), z3_push(b), z3_model(M),
+    M.constants == [b-true, a-2].
+
+test(bool_times) :-
+    z3_push((a:real) * (b:bool) = 0.0), z3_push(a = 3.2), z3_model(M),
+    assertion(M.constants == [b-false, a-16/5]).
+
+test(more_arith) :-
+    z3_push(a:bool + b:real = 1), z3_model(M1), z3_push(b < 1), z3_model(M2),    
+    assertion(M1.constants == [a-false, b-1]),
+    assertion(M2.constants == [a-true, b-0]).
 
 :- end_tests(attribute_tests).
 
