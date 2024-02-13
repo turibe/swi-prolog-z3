@@ -1,29 +1,28 @@
 %%% -*- Mode: Prolog; Module: z3; -*-
-    
-:- module(type_inference_global, [
-              show_map/1,
-              assert_formula_list_types/1,
-              assert_type/2,
-              get_type/2,
-              get_map/1,
-              show_map/1
-          ]).
-
-:- use_module(library(assoc)).
 
 %%%%%%%%%%%%%%%%%%%%
 %%
 %% This module builds on type_inference.pl and keeps a global backtrackable type map so we can incrementally typecheck in the REPL.
 %%
-%% Note also that we keep a mirror of this state in the C package for Z3 as well, that can be reset between queries.
+%% Note also that we keep a mirror of this state in the C Z3 package as well (needed to build terms), which should reset between queries.
 %%
+
+:- module(type_inference_global, [
+              assert_type/2,
+              declare_type_list/1,     % +List of Term-Type or Term:Type pairs
+              typecheck_and_declare/2, % +Formula,-Assoc  : Typechecks Formula, declares types, and returns new Assoc
+              get_map/1,
+              show_map/1
+
+          ]).
+
+:- use_module(library(assoc)).
 
 :- use_module(type_inference).
 
 :- initialization(initialize_map).
 
-%% NEW: we use a backtrackable version.
-%% TODO: Would be nice, for efficiency, to only get the deltas from one type map to the next, and assert only those.
+%% global_typemap is a backtrackable variable.
 
 initialize_map :- empty_assoc(Empty),
 		  initialize_map(Empty).
@@ -40,7 +39,7 @@ show_map(L) :- get_map(Map),
 %% gets the current map, uses it to typecheck the formula list, and updates the current map with the result:
 assert_formula_list_types(L) :-
     get_map(E),
-    typecheck_formula_list(L, E, Enew),
+    type_inference:typecheck_formula_list(L, E, Enew),
     set_map(Enew).
 
 
@@ -48,10 +47,20 @@ assert_type(Term, Type) :- ground(Term), !,
                            get_map(E),
                            typecheck(Term, Type, E, Enew),
                            set_map(Enew).
-assert_type(Term, _Type) :- instantiation_error(Term).
+assert_type(Term, _Type) :- \+ ground(Term),
+                            instantiation_error(Term).
+
+typecheck_and_declare(Formulas, Assoc) :-
+    assert_formula_list_types(Formulas), !, %% updates the global (backtrackable) type map
+    get_map(Assoc),
+    assoc_to_list(Assoc, L),
+    declare_type_list(L).
 
 
-get_type(T, Type) :- get_map(E), typecheck(T, Type, E, _).
+declare_type_list([]).
+declare_type_list([A-B|R]) :- z3_declare(A, B), declare_type_list(R).
+declare_type_list([A:B|R]) :- z3_declare(A, B), declare_type_list(R).
+
 
 %%%%%%%%%%%% unit tests %%%%%%%%%%%
 
@@ -63,9 +72,11 @@ test(init) :-
 test(failtest, [fail]) :-
     assert_type(a, bool), assert_type(a, real).
 
-test(inferencetest, [true(X == int), true(Y = lambda([int], int)) ]) :-
+test(inferencetest, [true(X-Y == int-lambda([int], int)) , nondet ]) :-
     assert_formula_list_types([f(a) > 1, b:int > a]),
-    get_type(a, X),
-    get_type(f, Y).
+    get_map(M),
+    get_assoc(a, M, X),
+    get_assoc(f/1, M, Y).
+
 
 :- end_tests(type_inference_global).
