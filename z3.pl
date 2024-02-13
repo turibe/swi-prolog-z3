@@ -55,7 +55,7 @@
 		  z3_free_solver/1,
 		  z3_function_declaration/3,
 		  z3_make_solver/1,
-		  z3_model_eval/4,
+		  z3_model_eval/5,
 		  z3_model_map/2,
                   z3_make_declaration_map/1,
 		  z3_reset_declaration_map/1,
@@ -249,7 +249,7 @@ check_status_arg(Status) :- nonvar(Status),
 
 
 %% We now use backtrackable types, resetting declarations at the first push.
-%% Problem is that type declarations in Z3 can't be popped.
+%% Note that type declarations in Z3 can't be pushed and popped.
 %% on the other hand, new declarations could over-write old ones in Z3 (TODO)... (we're keeping our own map there).
 %% so if we make sure that the Z3 declarations are always the latest ones, we're OK.
 
@@ -291,7 +291,7 @@ declare_types([X|Rest], M) :- (get_assoc(X, M, Def) -> z3_declare(X, Def) ; true
 
 print_declarations :- get_z3_declaration_map(M), z3_declarations_string(M, S), current_output(Out), write(Out, S).
 
-z3_eval(Expression, Result) :-  \+ is_list(Expression),
+z3_eval(Expression, Completion, Result) :-  \+ is_list(Expression),
                                 get_global_solver(S),
                                 get_z3_declaration_map(Map),
                                 z3_solver_check(S, Status),
@@ -299,9 +299,11 @@ z3_eval(Expression, Result) :-  \+ is_list(Expression),
                                 replace_var_attributes(Expression, E1),
                                 setup_call_cleanup(
                                     z3_solver_get_model(S, Model),
-                                    z3_swi_foreign:z3_model_eval(Map, Model, E1, Result),
+                                    z3_swi_foreign:z3_model_eval(Map, Model, E1, Completion, Result),
                                     z3_free_model(Model)
                                 ).
+
+z3_eval(Expression, Result) :- z3_eval(Expression, false, Result).
 
 z3_eval([], []).
 z3_eval([X|Rest],[EX|Erest]) :-
@@ -506,6 +508,18 @@ test(attributes3, [true(R = 14)] ) :-
 test(attributes4, [fail] ) :-
     z3_push(X=14), z3_push(Y > X), z3_push(Z > Y), X = a, Z = a.
 
+test(attribute_eval, [true(R == 126)]) :-
+    z3_push(X=14), z3_push(Y=X-5), z3_eval(X*Y,R).
+
+test(attribute_model) :-
+    z3_push(X=14), z3_push(Y=X-5), z3_push(a = X-1), z3_push(b = Y*Y), z3_model(M),
+    assertion(member(a-13, M.constants)),
+    assertion(member(b-81, M.constants)).
+
+:- end_tests(attribute_tests).
+
+:- begin_tests(boolean_tests).
+
 test(bool_plus) :-
     z3_push((a:real) + (b:bool) = 3.0), z3_push(b), z3_model(M),
     M.constants == [b-true, a-2].
@@ -538,6 +552,7 @@ test(bool_iff) :-
     z3_push(a<=>b), z3_push(a), z3_model(M),
     assertion(M.constants = [a-true, b-true]).
 
-:- end_tests(attribute_tests).
+:- end_tests(boolean_tests).
+
 
 :- include(z3_unit_tests).

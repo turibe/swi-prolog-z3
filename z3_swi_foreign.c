@@ -145,7 +145,7 @@ void z3_swi_error_handler(Z3_context ctx, Z3_error_code e) {
 void z3_swi_initialize() {
   Z3_string version = Z3_get_full_version();
   fprintf(stderr, "Using Z3 version %s\n", version);
-  fprintf(stderr, "Initializing global context and declaration map\n");
+  fprintf(stderr, "Initializing global context\n");
   Z3_config config = Z3_mk_config();
 
   global_z3_context = Z3_mk_context(config);
@@ -301,8 +301,9 @@ foreign_t z3_make_solver_foreign(term_t solver_term) {
 
 /**
    Frees the solver, which must be an instantiated solver object.
-   TODO: use setup_call_cleanup to do this automatically.
+   In Prolog, can use setup_call_cleanup to do this automatically.
 **/
+
 foreign_t z3_free_solver_foreign(term_t u) {
   Z3_solver solver;
   Z3_context ctx  = get_context();
@@ -328,7 +329,7 @@ foreign_t z3_free_model_foreign(term_t u) {
 }
 
 /*
-  Gets a model object from the solver; need to run check on the solver first.
+  Gets a model object from the solver; "z3_solver_check" must have been run on the solver first.
   Otherwise, an error is reported and we fail.
 */
 
@@ -345,20 +346,21 @@ foreign_t z3_solver_get_model_foreign(term_t solver_term, term_t model_term) {
   return FALSE;
 }
 
-// TODO: model completion could be a flag
-// In Prolog, we handle z3_push(X=14), z3_push(Y=X-5) by using attributed variables.
-// TODO: handle z3_push(X=14), z3_push(Y=X-5), z3_model_eval(X*Y,R) by looking at attributed variables.
-// need a higher-level model_eval that replaces vars by their attributes.
-foreign_t z3_model_eval_foreign(term_t dmap_term, term_t model_term, term_t term, term_t result_term) {
+
+
+foreign_t z3_model_eval_foreign(term_t dmap_term, term_t model_term, term_t term_to_eval, term_t completion_flag, term_t result_term) {
   Z3_model model;
   int rval = PL_get_pointer_ex(model_term, (void **) &model);
   if (!rval) return rval;
   decl_map declaration_map;
   rval = PL_get_pointer_ex(dmap_term, (void **) &declaration_map);
   if (!rval) return rval;
+  int completion = FALSE;
+  rval = PL_get_bool_ex(completion_flag, &completion);
+  if (!rval) return rval;
   
   Z3_context ctx = get_context();
-  Z3_ast to_eval = term_to_ast(ctx, declaration_map, term);
+  Z3_ast to_eval = term_to_ast(ctx, declaration_map, term_to_eval);
   if (to_eval == NULL) {
     return FALSE; // TODO: could return a status atom explaining what happened...
   }
@@ -366,7 +368,7 @@ foreign_t z3_model_eval_foreign(term_t dmap_term, term_t model_term, term_t term
   bool result = Z3_model_eval(ctx,
                               model,
                               to_eval,
-                              false, // no model completion
+                              completion,
                               &result_ast);
   if (!result) {
     return FALSE;
@@ -1502,7 +1504,7 @@ install_t install()
   PRED("z3_declaration_map_size", 2, z3_declaration_map_size_foreign, 0); // +decl_map, -size_int
   
   PRED("z3_solver_get_model", 2, z3_solver_get_model_foreign, 0); // +solver, -model_pointer
-  PRED("z3_model_eval", 4, z3_model_eval_foreign, 0); // +decl_map, +model_pointer, +formula, -value
+  PRED("z3_model_eval", 5, z3_model_eval_foreign, 0); // +decl_map, +model_pointer, +formula, +completion_flag, -value
   PRED("z3_free_model", 1, z3_free_model_foreign, 0); // +model
   
   PRED("z3_reset_declaration_map", 1, z3_reset_declaration_map_foreign, 0); // +decl_map

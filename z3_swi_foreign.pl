@@ -14,7 +14,7 @@
 	      z3_make_solver/1,
               z3_make_declaration_map/1,
               z3_declaration_map_size/2,
-	      z3_model_eval/4,             %% +decl_map, +model_pointer, +formula, -value 
+	      z3_model_eval/5,             %% +decl_map, +model_pointer, +formula, +completion_flag, -value 
 	      z3_model_map/2,
 	      z3_reset_declaration_map/1,
 	      z3_solver_assertions/2,
@@ -104,12 +104,13 @@ test(model_eval) :-
     z3_solver_check(S, Status),
     assertion(Status == l_true),
     z3_solver_get_model(S, Model),
-    % typo z3_model_eval(S,a,R) causes segfault!
     % TODO: use blobs or some other method to distinguish models and solvers.
-    assertion(z3_model_eval(M, Model, a+a, 6)),    
-    assertion(z3_model_eval(M, Model, a+b, 5)),
-    assertion(z3_model_eval(M, Model, a*b, 6)),
-    assertion(z3_model_eval(M, Model, a**b, 9)),
+    assertion(z3_model_eval(M, Model, a+a, false, 6)),
+    assertion(z3_model_eval(M, Model, a+b, false, 5)),
+    assertion(z3_model_eval(M, Model, a*b, false, 6)),
+    assertion(z3_model_eval(M, Model, a**b, false, 9)),
+    assertion(z3_model_eval(M, Model, z, false, z)), %% no completion
+    assertion(z3_model_eval(M, Model, z, true, 0)), %% completion
     z3_free_model(Model),
     z3_free_declaration_map(M),
     z3_free_solver(S).
@@ -160,10 +161,17 @@ test(incompatible_types2, [fail]) :-
     z3_assert(M, S, a = b),
     z3_solver_get_model(S, _Model).
 
-test(at_least_fail, [fail]) :- %% TODO: add cleanup
-    z3_make_declaration_map(M),
-    z3_make_solver(S),
-    z3_assert(M, S, atleast(a:bool, b:bool, c:bool)).
+test(at_least_fail, [fail]) :-
+    setup_call_cleanup(
+        (z3_make_declaration_map(M),
+         z3_make_solver(S)
+        ),
+        z3_assert(M, S, atleast(a:bool, b:bool, c:bool)),
+        (
+            z3_free_solver(S),
+            z3_free_declaration_map(M)
+        )
+    ).
 
 
 test(declare_fail1, [fail]) :-
@@ -237,7 +245,7 @@ test(default_int_fail, [fail, cleanup((z3_free_model(Model), z3_free_declaration
     z3_assert(Map, S, a),
     z3_solver_check(S, _R),
     z3_solver_get_model(S, Model),
-    z3_model_eval(Map, Model, not(a), _V).
+    z3_model_eval(Map, Model, not(a), false, _V).
 
 test(was_broken, [true(V==false), true(R==l_true)]) :-
     reset_declarations(Map),
@@ -245,7 +253,7 @@ test(was_broken, [true(V==false), true(R==l_true)]) :-
     z3_assert(Map, S, a:bool),
     z3_solver_check(S, R),
     z3_solver_get_model(S, Model),
-    z3_model_eval(Map, Model, not(a), V),
+    z3_model_eval(Map, Model, not(a), false, V),
     z3_free_model(Model),
     z3_free_solver(S),
     z3_free_declaration_map(Map).
@@ -275,7 +283,7 @@ test(works, [true(V==false), true(R==l_true)]) :-
     z3_solver_check(S, R),
     setup_call_cleanup(
         z3_solver_get_model(S, Model),
-        z3_model_eval(Map, Model, not(a:bool), V),
+        z3_model_eval(Map, Model, not(a:bool), false, V),
         (z3_free_model(Model), z3_free_declaration_map(Map))
     ).
 
