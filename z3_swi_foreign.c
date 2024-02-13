@@ -66,7 +66,7 @@ Z3_ast mk_int_var(Z3_context ctx, const char * name) {
   return mk_var(ctx, name, ty);
 }
 
-// we use intvars called "name/arity" as keys ; could have any other sort or shape...
+// we use intvars called "name/arity" as keys ; could have any other sort or shape.
 // TODO: avoid sprintf by using a term "internalfn(name, arity)" as the key?
 
 Z3_ast mk_ast_key(Z3_context ctx, const char * name, const size_t arity)
@@ -362,7 +362,7 @@ foreign_t z3_model_eval_foreign(term_t dmap_term, term_t model_term, term_t term
   Z3_context ctx = get_context();
   Z3_ast to_eval = term_to_ast(ctx, declaration_map, term_to_eval);
   if (to_eval == NULL) {
-    return FALSE; // TODO: could return a status atom explaining what happened...
+    return FALSE; // TODO: could return a status atom explaining what happened.
   }
   Z3_ast result_ast;
   bool result = Z3_model_eval(ctx,
@@ -537,9 +537,6 @@ foreign_t z3_ast_to_term_internal(const Z3_context ctx, Z3_ast ast, term_t term)
     return PL_unify_string_chars(term, s);
   }
 
-  // TODO: handle booleans,
-  // use Z3_get_bool_value(ctx, ast);
-
   if (Z3_get_ast_kind(ctx, ast) == Z3_APP_AST) {
     Z3_app app = Z3_to_app(ctx, ast);
     unsigned arity = Z3_get_app_num_args(ctx, app);
@@ -664,13 +661,12 @@ foreign_t z3_assert_foreign(term_t decl_map_term, term_t solver_term, term_t for
     char *formula_string;
     int res = PL_get_chars(formula, &formula_string, CVT_ALL | CVT_VARIABLE | CVT_EXCEPTION | CVT_WRITE);
     if (!res) {
-      ERROR("PL_get_chars failed");
+      ERROR("z3_assert/3: PL_get_chars failed");
       return FALSE;
     }
     // return PL_warning("z3_assert/3: could not make Z3 formula %s", formula_string); // starts the tracer.
     ERROR("z3_assert/3: could not make Z3 formula %s\n", formula_string);
     return FALSE;
-    
   }
 
   DEBUG("made formula %p\n", (void *) z3_formula);
@@ -784,7 +780,7 @@ Z3_func_decl mk_func_decl(Z3_context ctx, decl_map declaration_map, const term_t
    }
 
    Z3_func_decl result = get_function_declaration(ctx, declaration_map, name_string, arity);
-   // FIXME: the question is whether we overwrite existing declarations or not.
+   // The question is whether we overwrite existing declarations or not.
    if (result == NULL) {
      result = Z3_mk_func_decl(ctx, symbol, arity, arity == 0 ?  0 : domain, range_sort);
      if (result != NULL) {
@@ -797,8 +793,8 @@ Z3_func_decl mk_func_decl(Z3_context ctx, decl_map declaration_map, const term_t
      Z3_func_decl test =  Z3_mk_func_decl(ctx, symbol, arity, arity == 0 ?  0 : domain, range_sort);
      if (test != result) {
        ERROR("New declaration for \"%s\" is different from old one. Try z3_reset_declaration_map.\n", name_string);
-       result = NULL; // FIXME: this avoids silent failure, but unit tests fail, since we are re-declaring things all the time.
-       // TODO: try just letting the new one overwrite the old one. Combined with the backtrackable typemap, should be safe.
+       result = NULL;
+       // an alternative is to just let the new declaration overwrite the old one. Combined with the backtrackable typemap, should be safe.
      }
    }
 
@@ -813,9 +809,7 @@ Z3_func_decl mk_func_decl(Z3_context ctx, decl_map declaration_map, const term_t
 // Example: z3_function_declaration(f(int, int), int, X)
 
 // Note: This does not handle the case where formula is a variable.
-// There does not seem to be a way to get the attribute here, so have to pass a fake term, then...
 
-// TODO: require that result is var?
 
 foreign_t z3_function_declaration_foreign(const term_t decl_map_term, const term_t formula, const term_t range, term_t result) {
   atom_t name;
@@ -839,7 +833,7 @@ foreign_t z3_function_declaration_foreign(const term_t decl_map_term, const term
       return FALSE;
     }
   }
-  if (!PL_is_atom(range)) { // TODO: we could unify it with all the known types... :-)
+  if (!PL_is_atom(range)) {
     ERROR("z3_function_declaration range should be an atom\n");
     return FALSE;
   }
@@ -1000,7 +994,7 @@ foreign_t model_constants(const Z3_context ctx, const Z3_model m, term_t list) {
     }
 
     term_t lhs = PL_new_term_ref();
-    int res = PL_put_atom_chars(lhs, constant_name); // TODO: macro to check results?
+    int res = PL_put_atom_chars(lhs, constant_name);
     if (!res) {
       ERROR("PL_put_atom_chars failed\n");
       return FALSE;
@@ -1151,7 +1145,7 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
   switch (PL_term_type(formula)) {
 
   case PL_VARIABLE:
-    // TODO: it could be nice to look at the attributes, if any, and use them instead of the variable,
+    // It could be nice to look at the attributes, if any, and use them instead of the variable,
     // but the foreign interface does not offer methods for doing so.
     return NULL;
   case PL_ATOM: {
@@ -1182,7 +1176,7 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
     }
     if (declaration == NULL) { // Undeclared atoms are by default ints; we could require everything to be declared.
       DEBUG("term_to_ast got atom %s, default int\n", chars);
-      result = mk_int_var(ctx, chars); // TODO: require declarations
+      result = mk_int_var(ctx, chars);
     }
     else {
       result = Z3_mk_app(ctx, declaration, 0, 0); // arity 0, no args
@@ -1218,7 +1212,7 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
     break;
   case PL_FLOAT: {
     // double myf;
-    // don't use PL_get_float because apparently Z3 can't make reals from floats.
+    // We don't use PL_get_float because Z3 does not make reals from floats.
     // Z3_sort sort = Z3_mk_fpa_sort_double(ctx);
     DEBUG("making float\n");
     Z3_sort sort = REAL_SORT;
@@ -1273,7 +1267,7 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
         INFO("mk_sort for symbol is null\n");
         return NULL;
       }
-      // FIXME: We are converting PL to Z3. We should declare...
+      // We are converting PL to Z3. We should declare
       // mk_func_decl(ctx, symbol_name, ...);
       // to catch inconsistent uses of the same constant.
       atom_t name_atom;

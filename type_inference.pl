@@ -79,7 +79,6 @@ signature(<=> , A, B) :- signature(iff, A, B).
 :- declare(-, [_T, real], real).
 :- declare(-, [real, _T], real).
 
-%% go with subset declarations?
 :- declare(+, [int, bool], int).
 :- declare(+, [bool, int], int).
 :- declare(+, [bool, bool], int).
@@ -87,14 +86,6 @@ signature(<=> , A, B) :- signature(iff, A, B).
 :- declare(*, [int, bool], int).
 :- declare(*, [bool, int], int).
 :- declare(*, [bool, bool], int).
-
-%% TODO: would need 6 of these for all the comparision operators.
-%% :- declare(>, [bool, int], bool).
-%% :- declare(>, [bool, real], bool).
-%% :- declare(>, [int, bool], bool).
-%% :- declare(>, [int, real], bool).
-%% :- declare(>, [real, bool], bool).
-%% :- declare(>, [real, int], bool).
 
 :- declare(power, [int, int], int).
 :- declare(power, [real, int], real).
@@ -136,8 +127,6 @@ sub_type(T,T).
 unify_or_error(T1, T2) :- T1 = T2, !, true.
 unify_or_error(T1, T2) :- write(user_error, "Could not unify "), writeln(user_error, types(T1,T2)), fail.
 
-% TODO: use attributed variables with finite domains, to represent cases where a var can be one of several types.
-
 % "mappable" are non-declared atoms or functions whose type signature needs to be inferred; that is, not pre-defined.
 atomic_mappable(X) :- atom(X).
 
@@ -150,7 +139,7 @@ check_length(allthen(_,_), _) :- !, true.
 check_length(L, Arity) :- length(L, Arity).
 
 
-%%%%%%%% main typecheck : +Expression, ~Type, +Environment, -NewEnvironment:
+%%%%%%%% main predicate: typecheck/4 : +Expression, ~Type, +Environment, -NewEnvironment:
 
 typecheck(F, _, _, _) :- var(F), !, instantiation_error(F).
 typecheck(Term:Type, T, Envin, Envout) :- !, Type = T,
@@ -205,15 +194,6 @@ typecheck(T, Type, Envin, Envout) :-
 comparison_operator(F) :- member(F, [<, >, =<, >=, geq, leq]).
 numeric_type(T) :- member(T, [int, real, bool]).
 
-
-
-% TODO: this works, but we want to avoid blowups from too many choice points.
-% ideally one would just assert the constraint, check that it's satisfiable, and continue.
-% The map would have to support those constraints, perhaps using attributed variables.
-% check_signature([], oneof(T), _, _) :- fail.
-% check_signature([Arg|Rest], oneof(T), Ein, Eout) :-
-%    typecheck(Arg, T, Ein, Eout) -> true ; check_signature(Rest, oneof(T), Ein, Eout).
-
 check_signature([], allthen(_,_), E, E).
 check_signature([Arg], allthen(_,T), Ein, Eout) :- !, typecheck(Arg, T, Ein, Eout).
 check_signature([Arg|Rest], allthen(AT,T), Ein, Eout) :- \+ Rest = [],
@@ -233,7 +213,7 @@ typecheck(Term, Type, Eout) :- empty_assoc(Empty), typecheck(Term, Type, Empty, 
 
 % Convenience:
 
-% assumes the list represents a conjunction:
+% assumes that the list represents a conjunction:
 typecheck_formula_list([F|R], Ein, Eout) :- typecheck(F, bool, Ein, Enext),
                                             typecheck_formula_list(R, Enext, Eout).
 typecheck_formula_list([], E, E) :- true.

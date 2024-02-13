@@ -14,8 +14,8 @@
 	      z3_make_solver/1,
               z3_make_declaration_map/1,
               z3_declaration_map_size/2,
-	      z3_model_eval/5,             %% +decl_map, +model_pointer, +formula, +completion_flag, -value 
-	      z3_model_map/2,
+	      z3_model_eval/5,             %% +decl_map, +model_pointer, +formula, +completion_flag, -value
+              z3_model_map_for_solver/2,
 	      z3_reset_declaration_map/1,
 	      z3_solver_assertions/2,
 	      z3_solver_check/2,
@@ -42,12 +42,21 @@ z3_print_declarations(M) :-
 
 
 %% returned pointer is only useful for debugging, so we hide it here:
-%% FIXME: change name, clarify semantics. New declarations don't override old ones?
+%% FIXME: change name, clarify semantics. New declarations don't override old ones.
 z3_function_declaration(Map, A, B) :- z3_function_declaration(Map, A, B, _C).
 
 z3_model_map(M, Map) :- z3_model_functions(M, F),
                         z3_model_constants(M, C),
                         Map = model{functions:F, constants:C}.
+
+
+% gets a Prolog term representing a model for the given solver S:
+z3_model_map_for_solver(S, Model) :-
+    setup_call_cleanup(z3_solver_get_model(S,M),
+                       z3_model_map(M, Model),
+                       z3_free_model(M)
+                      ).
+
 
 :- begin_tests(foreign_tests).
 
@@ -227,7 +236,6 @@ test(roundtrips1) :-
     term_to_z3_ast(M, 1.4, A2), z3_ast_to_term(A2, T2),
     assertion(T2 == 7 / 5).
 
-
 test(roundtrips2) :-
     reset_declarations(M),
     z3_function_declaration(M, f(int,int,bool),int),
@@ -238,7 +246,12 @@ test(roundtrips2) :-
     z3_ast_to_term(X,Y),
     assertion(Y == Term).
 
-%% TODO: this does not work because "a" gets type int by default
+test(roundtrips_true_false) :-
+    reset_declarations(M),
+    term_to_z3_ast(M, true, RT), z3_ast_to_term(RT, true),
+    term_to_z3_ast(M, false, RF), z3_ast_to_term(RF, false).
+
+%% This fails because "a" gets type int by default
 test(default_int_fail, [fail, cleanup((z3_free_model(Model), z3_free_declaration_map(Map))) ]) :-
     reset_declarations(Map),
     z3_make_solver(S),
@@ -288,7 +301,15 @@ test(works, [true(V==false), true(R==l_true)]) :-
     ).
 
 
-%% FIXME:
-%% does not fail: z3_make_solver(S), z3_make_declaration_map(M), z3_function_declaration(M, f(int), int), z3_assert(M, S, f(a:int) > 1), z3_assert(M, S, f(b:bool) > 2).
+test(combined_bool_int, [cleanup((free_solver(S), free_declaration_map(M)) )]) :-
+     z3_make_solver(S),
+     z3_make_declaration_map(M),
+     z3_function_declaration(M, f(int), int),
+     z3_assert(M, S, f(a:int) > 1),
+     z3_assert(M, S, f(b:bool) > 2),
+     z3_solver_check(S, l_true),
+     z3_model_map_for_solver(S,Model),
+     assertion(Model.constants == [a-4, b-false]).
+
 
 :- end_tests(foreign_tests).

@@ -14,9 +14,7 @@
 
 % All the user-visible functions rely on an implicit solver, pushed accordingly, and a backtrackable type map:
 :- module(z3, [
-              declare_type_list/1,     % +List of Term-Type or Term:Type pairs
               solver_scopes/1,         % +Num_scopes, starting at 0
-              typecheck_and_declare/2, % +Formula,-Assoc  : Typechecks Formula, declares types, and returns new Assoc
               z3_check/1,              % +Status Returns status of global solver: l_true, l_false, l_undet
               z3_check_and_print/1,    % +Status Returns status, prints model if possible
               z3_declare/2,            % +Formula,+Type    Declares Formula to have Type.
@@ -35,16 +33,15 @@
               op(740, xfy, <>),
               op(740, xfy, <=>),
               op(100, xfy, :)
-              % {}/1, % clashes
+              % {}/1, % clashes with other CLP libraries
               ]).
 
 :- use_module(type_inference_global, [
-                  assert_formula_list_types/1,
                   assert_type/2,
                   get_map/1
               ]).
 
-:- use_module(library(assoc)). % use dicts instead? Both can't handle vars as keys properly.
+:- use_module(library(assoc)).
 :- use_module(library(ordsets)).
 
 :- use_module(z3_swi_foreign, [
@@ -56,7 +53,7 @@
 		  z3_function_declaration/3,
 		  z3_make_solver/1,
 		  z3_model_eval/5,
-		  z3_model_map/2,
+                  z3_model_map_for_solver/2,
                   z3_make_declaration_map/1,
 		  z3_reset_declaration_map/1,
 		  z3_solver_check/2,
@@ -193,14 +190,6 @@ z3_check_and_print(Status) :-
     check_status_arg(Status),
     get_global_solver(Solver),
     z3_swi_foreign:z3_solver_check_and_print(Solver, Status).
-
-
-% gets a Prolog term representing a model for the given solver S:
-z3_model_map_for_solver(S, Model) :-
-    setup_call_cleanup(z3_solver_get_model(S,M),
-                       z3_swi_foreign:z3_model_map(M, Model),
-                       z3_free_model(M)
-                      ).
     
 
 % returns a model for the current solver, if check succeeds:
@@ -250,10 +239,8 @@ check_status_arg(Status) :- nonvar(Status),
 
 %% We now use backtrackable types, resetting declarations at the first push.
 %% Note that type declarations in Z3 can't be pushed and popped.
-%% on the other hand, new declarations could over-write old ones in Z3 (TODO)... (we're keeping our own map there).
-%% so if we make sure that the Z3 declarations are always the latest ones, we're OK.
 
-%% TODO: We could allow different types on different branches if new declarations overwrite old ones without error.
+%% We could allow different types on different branches if new declarations overwrite old ones without error.
 
 %% FIXME: assert_type should ignore builtins like "atleast", otherwise they can't be overloaded.
 %% also ignore constants 1,2,3, ...
@@ -277,12 +264,10 @@ z3_push(F, Status) :-
     push_solver(Solver),
     internal_assert_and_check(Solver, FG, Status).
 
+
 %% z3_push/1 fails if solver reports inconsistency:
+
 z3_push(F) :- z3_push(F, R), \+ (R == l_false).
-
-% does not work:
-% {X} :- z3_push{X}.
-
 
 declare_types([], _M).
 declare_types([X|Rest], M) :- (get_assoc(X, M, Def) -> z3_declare(X, Def) ; true),
@@ -318,21 +303,13 @@ replace_var_attributes(X, R) :- compound(X),
                                 mapargs(replace_var_attributes, X, R).
 
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% lower level (used to be z3_wrapper.pl) %%%%%%
-
-%% NOTES: If we declare uninterpreted types, say,  for a=b, later on assert a=1, then type for a would change.
+%% NOTES: If we declare uninterpreted types, say,  for a=b, later on assert a=1, then the type for a would change.
 %% But Z3 does not let us change types, so this case is not handled. (Ideally, we would equate them, adding "uninterpreted = int").
 
 get_term_for_var(X, T) :- var(X),
                           add_attribute(X, T).
 
-% z3_declare takes care of types:
-z3_declare(F:T) :- z3_declare(F, T).
-
-% TODO/QUESTION: do we need attributed variables at all? Guess so, if other solvers will connect to it.
-% Old: If T is a var, the variable works as its own sort. % The z3_function_declaration code unifies it with an undef_sort_X atom.
-% New: we unify it here.
-% TODO: add tests.
+z3_declare(F:T) :- z3_declare(F, T). %% take care of explicit types
 z3_declare(F, T) :- var(F), !,
                     add_attribute(F, Attr),
                     z3_declare(Attr, T).
@@ -354,16 +331,6 @@ z3_declare(F, lambda(Arglist, Range)) :- (var(F) -> type_error(nonvar, F) ; true
                                          get_z3_declaration_map(M),
                                          z3_function_declaration(M, Fapp, Range).
 
-typecheck_and_declare(Formulas, Assoc) :-
-    assert_formula_list_types(Formulas), !, %% updates the global (backtrackable) type map
-    type_inference_global:get_map(Assoc),
-    assoc_to_list(Assoc, L),
-    declare_type_list(L).
-
-
-declare_type_list([]).
-declare_type_list([A-B|R]) :- z3_declare(A, B), declare_type_list(R).
-declare_type_list([A:B|R]) :- z3_declare(A, B), declare_type_list(R).
 
 
 internal_assert_and_check_list(Solver, List, Status) :-
@@ -411,7 +378,7 @@ test(sat, [true(R == l_true)] ) :-
 
 test(typetest, [true(A-F == int-lambda([foobarsort], int)) , nondet ] ) :-
     test_formulas(Formulas),
-    assert_formula_list_types(Formulas),
+    type_inference_global:assert_formula_list_types(Formulas),
     type_inference_global:get_map(Map),
     get_assoc(a, Map, A),
     get_assoc(f/1, Map, F).
@@ -421,7 +388,6 @@ test(nonsat, [true(R1 == l_true), true(R2 == l_false)] ) :-
     assertion(z3_is_implied(b = 0)),
     z3_push(b=2, R2).
 
-
 test(reals, [true(R == l_true)] ) :-
     z3_push(y:real > 2),
     z3_push(a:real=div(x, y)),
@@ -430,7 +396,7 @@ test(reals, [true(R == l_true)] ) :-
 
 % interesting scenario: z3_push(a:real = div(x, y), R), z3_push(a = div(b:real, 4.0), R1), z3_model(M).
 % reports on division-by-zero value.
-
+% also interesting:
 % z3_push_and_print(a:real=div(x, y), R), z3_push_and_print(a = div(b, 4.0), R1).
 
 test(atmost0, [true(R == l_true), true(R1 == l_false)] ) :-
