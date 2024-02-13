@@ -11,8 +11,8 @@
               assert_type/2,
               declare_type_list/1,     % +List of Term-Type or Term:Type pairs
               typecheck_and_declare/2, % +Formula,-Assoc  : Typechecks Formula, declares types, and returns new Assoc
-              get_map/1,
-              show_map/1
+              get_map/1,               % -Assoc : gets map as an assoc
+              get_map_list/1           % gets map as a list
 
           ]).
 
@@ -33,8 +33,9 @@ get_map(Map) :- b_getval(global_typemap, Map).
     
 set_map(Map) :- b_setval(global_typemap, Map).
 
-show_map(L) :- get_map(Map),
-               assoc_to_list(Map, L).
+%% more readable:
+get_map_list(L) :- get_map(Map),
+                   assoc_to_list(Map, L).
 
 %% gets the current map, uses it to typecheck the formula list, and updates the current map with the result:
 assert_formula_list_types(L) :-

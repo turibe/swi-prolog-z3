@@ -22,12 +22,12 @@
               z3_is_consistent/1,      % +Formula  Succeeds if Formula is consistent with current solver/context. Fails if l_undet.
               z3_is_implied/1,         % +Formula  Succeeds if Formula is implied by current solver/context. Fails if l_undet.
               z3_model/1,              % +ModelTerm  Gets a model if possible. Fails if not l_sat.
-              z3_model_assoc/1,
+              z3_model_assoc/1,        % +ModelAssocTerm  A model that uses assoc lists (less readable).
               z3_push/1,               % +Formula   Pushes the formula, fails if status is l_false.
               z3_push/2,               % +Formula,+Status  Attempts to push the formula, returns status
               z3_push_and_print/1,     % +Formula   Convenience
               z3_push_and_print/2,     % +Formula,+Status  Convenience
-              print_declarations/0,
+              print_declarations/0,    % print declarations so far, or those used in the previous query (reset on a new push).
               op(750, xfy, and), % =, >, etc. are 700
               op(751, xfy, or),
               op(740, xfy, <>),
@@ -253,7 +253,7 @@ z3_push(F, Status) :-
     ground_version(F, FG, Symbols),
     (type_inference_global:assert_type(FG, bool) -> true ;
      (report(type_error(FG)),
-      type_inference_global:show_map(L),
+      type_inference_global:get_map_list(L),
       report(map(L)),
       fail)),
     type_inference_global:get_map(Assoc),
