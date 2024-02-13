@@ -805,13 +805,13 @@ Z3_func_decl mk_func_decl(Z3_context ctx, decl_map declaration_map, const term_t
 
 
 // Makes a function (or constant) declarations.
-// Example: z3_function_declaration(f(int, bool), int, R).
-// Example: z3_function_declaration(f(int, int), int, X)
+// Example: z3_declare_function(f(int, bool), int, R).
+// Example: z3_declare_function(f(int, int), int, X)
 
 // Note: This does not handle the case where formula is a variable.
 
 
-foreign_t z3_function_declaration_foreign(const term_t decl_map_term, const term_t formula, const term_t range, term_t result) {
+foreign_t z3_declare_function_foreign(const term_t decl_map_term, const term_t formula, const term_t range, term_t result) {
   atom_t name;
   size_t arity;
   decl_map declaration_map;
@@ -834,7 +834,7 @@ foreign_t z3_function_declaration_foreign(const term_t decl_map_term, const term
     }
   }
   if (!PL_is_atom(range)) {
-    ERROR("z3_function_declaration range should be an atom\n");
+    ERROR("z3_declare_function range should be an atom\n");
     return FALSE;
   }
   const Z3_context ctx = get_context();
@@ -1483,7 +1483,7 @@ install_t install()
   PRED("z3_ast_to_term", 2, z3_ast_to_term_foreign, 0); // +ast, -formula
   PRED("z3_symbol", 2, z3_symbol_foreign, 0); // +formula, -symbol_pointer
   
-  PRED("z3_function_declaration", 4, z3_function_declaration_foreign, 0); // +decl_map, +pl_term, +range_atom, -declaration_pointer
+  PRED("z3_declare_function", 4, z3_declare_function_foreign, 0); // +decl_map, +pl_term, +range_atom, -declaration_pointer
 
   PRED("z3_solver_push", 2, z3_solver_push_foreign, 0); // +solver, -num_scopes
   

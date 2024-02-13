@@ -50,7 +50,7 @@
                   z3_declaration_map_size/2,
 		  z3_free_model/1,
 		  z3_free_solver/1,
-		  z3_function_declaration/3,
+		  z3_declare_function/3,
 		  z3_make_solver/1,
 		  z3_model_eval/5,
                   z3_model_map_for_solver/2,
@@ -317,11 +317,11 @@ z3_declare(F, int) :- integer(F), !, true.
 z3_declare(F, real) :- float(F), !, true.
 z3_declare(F, T) :- atom(T), !,
                     get_z3_declaration_map(M),
-                    z3_function_declaration(M, F, T).
+                    z3_declare_function(M, F, T).
 z3_declare(F, T) :- var(T), !,
                     T = uninterpreted,
                     get_z3_declaration_map(M),
-                    z3_function_declaration(M, F, T).
+                    z3_declare_function(M, F, T).
 z3_declare(F, lambda(Arglist, Range)) :- (var(F) -> type_error(nonvar, F) ; true), !,
                                          F = F1/N,
                                          length(Arglist, Len),
@@ -329,7 +329,7 @@ z3_declare(F, lambda(Arglist, Range)) :- (var(F) -> type_error(nonvar, F) ; true
                                          Fapp =.. [F1|Arglist],
                                          (var(Range) -> Range = uninterpreted ; true), !,
                                          get_z3_declaration_map(M),
-                                         z3_function_declaration(M, Fapp, Range).
+                                         z3_declare_function(M, Fapp, Range).
 
 
 

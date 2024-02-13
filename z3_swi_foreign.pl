@@ -10,7 +10,7 @@
 	      z3_free_model/1,
 	      z3_free_solver/1,
               z3_free_declaration_map/1,
-	      z3_function_declaration/3,
+	      z3_declare_function/3,
 	      z3_make_solver/1,
               z3_make_declaration_map/1,
               z3_declaration_map_size/2,
@@ -41,9 +41,12 @@ z3_print_declarations(M) :-
     z3_declarations_string(M, X), print_message(information, format(X, [])).
 
 
-%% returned pointer is only useful for debugging, so we hide it here:
-%% FIXME: change name, clarify semantics. New declarations don't override old ones.
-z3_function_declaration(Map, A, B) :- z3_function_declaration(Map, A, B, _C).
+%% Declares term F to have sort T, adding the declration to the map.
+%% New declarations don't override old ones --- fails if there is a conflict.
+%% (Teturned pointer is only useful for debugging, so we hide it here)
+%% examples: z3_declare_function(M, a, int) ; z3_declare_function(M, f(int, int), real).
+
+z3_declare_function(Map, F, T) :- z3_declare_function(Map, F, T, _C).
 
 z3_model_map(M, Map) :- z3_model_functions(M, F),
                         z3_model_constants(M, C),
@@ -106,8 +109,8 @@ test(symbol_pointers) :-
 test(model_eval) :-
     z3_make_solver(S),
     reset_declarations(M),
-    z3_function_declaration(M, a, int),
-    z3_function_declaration(M, b, int),
+    z3_declare_function(M, a, int),
+    z3_declare_function(M, b, int),
     z3_assert(M, S, a=3),
     z3_assert(M, S, b=2),    
     z3_solver_check(S, Status),
@@ -128,9 +131,9 @@ test(model_eval) :-
 test(assert_test, [cleanup(z3_free_declaration_map(Map))]) :-
     z3_make_declaration_map(Map),
     z3_make_solver(S),
-    z3_function_declaration(Map, a, bool),
-    z3_function_declaration(Map, b, int),
-    z3_function_declaration(Map, c, int),
+    z3_declare_function(Map, a, bool),
+    z3_declare_function(Map, b, int),
+    z3_declare_function(Map, c, int),
     z3_assert(Map, S, (a and (b > 0)) and (1.321 < c)),
     z3_solver_check(S, Status),
     assertion(Status == l_true),
@@ -140,7 +143,7 @@ test(assert_test, [cleanup(z3_free_declaration_map(Map))]) :-
 test(int_real_types, [cleanup((z3_free_solver(S), z3_free_declaration_map(M)))] ) :-
     z3_make_solver(S),
     z3_make_declaration_map(M),
-    z3_function_declaration(M, a, real),
+    z3_declare_function(M, a, real),
     z3_assert(M, S, a=3).
 
 test(no_check, [fail]) :-
@@ -148,7 +151,7 @@ test(no_check, [fail]) :-
         (z3_make_solver(S),
          reset_declarations(Map)
         ),
-        (z3_function_declaration(Map, a, int),
+        (z3_declare_function(Map, a, int),
          z3_assert(Map, S, a = 3),
          z3_solver_get_model(S, _Model)
         ),
@@ -158,15 +161,15 @@ test(no_check, [fail]) :-
 test(incompatible_types1, [fail]) :-
     z3_make_solver(S),
     reset_declarations(M),
-    z3_function_declaration(M, a, foo),
+    z3_declare_function(M, a, foo),
     z3_assert(M, S, a = 3),
     z3_solver_get_model(S, _Model).
 
 test(incompatible_types2, [fail]) :-
     z3_make_solver(S),
     reset_declarations(M),
-    z3_function_declaration(M, a, foo),
-    z3_function_declaration(M, b, bar),
+    z3_declare_function(M, a, foo),
+    z3_declare_function(M, b, bar),
     z3_assert(M, S, a = b),
     z3_solver_get_model(S, _Model).
 
@@ -185,21 +188,21 @@ test(at_least_fail, [fail]) :-
 
 test(declare_fail1, [fail]) :-
     reset_declarations(M),
-    z3_function_declaration(M, _X, int).
+    z3_declare_function(M, _X, int).
 
 test(declare_fail2, [fail]) :-
     reset_declarations(M),
-    z3_function_declaration(M, a, _Y).
+    z3_declare_function(M, a, _Y).
 
 test(declare_fail_diffent_types, [fail]) :-
     reset_declarations(M),
-    z3_function_declaration(M, a, bool),
-    z3_function_declaration(M, a, int).
+    z3_declare_function(M, a, bool),
+    z3_declare_function(M, a, int).
 
 test(declare_fail_diffent_types1, [fail, cleanup(z3_free_declaration_map(M)) ]) :-
     reset_declarations(M),
-    z3_function_declaration(M, f(int), bool),
-    z3_function_declaration(M, f(bool), bool).
+    z3_declare_function(M, f(int), bool),
+    z3_declare_function(M, f(bool), bool).
 
 test(solver_push_pop, [cleanup(z3_free_solver(S))] ) :-
     z3_make_solver(S),
@@ -238,9 +241,9 @@ test(roundtrips1) :-
 
 test(roundtrips2) :-
     reset_declarations(M),
-    z3_function_declaration(M, f(int,int,bool),int),
-    z3_function_declaration(M, g(bool),bool),
-    z3_function_declaration(M, c,bool),
+    z3_declare_function(M, f(int,int,bool),int),
+    z3_declare_function(M, g(bool),bool),
+    z3_declare_function(M, c,bool),
     Term = f(a,b,g(c)), % a and b are int by default.
     term_to_z3_ast(M, Term, X),
     z3_ast_to_term(X,Y),
@@ -304,7 +307,7 @@ test(works, [true(V==false), true(R==l_true)]) :-
 test(combined_bool_int, [cleanup((free_solver(S), free_declaration_map(M)) )]) :-
      z3_make_solver(S),
      z3_make_declaration_map(M),
-     z3_function_declaration(M, f(int), int),
+     z3_declare_function(M, f(int), int),
      z3_assert(M, S, f(a:int) > 1),
      z3_assert(M, S, f(b:bool) > 2),
      z3_solver_check(S, l_true),
