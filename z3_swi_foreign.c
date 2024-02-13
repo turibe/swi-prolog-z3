@@ -1368,8 +1368,8 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
        assert(arity == 3);
        result = Z3_mk_ite(ctx, subterms[0], subterms[1], subterms[2]);
     }
-    else if (strcmp(name_string, "iff") == 0 ) {assert(arity == 2); result = Z3_mk_iff(ctx, subterms[0], subterms[1]);}
-    else if (strcmp(name_string, "implies") == 0 ) {assert(arity == 2); result = Z3_mk_implies(ctx, subterms[0], subterms[1]);}
+    else if (strcmp(name_string, "iff") == 0 || strcmp(name_string, "<=>") == 0) {assert(arity == 2); result = Z3_mk_iff(ctx, subterms[0], subterms[1]);}
+    else if (strcmp(name_string, "implies") == 0 || strcmp(name_string, "->") == 0) {assert(arity == 2); result = Z3_mk_implies(ctx, subterms[0], subterms[1]);}
     else if (strcmp(name_string, "xor") == 0 ) {assert(arity == 2); result = Z3_mk_xor(ctx, subterms[0], subterms[1]);}
     else if (strcmp(name_string, "<>") == 0 ) {assert(arity == 2); 
             Z3_sort s1 = Z3_get_sort(ctx, subterms[0]);

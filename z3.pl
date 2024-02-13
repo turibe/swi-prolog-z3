@@ -33,6 +33,7 @@
               op(750, xfy, and), % =, >, etc. are 700
               op(751, xfy, or),
               op(740, xfy, <>),
+              op(740, xfy, <=>),
               op(100, xfy, :)
               % {}/1, % clashes
               ]).
@@ -284,7 +285,7 @@ z3_push(F) :- z3_push(F, R), \+ (R == l_false).
 
 
 declare_types([], _M).
-declare_types([X|Rest], M) :- (get_assoc(X, M, Def) -> z3_declare(X, Def) ; true), !,
+declare_types([X|Rest], M) :- (get_assoc(X, M, Def) -> z3_declare(X, Def) ; true),
                               declare_types(Rest, M).
 
 
@@ -514,9 +515,28 @@ test(bool_times) :-
     assertion(M.constants == [b-false, a-16/5]).
 
 test(more_arith) :-
-    z3_push(a:bool + b:real = 1), z3_model(M1), z3_push(b < 1), z3_model(M2),    
+    z3_push(a:bool + b:real = 1.0), z3_model(M1), z3_push(b < 1), z3_model(M2),    
     assertion(M1.constants == [a-false, b-1]),
     assertion(M2.constants == [a-true, b-0]).
+
+test(bool_or) :-
+    z3_push(((a;b))), z3_push(not(b)), z3_model(M),
+    assertion(M.constants == [a-true, b-false]).
+
+test(bool_and) :-
+    z3_push((a,b)), z3_model(M),
+    assertion(M.constants == [a-true, b-true]).
+
+test(bool_andor, [fail]) :-
+    z3_push((a,b)), z3_push(((not(a), not(b)))).
+
+test(bool_implies) :-
+    z3_push(a->b), z3_model(M),
+    assertion(M.constants = [a-false]).
+
+test(bool_iff) :-
+    z3_push(a<=>b), z3_push(a), z3_model(M),
+    assertion(M.constants = [a-true, b-true]).
 
 :- end_tests(attribute_tests).
 
