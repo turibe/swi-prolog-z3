@@ -9,8 +9,6 @@
 
 :- module(type_inference_global, [
               assert_type/2,
-              declare_type_list/1,     % +List of Term-Type or Term:Type pairs
-              typecheck_and_declare/2, % +Formula,-Assoc  : Typechecks Formula, declares types, and returns new Assoc
               get_map/1,               % -Assoc : gets map as an assoc
               get_map_list/1           % gets map as a list
 
@@ -51,16 +49,6 @@ assert_type(Term, Type) :- ground(Term), !,
 assert_type(Term, _Type) :- \+ ground(Term),
                             instantiation_error(Term).
 
-typecheck_and_declare(Formulas, Assoc) :-
-    assert_formula_list_types(Formulas), !, %% updates the global (backtrackable) type map
-    get_map(Assoc),
-    assoc_to_list(Assoc, L),
-    declare_type_list(L).
-
-
-declare_type_list([]).
-declare_type_list([A-B|R]) :- z3_declare(A, B), declare_type_list(R).
-declare_type_list([A:B|R]) :- z3_declare(A, B), declare_type_list(R).
 
 
 %%%%%%%%%%%% unit tests %%%%%%%%%%%

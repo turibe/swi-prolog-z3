@@ -1,13 +1,13 @@
 %%% -*- Mode: Prolog; Module: quickexplain; -*-
 
-% SWI Prolog implementation of Junker's Quickxplain,
+% SWI Prolog implementation of Ulrich Junker's Quickxplain (https://cdn.aaai.org/AAAI/2004/AAAI04-027.pdf),
 % for finding minimally unsatisfiable subsets, and maximally satisfiable ones.
 
 :- module(quickexplain, [
-	      qexplain/3,
-	      qexplain/4,
-	      qrelax/3,
-	      qrelax/4
+	      qexplain/4, % +AssertPredicate, +Base, +Constraints, -Result
+	      qexplain/3, % +AssertPredicate, +Constraints, -Result   (empty Base)
+	      qrelax/4,   % +AssertPredicate, +Base, +Constraints, -Result
+	      qrelax/3    % +AssertPredicate, +Constraints, -Result   (empty Base)
 	  ]).
 
 :- meta_predicate qexplain(1, ?, ?).
@@ -17,7 +17,12 @@
 
 :- use_module(utils).
 
-% Both explain and relax assume that Base + Constraints are, together, inconsistent; if they are not, Output = Constraints:
+%% debuginfo(X) :- writeln(X), flush_output.
+%% debuginfo(X, Y) :- write(X), writeln(Y), flush_output.
+debuginfo(_X) :- true.
+debuginfo(_X, _Y) :- true.
+
+%% Both explain and relax assume that Base + Constraints are, together, inconsistent; if they are not, Output = Constraints:
 
 qexplain(_Assert, _Base, [], Output) :- !, Output = [].
 qexplain(Assert, Base, Constraints, Output) :-
@@ -82,8 +87,6 @@ assert_constraint(Assert, Constraint) :-
 non_empty([]) :- fail.
 non_empty([_|_]) :- true. 
  
-debuginfo(X) :- writeln(X), flush_output.
-debuginfo(X, Y) :- write(X), writeln(Y), flush_output.
 
 %% TODO: add tests using CLP
 
@@ -116,8 +119,5 @@ test(myrelax1) :-
     qexplain(call, [(X + Y) #>= 10], [X#<5, Y#<5, X#>2, X#>4], R),
     R =@= [X#<5, Y#<5].
 
-%% todo, add:
-% test_explain(call, [{a:int = Y} , Y in 1..6, {Z = a:int}, Z in 6..8, label([Y,Z]), {Y:int > Z:int}],R).
-% test_explain(call, [{a:int = Y} , Y in 1..5, {Z = a:int}, Z in 6..8, label([Y,Z]), {Y:int > Z:int}],R).
 
 :- end_tests(quickexplain_tests).

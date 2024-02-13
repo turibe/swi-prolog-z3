@@ -103,11 +103,28 @@ test(reals) :-
     assertion(
         M.constants == [a-31/10, b-31/10] ).
 
-% use_module(quickexplain).
+:- use_module(quickexplain).
 
-% qrelax(z3_push, [a=1, a=2, a > 1, a = b], R).
+test(relax1) :-
+    qrelax(z3_push, [a=1, a=2, a > 1, a = b], R),
+    assertion( R == [a>1, a=b, a=2] ).
 
-% qxplain(z3_push, [a=1, a=2, a > 1, a = b, b= 1], R).
+test(relax2) :-
+    qrelax(z3_push, [a > b, b > f(c), f(c) > d, a = d], R),
+    assertion( R == [f(c)>d, a=d, b>f(c)] ).
+
+test(explain_already_minimal) :-
+    Constraints = [a > b, b > f(c), f(c) > d, a = d],
+    qexplain(z3_push, Constraints, R),
+    assertion( R == Constraints ),
+    append(Constraints, [d = e:int], L),
+    qexplain(z3_push, L, R1),
+    assertion( R1 == Constraints ).
+
+test(explain1) :-
+    qexplain(z3_push, [a:int = b, b:int = c, c:int = d, d:int = f(a), e:int = f(b), f(a:int) > f(d:int) ], R ),
+    assertion( R == [a:int=b, b:int=c, c:int=d, f(a:int)>f(d:int)] ).
+
 
 
 :- end_tests(z3_pl_tests).

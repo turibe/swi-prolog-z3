@@ -2,8 +2,7 @@
 
 - Using Z3 as a constraint solver inside SWI Prolog, for a basic CLP(CC) implementation.
 
-- Prolog code for Junker's explanation (minimal unsatisfiable subsets) and relaxation (maximal satisfiable subsets).
-
+- Prolog code for Junker's explanation (minimal unsatisfiable subsets) and relaxation (maximal satisfiable subsets). See [https://cdn.aaai.org/AAAI/2004/AAAI04-027.pdf](https://cdn.aaai.org/AAAI/2004/AAAI04-027.pdf).
 
 ## Installation:
 
@@ -55,8 +54,8 @@ The type inference uses a backtrackable map too. Types can be different from one
 Assertions also start afresh from one query to the next. The basic operations are:
 
 - `z3_push` : Typechecks and pushes a formula, as in
-```
-z3_push(f(a:int) = b and b = 3, Status).
+```prolog
+z3_push(f(a:int) = b and b = 3, Status). %% Status = l_true
 ```
 Status will be one of `{l_true, l_false, l_undef}`. One can also use `push/1`, which expects status to not be `l_false`.
 
@@ -73,9 +72,14 @@ Status will be one of `{l_true, l_false, l_undef}`. One can also use `push/1`, w
 ?- z3_push(a > b:int and b > c), z3_is_implied(a > c). %% succeeds
 ```
 
-- z3_model(-Model) : Get a model if the assertions pushed so far are found to be satisfiable.
+- z3_model(-Model) : Gets a model, if the assertions pushed so far are found to be satisfiable.
 
-- z3_eval(+Formula, -Result) : Evaluates `Formula` over a model for the assertions pushed so far.
+```prolog
+?- z3_push(a: int > b and b = f(a) and a > f(b) and f(c:int) > a), z3_model(M).
+M = model{constants:[a-0, b- -1, c-5], functions:[f/1-else- -1, f(5)-1]}.
+```
+
+- z3_eval(+Formula, -Result) : Evaluates `Formula` over a model for the assertions pushed so far, if there is one.
 
 ### Attributed Variables.
 
@@ -83,9 +87,9 @@ Terms with Prolog variables can be asserted as well. The variables will be assoc
 assertions will be pushed upon unification. For example:
 
 ```prolog
-z3_push(c < b), z3_push(X > b), member(X, [a,b,c,d])
+z3_push(X > b), z3_push(b > c), member(X, [a,b,c,d])
 ```
-will only succeed for X = a and X = b.
+will only succeed for `X = a` and `X = d`.
 
 
 ### Lower-level: z3_swi_foreign.pl

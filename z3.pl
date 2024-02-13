@@ -28,11 +28,12 @@
               z3_push_and_print/1,     % +Formula   Convenience
               z3_push_and_print/2,     % +Formula,+Status  Convenience
               print_declarations/0,    % print declarations so far, or those used in the previous query (reset on a new push).
+              
               op(750, xfy, and), % =, >, etc. are 700
               op(751, xfy, or),
-              op(740, xfy, <>),
-              op(740, xfy, <=>),
-              op(100, xfy, :)
+              op(740, xfy, <>),  % different-than
+              op(739, xfy, <=>), % iff
+              op(199, xfy, :)
               % {}/1, % clashes with other CLP libraries
               ]).
 
@@ -45,24 +46,24 @@
 :- use_module(library(ordsets)).
 
 :- use_module(z3_swi_foreign, [
-		  z3_assert/3,
-		  z3_declarations_string/2,
+                  z3_assert/3,
+                  z3_declarations_string/2,
                   z3_declaration_map_size/2,
-		  z3_free_model/1,
-		  z3_free_solver/1,
-		  z3_declare_function/3,
-		  z3_make_solver/1,
-		  z3_model_eval/5,
+                  z3_free_model/1,
+                  z3_free_solver/1,
+                  z3_declare_function/3,
+                  z3_make_solver/1,
+                  z3_model_eval/5,
                   z3_model_map_for_solver/2,
                   z3_make_declaration_map/1,
-		  z3_reset_declaration_map/1,
-		  z3_solver_check/2,
-		  z3_solver_check_and_print/2,
-		  z3_solver_get_model/2,
-		  z3_solver_pop/3,
-		  z3_solver_push/2,
-		  z3_solver_scopes/2
-	      ]).
+                  z3_reset_declaration_map/1,
+                  z3_solver_check/2,
+                  z3_solver_check_and_print/2,
+                  z3_solver_get_model/2,
+                  z3_solver_pop/3,
+                  z3_solver_push/2,
+                  z3_solver_scopes/2
+              ]).
 
 
 reset_z3_declaration_map :- nb_current(global_decl_map, M) -> z3_reset_declaration_map(M)
@@ -71,6 +72,7 @@ reset_z3_declaration_map :- nb_current(global_decl_map, M) -> z3_reset_declarati
                                    nb_setval(global_decl_map, M)
                                  ).
 
+% The declaration map that lives in Z3
 get_z3_declaration_map(M) :- nb_getval(global_decl_map, M).
 
 
@@ -180,7 +182,6 @@ internal_assert_and_check(Solver, Formula, Status) :-
     z3_assert(Map, Solver, Formula),
     z3_solver_check(Solver, Status).
 
-
 z3_check(Status) :-
     check_status_arg(Status),
     get_global_solver(S),
@@ -242,9 +243,6 @@ check_status_arg(Status) :- nonvar(Status),
 
 %% We could allow different types on different branches if new declarations overwrite old ones without error.
 
-%% FIXME: assert_type should ignore builtins like "atleast", otherwise they can't be overloaded.
-%% also ignore constants 1,2,3, ...
-
 z3_push(F, Status) :-
     check_status_arg(Status),
     (b_getval(solver_depth, 0) -> z3_reset_declarations ; true),
@@ -280,7 +278,7 @@ z3_eval(Expression, Completion, Result) :-  \+ is_list(Expression),
                                 get_global_solver(S),
                                 get_z3_declaration_map(Map),
                                 z3_solver_check(S, Status),
-                                Status == l_true, % TODO: investigate l_undef
+                                Status == l_true,
                                 replace_var_attributes(Expression, E1),
                                 setup_call_cleanup(
                                     z3_solver_get_model(S, Model),
@@ -290,10 +288,11 @@ z3_eval(Expression, Completion, Result) :-  \+ is_list(Expression),
 
 z3_eval(Expression, Result) :- z3_eval(Expression, false, Result).
 
+%% Map eval on a list:
 z3_eval([], []).
 z3_eval([X|Rest],[EX|Erest]) :-
         z3_eval(X, EX),
-        z3_eval(Rest, Erest). % FIXME: make more efficient, do only one check and one get model
+        z3_eval(Rest, Erest). % Cuold make more efficient, do only one check and one get_model.
 
 
 %% A little inefficient for big terms, might be better to do in the C code eval:
@@ -303,11 +302,14 @@ replace_var_attributes(X, R) :- compound(X),
                                 mapargs(replace_var_attributes, X, R).
 
 
-%% NOTES: If we declare uninterpreted types, say,  for a=b, later on assert a=1, then the type for a would change.
+%% NOTES: If we declare uninterpreted types, say, for a=b, later on assert a=1, then the type for a would change.
 %% But Z3 does not let us change types, so this case is not handled. (Ideally, we would equate them, adding "uninterpreted = int").
 
 get_term_for_var(X, T) :- var(X),
                           add_attribute(X, T).
+
+
+%% z3_declare updates the internal (C) Z3 decl map:
 
 z3_declare(F:T) :- z3_declare(F, T). %% take care of explicit types
 z3_declare(F, T) :- var(F), !,
@@ -331,6 +333,19 @@ z3_declare(F, lambda(Arglist, Range)) :- (var(F) -> type_error(nonvar, F) ; true
                                          get_z3_declaration_map(M),
                                          z3_declare_function(M, Fapp, Range).
 
+
+%% Not used --- not incremental, declares everything in the map:
+%% %% typecheck_and_declare/2, % +Formula,-Assoc  : Typechecks Formula, declares types, and returns new Assoc
+%% typecheck_and_declare(Formulas, Assoc) :-
+%%     assert_formula_list_types(Formulas), !, %% updates the global (backtrackable) type map
+%%     get_map(Assoc),
+%%     assoc_to_list(Assoc, L),
+%%     declare_type_list(L).                   %% updates the Z3 (C) internal map
+
+%% %% declare_type_list/1,     % +List of Term-Type or Term:Type pairs
+%% declare_type_list([]).
+%% declare_type_list([A-B|R]) :- z3_declare(A, B), declare_type_list(R).
+%% declare_type_list([A:B|R]) :- z3_declare(A, B), declare_type_list(R).
 
 
 internal_assert_and_check_list(Solver, List, Status) :-
