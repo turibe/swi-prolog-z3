@@ -73,13 +73,15 @@ swipl -f z3.pl -g run_tests -g halt
 ### High-level: z3.pl
 
 The z3.pl module offers a high-level, user-friendly API, with:
+    
+- Type inference, to minimize the number of declarations needed.
 
-    - Type inference, to minimize the number of declarations needed.
+- Prolog goals that push assertions onto the Z3 solver, that are automatically popped when Prolog backtracks.
 
-    - Prolog goals push assertions onto the Z3 solver, and those assertions are automatically popped when Prolog backtracks.
+The type inference at this level also uses a backtrackable type map, so
+both types and assertions start afresh from one query to the next. 
 
-The type inference uses a backtrackable map too. Types can be different from one query to the next. 
-Assertions also start afresh from one query to the next. The basic operations are:
+The basic operations are:
 
 - `z3_push` : Typechecks and pushes a formula, as in
 
@@ -102,7 +104,7 @@ Status will be one of `{l_true, l_false, l_undef}`. One can also use `push/1`, w
 ?- z3_push(a > b:int and b > c), z3_is_implied(a > c). %% succeeds
 ```
 
-- z3_model(-Model) : Gets a model, if the assertions pushed so far are found to be satisfiable.
+- `z3_model(-Model)` : Gets a model, if the assertions pushed so far are found to be satisfiable.
 
 ```prolog
 ?- z3_push(a: int > b and b = f(a) and a > f(b) and f(c:int) > a), z3_model(M).
