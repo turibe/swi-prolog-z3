@@ -320,5 +320,15 @@ test(combined_bool_int, [cleanup((free_solver(S), free_declaration_map(M)) )]) :
      z3_model_map_for_solver(S,Model),
      assertion(Model.constants == [a-4, b-false]).
 
+test(arity_error, [fail]) :-
+    z3_make_solver(S), reset_declarations(M), z3_assert(M, S, =(a,b,c)).
+
+test(neq_incompatible, [fail]) :-
+    z3_make_solver(S), reset_declarations(M), z3_assert(M, S, a:foo <> b:bar).
+
+test(neq_numeric) :-
+    z3_make_solver(S), reset_declarations(M), z3_assert(M, S, a:bool <> b:real), z3_solver_check(S, l_true).
+
+
 
 :- end_tests(foreign_tests).

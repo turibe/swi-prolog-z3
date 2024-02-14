@@ -40,10 +40,10 @@ test(get_model, [true(C1 == [(a-13), (b-13), (d-4)] ), true(F1 == [(f(4)-5), ((f
 
 %%  f^m(a) = a = f^n(a) ⟹  f^(gcd(m,n))(a) = a
 
-declare_types :-
-    z3_declare(f,lambda([int],int)),
-    z3_declare(a, int),
-    z3_declare(b, int).
+% declare_types :-
+%    z3_declare(f,lambda([int],int)),
+%    z3_declare(a, int),
+%    z3_declare(b, int).
 
 %% fpower(F,A,N,-R) makes F(F(...(A))) with nesting of N:
 fpower(_F,A,0,A) :- !, true.

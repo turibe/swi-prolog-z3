@@ -265,7 +265,7 @@ z3_push(F, Status) :-
     %% we only need to declare new symbols:
     exclude(>>({OldAssoc}/[X], get_assoc(X, OldAssoc, _Y)), Symbols, NewSymbols),
     %% writeln(compare(Symbols, NewSymbols)),
-    declare_types(NewSymbols, Assoc),
+    declare_z3_types_for_symbols(NewSymbols, Assoc),
     push_solver(Solver),
     internal_assert_and_check(Solver, FG, Status).
 
@@ -274,9 +274,10 @@ z3_push(F, Status) :-
 
 z3_push(F) :- z3_push(F, R), \+ (R == l_false).
 
-declare_types([], _M).
-declare_types([X|Rest], M) :- (get_assoc(X, M, Def) -> z3_declare(X, Def) ; true),
-                              declare_types(Rest, M).
+%% goes through a list of symbols and declares them in Z3, using z3_declare
+declare_z3_types_for_symbols([], _M).
+declare_z3_types_for_symbols([X|Rest], M) :- (get_assoc(X, M, Def) -> z3_declare(X, Def) ; true),
+                                 declare_z3_types_for_symbols(Rest, M).
 
 
 print_declarations :- get_z3_declaration_map(M), z3_declarations_string(M, S), current_output(Out), write(Out, S).

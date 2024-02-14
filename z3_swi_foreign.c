@@ -41,6 +41,9 @@
 #define ERROR(...) do {fprintf(stderr, "ERROR: "); fprintf(stderr, __VA_ARGS__); fflush(stderr);} while (false)
 #define INFO(...) do {fprintf(stderr, "INFO: "); fprintf(stderr, __VA_ARGS__); fflush(stderr);} while (false)
 
+#define CHECK_ARITY(symbol, expected, arity) do {if (arity != expected) {ERROR("%s should have arity %d but has arity %lu\n", symbol, expected, arity); return NULL; }} while (false)
+
+
 // To raise Prolog errors, we could use PL_raise_exception, but the _ex functions are recommended instead.
 
 // *************************************************************************
@@ -386,7 +389,7 @@ Z3_symbol mk_symbol(Z3_context ctx, term_t formula) {
   case PL_ATOM: {
     char *chars;
     int res = PL_get_atom_chars(formula, &chars);
-    assert(res);
+    if (!res) return NULL;
     DEBUG("mk_symbol got atom %s\n", chars);
     Z3_symbol s = Z3_mk_string_symbol(ctx, chars);
     return s;
@@ -395,7 +398,7 @@ Z3_symbol mk_symbol(Z3_context ctx, term_t formula) {
   case PL_VARIABLE: {
     char *chars;
     int res = PL_get_chars(formula, &chars, CVT_WRITE);
-    assert(res);
+    if (!res) return NULL;
     INFO("mk_symbol got variable %s\n", chars);
     Z3_symbol s = Z3_mk_string_symbol(ctx, chars);
     return s;
@@ -405,7 +408,7 @@ Z3_symbol mk_symbol(Z3_context ctx, term_t formula) {
     char *string;
     size_t len;
     int res = PL_get_string_chars(formula, &string, &len);
-    assert(res);
+    if (!res) return NULL;
     Z3_symbol s = Z3_mk_string_symbol(ctx, string);
     return s;
     break;
@@ -413,7 +416,7 @@ Z3_symbol mk_symbol(Z3_context ctx, term_t formula) {
   case PL_INTEGER: {
     long lval;
     int res = PL_get_long(formula, &lval);
-    assert(res);
+    if (!res) return NULL;
     Z3_symbol s = Z3_mk_int_symbol(ctx, lval);
     return s;
     break;
@@ -421,7 +424,7 @@ Z3_symbol mk_symbol(Z3_context ctx, term_t formula) {
   default: {
     char *fchars;
     int res = PL_get_chars(formula, &fchars, CVT_WRITE);
-    assert(res);
+    if (!res) return NULL;
     ERROR("error making symbol %s, term type is %d\n", fchars, term_type);
   }
   } // end switch
@@ -492,8 +495,8 @@ foreign_t z3_solver_assertions_foreign(term_t solver_term, term_t list) {
     term_t a = PL_new_term_ref(); // putting this outside the loop does not work.
     Z3_ast termi = Z3_ast_vector_get(ctx, v, i);
     z3_ast_to_term_internal(ctx, termi, a);
-    int r = PL_cons_list(l, a, l);
-    assert(r);
+    int res = PL_cons_list(l, a, l);
+    if (!res) return res;
   }
   return PL_unify(l, list);
 }
@@ -728,11 +731,11 @@ foreign_t z3_solver_check_and_print_foreign(term_t solver_term, term_t status_ar
 }
 
 
-// the function name is the one being declared; subterms are the types, last one is the result.
-// We can call get_function_declaration to avoid redeclaring things;
-// the problem is state: if we do so, then we cannot redeclare things from one query to the next,
-// unless we reset the declarations at each query.
-// Do we even want to share declarations from one query to the next?
+// The function name is the one being declared; subterms are the types, last one is the result.
+// We call get_function_declaration to get existing declarations, check if they are compatible with the request.
+// We cannot redeclare things from one query to the next, unless we reset the declarations at each query.
+
+// This approach leaves open the possibility of sharing declarations from one query to the next, in a more stateful API.
 
 
 Z3_func_decl mk_func_decl(Z3_context ctx, decl_map declaration_map, const term_t formula, term_t range) {
@@ -758,16 +761,18 @@ Z3_func_decl mk_func_decl(Z3_context ctx, decl_map declaration_map, const term_t
      DEBUG("Argument %d, res is %d\n", i, res);
      if (!res) {
        ERROR("PL_get_arg in mk_func_decl failed\n");
+       free(domain);
        return NULL;
      }
      domain[i-1] = mk_sort(ctx, a);
      if (domain[i-1] == NULL) {
        INFO("mk_func_decl returning NULL\n");
+       free(domain);
        return NULL;
      }
      DEBUG("Made domain %s\n", Z3_ast_to_string(ctx, (Z3_ast) domain[i-1]));
    }
-   // BUG: range is a variable here.
+
    Z3_sort range_sort = mk_sort(ctx, range);
    if (range_sort == NULL) {
      ERROR("Got null for range_sort\n");
@@ -776,12 +781,13 @@ Z3_func_decl mk_func_decl(Z3_context ctx, decl_map declaration_map, const term_t
      ERROR("Formula was %s\n", fchars);
      res = PL_get_chars(range, &fchars, CVT_WRITE);
      ERROR("Range was %s\n", fchars);
+     free(domain);
      return NULL;
    }
 
    Z3_func_decl result = get_function_declaration(ctx, declaration_map, name_string, arity);
-   // The question is whether we overwrite existing declarations or not.
-   if (result == NULL) {
+
+   if (result == NULL) { // make a new one
      result = Z3_mk_func_decl(ctx, symbol, arity, arity == 0 ?  0 : domain, range_sort);
      if (result != NULL) {
        register_function_declaration_string(ctx, declaration_map, name_string, arity, result);
@@ -790,11 +796,13 @@ Z3_func_decl mk_func_decl(Z3_context ctx, decl_map declaration_map, const term_t
    }
    else {
      DEBUG("Found existing declaration for %s/%ld\n", name_string, arity);
+     // this catches problems like asserting f(a:int,a:bool):
      Z3_func_decl test =  Z3_mk_func_decl(ctx, symbol, arity, arity == 0 ?  0 : domain, range_sort);
      if (test != result) {
        ERROR("New declaration for \"%s\" is different from old one. Try z3_reset_declaration_map.\n", name_string);
        result = NULL;
-       // an alternative is to just let the new declaration overwrite the old one. Combined with the backtrackable typemap, should be safe.
+       // an alternative is to just let the new declaration overwrite the old one. Combined with the backtrackable typemap, should be safe,
+       // but requires everything is declared beforehand, e.g. no direct z3_assert(a:bool).
      }
    }
 
@@ -813,11 +821,12 @@ Z3_func_decl mk_func_decl(Z3_context ctx, decl_map declaration_map, const term_t
 
 foreign_t z3_declare_function_foreign(const term_t decl_map_term, const term_t formula, const term_t range, term_t result) {
   atom_t name;
-  size_t arity;
+
   decl_map declaration_map;
   int res = PL_get_pointer_ex(decl_map_term, (void **) &declaration_map);
   if (!res) return res;
 
+  size_t arity;
   res = PL_get_name_arity(formula, &name, &arity);
   if (!res) {
     if (PL_is_variable(formula)) {
@@ -1168,7 +1177,7 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
     // chars is set
     const Z3_func_decl declaration = get_function_declaration(ctx, declaration_map, chars, 0);
     if (declaration == NULL) {
-      DEBUG("did not find declaration for %s, defaulting to int\n", chars);
+      DEBUG("did not find declaration for %s, defaulting to int\n", chars); // FIXME: no default?
     }
     else {
       const Z3_string decstring  = Z3_ast_to_string(ctx, Z3_func_decl_to_ast(ctx, declaration));
@@ -1243,12 +1252,9 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
     const char *name_string = PL_atom_chars(name);
     DEBUG("functor name: %s\n", name_string);
 
-    if (strcmp(name_string, ":")==0) { // Path in case : is not handled at the Prolog level.
+    if (strcmp(name_string, ":")==0) { // Path where : is not handled at the Prolog level but given directly to Z3
       // we expect symbol:sort
-      if (arity != 2) {
-        ERROR(": should have arity 2, but has arity %lu", arity);
-        return NULL;
-      }
+      CHECK_ARITY(name_string, 2, arity);
       term_t name_term = PL_new_term_ref();
       res = PL_get_arg(1, formula, name_term);
       if (!res) {
@@ -1273,6 +1279,7 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
       atom_t name_atom;
       res = PL_get_atom(name_term, &name_atom);
       DEBUG("Declaring for %s\n", name_string);
+      // If we overwrote function declarations here, then could do z3_assert(a:int, a:bool), which we don't want.
       Z3_func_decl decl = mk_func_decl(ctx, declaration_map, name_term, range);
       if (decl == NULL) {
         ERROR("Failed making decl\n");
@@ -1310,43 +1317,58 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
       }
     }
     else if (strcmp(name_string, "div") == 0 || strcmp(name_string, "/") == 0) {
-      assert(arity == 2);
+      CHECK_ARITY(name_string, 2, arity);
       DEBUG("making div\n");
       result = Z3_mk_div(ctx, subterms[0], subterms[1]);
       // The arguments must either both have int type or both have real type.
       // division by 0 is allowed, can be anything
       DEBUG("result is %s\n", Z3_ast_to_string(ctx, result));
     }
-    else if (strcmp(name_string, "mod") == 0) {assert(arity == 2); result = Z3_mk_mod(ctx, subterms[0], subterms[1]);}
-    else if (strcmp(name_string, "rem") == 0) {assert(arity == 2); result = Z3_mk_rem(ctx, subterms[0], subterms[1]);}
+    else if (strcmp(name_string, "mod") == 0) {
+      CHECK_ARITY(name_string, 2, arity);
+      result = Z3_mk_mod(ctx, subterms[0], subterms[1]);
+    }
+    else if (strcmp(name_string, "rem") == 0) {
+      CHECK_ARITY(name_string, 2, arity);
+      result = Z3_mk_rem(ctx, subterms[0], subterms[1]);
+    }
     else if (strcmp(name_string, "power") == 0 || strcmp(name_string, "**") == 0) {
-      assert(arity == 2);
+      CHECK_ARITY(name_string, 2, arity);
       result = Z3_mk_power(ctx, subterms[0], subterms[1]);
     }
-    else if (strcmp(name_string, "<") == 0) {assert(arity == 2); result = Z3_mk_lt(ctx, subterms[0], subterms[1]);}
+    else if (strcmp(name_string, "<") == 0) {
+      CHECK_ARITY(name_string, 2, arity);
+      result = Z3_mk_lt(ctx, subterms[0], subterms[1]);
+    }
     else if (strcmp(name_string, "=<") == 0 || strcmp(name_string, "leq") == 0) {
-      assert(arity == 2);
+      CHECK_ARITY(name_string, 2, arity);
       result = Z3_mk_le(ctx, subterms[0], subterms[1]);
     }
-    else if (strcmp(name_string, ">") == 0) {assert(arity == 2); result = Z3_mk_gt(ctx, subterms[0], subterms[1]);}
+    else if (strcmp(name_string, ">") == 0) {
+      CHECK_ARITY(name_string, 2, arity);
+      result = Z3_mk_gt(ctx, subterms[0], subterms[1]);
+    }
     else if (strcmp(name_string, ">=") == 0 || strcmp(name_string, "geq") == 0) {
-      assert(arity == 2);
+      CHECK_ARITY(name_string, 2, arity);
       result = Z3_mk_ge(ctx, subterms[0], subterms[1]);
     }
-    else if (strcmp(name_string, "isint") == 0) {assert(arity == 1); result = Z3_mk_is_int(ctx, subterms[0]);}
+    else if (strcmp(name_string, "isint") == 0) {
+      CHECK_ARITY(name_string, 1, arity);
+      result = Z3_mk_is_int(ctx, subterms[0]);
+    }
     // crashes: {int2real(1.0) = X}.
     // else if (strcmp(name_string, "int2real") == 0) {assert(arity == 1); result = Z3_mk_int2real(ctx, subterms[0]);}
     // else if (strcmp(name_string, "real2int") == 0) {assert(arity == 1); result = Z3_mk_real2int(ctx, subterms[0]);}
     else if (strcmp(name_string, "=") == 0 || strcmp(name_string, "==") == 0 || strcmp(name_string, "equals") == 0 ) {
       DEBUG("making equals\n");
-      assert(arity == 2);
+      CHECK_ARITY(name_string, 2, arity);
       // Check that types are compatible; otherwise Z3 quits/crashes
       Z3_sort s1 = Z3_get_sort(ctx, subterms[0]);
       Z3_sort s2 = Z3_get_sort(ctx, subterms[1]);
-      if ((!numeric_sort(ctx, s1)) && (!numeric_sort(ctx, s2)) && (s1 != s2)) // equalities between expresions of numeric sorts seem to be OK for Z3:
+      if ((!numeric_sort(ctx, s1)) && (!numeric_sort(ctx, s2)) && (s1 != s2)) // equalities between some expressions of numeric sorts seem to be OK for Z3:
         {
           ERROR("different types for equals, failing\n");
-          ERROR("sort1: %s\n", Z3_sort_to_string(ctx, s1)); // as with ast_to_string, one sort_to_string invaliates the previous one
+          ERROR("sort1: %s\n", Z3_sort_to_string(ctx, s1)); // as with ast_to_string, one sort_to_string invaliates the previous one, so we use two statements.
           ERROR("sort2: %s\n", Z3_sort_to_string(ctx, s2)); 
           // ERROR("sort kinds: %u and %u\n", Z3_get_sort_kind(ctx, s1), Z3_get_sort_kind(ctx, s2));
           return NULL;
@@ -1357,27 +1379,47 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
     }
     else if (strcmp(name_string, "distinct") == 0 ) {result = Z3_mk_distinct(ctx, arity, subterms);}
     else if (strcmp(name_string, "not") == 0 ) {
-      assert(arity == 1);
+      CHECK_ARITY(name_string, 1, arity);
       result = Z3_mk_not(ctx, subterms[0]);
     }
     else if (strcmp(name_string, "ite") == 0 ) {
-       assert(arity == 3);
-       result = Z3_mk_ite(ctx, subterms[0], subterms[1], subterms[2]);
+      CHECK_ARITY(name_string, 3, arity);
+      result = Z3_mk_ite(ctx, subterms[0], subterms[1], subterms[2]);
     }
-    else if (strcmp(name_string, "iff") == 0 || strcmp(name_string, "<=>") == 0) {assert(arity == 2); result = Z3_mk_iff(ctx, subterms[0], subterms[1]);}
-    else if (strcmp(name_string, "implies") == 0 || strcmp(name_string, "->") == 0) {assert(arity == 2); result = Z3_mk_implies(ctx, subterms[0], subterms[1]);}
-    else if (strcmp(name_string, "xor") == 0 ) {assert(arity == 2); result = Z3_mk_xor(ctx, subterms[0], subterms[1]);}
-    else if (strcmp(name_string, "<>") == 0 ) {assert(arity == 2); 
-            Z3_sort s1 = Z3_get_sort(ctx, subterms[0]);
-            Z3_sort s2 = Z3_get_sort(ctx, subterms[1]);
-            if (s1 != s2) {
-                ERROR("different types for <>, always true\n");
-                result = Z3_mk_true(ctx);
-            }
-            else {
-                result = Z3_mk_not(ctx, Z3_mk_eq(ctx, subterms[0], subterms[1]));
-                }
-            }
+    else if (strcmp(name_string, "iff") == 0 || strcmp(name_string, "<=>") == 0) {
+      CHECK_ARITY(name_string, 2, arity);
+      result = Z3_mk_iff(ctx, subterms[0], subterms[1]);
+    }
+    else if (strcmp(name_string, "implies") == 0 || strcmp(name_string, "->") == 0) {
+      CHECK_ARITY(name_string, 2, arity);
+      result = Z3_mk_implies(ctx, subterms[0], subterms[1]);
+    }
+    else if (strcmp(name_string, "xor") == 0 ) {
+      CHECK_ARITY(name_string, 2, arity);
+      result = Z3_mk_xor(ctx, subterms[0], subterms[1]);
+    }
+    else if (strcmp(name_string, "<>") == 0 ) {
+      CHECK_ARITY(name_string, 2, arity);
+      Z3_sort s1 = Z3_get_sort(ctx, subterms[0]);
+      Z3_sort s2 = Z3_get_sort(ctx, subterms[1]);
+      if (numeric_sort(ctx, s1) && numeric_sort(ctx, s2) && (s1 != s2)) { // for numeric types, translate to (a<b or a>b)
+        Z3_ast dis1 = Z3_mk_lt(ctx, subterms[0], subterms[1]);
+        Z3_ast dis2 = Z3_mk_gt(ctx, subterms[0], subterms[1]);
+        if (dis1 == NULL || dis2 == NULL) return(NULL);
+        Z3_ast disjuncts[2] = {dis1, dis2};
+        return Z3_mk_or(ctx, 2, disjuncts);
+      }
+      Z3_ast equality = Z3_mk_eq(ctx, subterms[0], subterms[1]); 
+      if (NULL == equality) {
+        ERROR("incompatible types for <>\n");
+        ERROR("sort1: %s\n", Z3_sort_to_string(ctx, s1));
+        ERROR("sort2: %s\n", Z3_sort_to_string(ctx, s2));
+        result = NULL;
+      }
+      else {
+        result = Z3_mk_not(ctx, equality);
+      }
+    }
     else if (strcmp(name_string, "and") == 0 ) {result = Z3_mk_and(ctx, arity, subterms);}
     else if (strcmp(name_string, ",") == 0 ) {result = Z3_mk_and(ctx, arity, subterms);}
     else if (strcmp(name_string, "or") == 0 ) {result = Z3_mk_or(ctx, arity, subterms);}

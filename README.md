@@ -1,11 +1,16 @@
 # swi-prolog-z3
 
-- Using Z3 as a constraint solver inside SWI Prolog, for a basic CLP(CC) implementation.
+Using Z3 as a constraint solver inside SWI Prolog, for a basic CLP(CC) implementation.
+The code in this repo currently supports a subset of Z3's capabilities,
+including propositional logic, equality, arithmetic, and uninterpreted function symbols.
 
-- Generic Prolog code for Junker's QuickXplain algorithms, for explanation (finding minimal unsatisfiable subsets) and relaxation (maximal satisfiable subsets).
+With the high-level API in `z3.pl`,
+Z3 asserts are incremental and backtrackable, and the Z3 solver context is pushed and popped automatically.
+
+- We also include a generic Prolog implementation of Junker's QuickXplain algorithms,
+for explanation (finding minimal unsatisfiable subsets) and relaxation (maximal satisfiable subsets).
 See [https://cdn.aaai.org/AAAI/2004/AAAI04-027.pdf](https://cdn.aaai.org/AAAI/2004/AAAI04-027.pdf).
 This code can be used on stand-alone basis, plugging in any monotonic `check` or `assert` predicate.
-
 
 ### Contact
 
@@ -20,22 +25,23 @@ Tested on MacOS Sonoma.
 
 1. Install swi-prolog. This can be done via brew, macports, or download. See [https://www.swi-prolog.org/](https://www.swi-prolog.org/).
 
-   Provides `swipl` and `swipl-ld` executables.
+   After this, you should have `swipl` and `swipl-ld` executables.
 
-2. Install and build Z3, including libz3.dylib . This can also be done via brew, macports, or download.
+2. Install and build Z3, including `libz3.dylib` . This can also be done via brew, macports, or download.
 See [https://github.com/Z3Prover/z3](https://github.com/Z3Prover/z3).
+
+3. Add a symbolic link to the `libz3.dylib` file in this directory (or copy it over).
 
 3. Compile the C code for the Prolog-Z3 interface, using the `swipl-ld` tool.
 
 (Adapt the `-I` and `-L` paths accordingly.)
 
 ```bash
-swipl-ld -I/Users/uribe/git/z3/src/api/ -L/Users/uribe/git/z3/build/ -o z3_swi_foreign -shared z3_swi_foreign.c -lz3
+swipl-ld -I/Users/uribe/git/z3/src/api/ -L. -o z3_swi_foreign -shared z3_swi_foreign.c -lz3
 ```
 
 This creates a `z3_swi_foreign.so` binary that is loaded into SWI Prolog when `use_module(z3)` is executed.
 
-4. Add a symbolic link to the `libz3.dylib` file in this directory (or copy it over).
 
 5. Start `swipl`, import the `z3.pl` module, and you're done!
 
@@ -56,7 +62,11 @@ M = model{constants:[a-2, b-1], functions:[f/1-else-2, f(2)-4]},
 M1 = model{constants:[a-2, b-1], functions:[f/1-else-2, f(4)-5, f(2)-4]}.
 ```
 
-Unit tests can be run with `?- run_tests.`
+Unit tests can be run with `?- run_tests.` , or running
+
+```bash
+swipl -f z3.pl -g run_tests -g halt
+```
 
 ## Code and Functionality Overview
 
@@ -114,8 +124,9 @@ will only succeed for `X = a` and `X = d`.
 
 ### Lower-level: z3_swi_foreign.pl
 
-The lower-level module has no Prolog globals, and can be used to write an alterative to z3.pl that keeps state between queries,
-more like the Python integration.
+The lower-level module has no Prolog globals.
+It could be used to write an alternative to `z3.pl` that keeps state between queries,
+similarly to the Python integration or the Z3 promp.
 
 ### Lowest level: z3_swi_foreign.c
 
@@ -124,13 +135,14 @@ The `z3_swi_foreign.c` file has the C code that glues things together, to be com
 
 ### Type inference
 
-`type_inference.pl` has basic capabilities for inferring types for constants and functions in Prolog Z3 expressions, saving the work of having to declare everything beforehand (funtions, in particular).
+`type_inference.pl` has basic capabilities for inferring types for constants and functions in Prolog Z3 expressions, saving the work of having to declare everything beforehand (functions, in particular).
 
+`type_inference_global_backtrackable.pl` uses this to implement a global backtrackable type inference map.
 
 
 ## Future Work
 
-We handle the basic Z3 capabilities: {int,real,bool} types, propositional logic, equality, artithmetic, and uninterpreted function symbols.
+The current version handles the basic Z3 capabilities: {int,real,bool} types, propositional logic, equality, arithmetic, and uninterpreted function symbols.
 
 Bit vectors, sets, and quantifiers are future work.
 
