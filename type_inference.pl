@@ -1,15 +1,22 @@
 %%% -*- Mode: Prolog; Module: type_inference; -*-
 
+:- module(type_inference, [
+              typecheck/3,
+              typecheck/4,
+              typecheck_formula_list/3, % convenience
+              typecheck_to_list/3 % convenience
+          ]).
+
 /** <module> Type inference
 
-This is a convenience module for typechecking formulas that will be then asserted in Z3,
+This is a module for typechecking formulas that will be then asserted in Z3,
 without having to declare all of the atom and function types separately.
 For example, typecheck( and(a:int = f(b) , b:int = c), bool, R) will infer int type for b, and lambda([int], int) for f.
+typechecking "atmost(a,b,c,d, ... ,n)" infers bool types for a,b,c,d... and integer type for n.
 
-typecheck(and(a>b, b>c, c>d, d > 1.0, f(a) = c), bool, Y) infers "real" types for a,b,c, and d,
-and real->real for the function f.
-
-For example, typechecking "atmost(a,b,c,d, ... ,n)" infers bool types for a,b,c,d... and integer type for n.
+Like Z3, we allow comparisons between boolean, ints and reals, so 
+typecheck(and(a>b, b>c, c>d, d > 1.0, f(a) = c), bool, Y) will have many solutions. These can be narrowed down
+by using "a:int" annotations.
 
 Notes:
        - The mapping is returned as an association map (library(assoc)). which requires keys to be ground.
@@ -22,12 +29,6 @@ Notes:
 
 ***/
 
-:- module(type_inference, [
-              typecheck/3,
-              typecheck/4,
-              typecheck_formula_list/3, % convenience
-              typecheck_to_list/3 % convenience
-          ]).
 
 :- license(mit).
 :- expects_dialect(swi).

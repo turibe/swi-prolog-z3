@@ -1,14 +1,20 @@
 %%% -*- Mode: Prolog; Module: quickexplain; -*-
 
-% SWI Prolog implementation of Ulrich Junker's Quickxplain (https://cdn.aaai.org/AAAI/2004/AAAI04-027.pdf),
-% for finding minimally unsatisfiable subsets, and maximally satisfiable ones.
-
 :- module(quickexplain, [
 	      qexplain/4, % +AssertPredicate, +Base, +Constraints, -Result
 	      qexplain/3, % +AssertPredicate, +Constraints, -Result   (empty Base)
 	      qrelax/4,   % +AssertPredicate, +Base, +Constraints, -Result
 	      qrelax/3    % +AssertPredicate, +Constraints, -Result   (empty Base)
 	  ]).
+
+/** <module> Quickexplain
+
+SWI Prolog implementation of Ulrich Junker's Quickxplain (https://cdn.aaai.org/AAAI/2004/AAAI04-027.pdf),
+for finding minimally unsatisfiable subsets, and maximally satisfiable ones.
+
+@author Tomas Uribe
+@license MIT
+*/
 
 :- meta_predicate qexplain(1, ?, ?).
 :- meta_predicate qexplain(1, ?, ?, ?).

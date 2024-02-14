@@ -5,6 +5,12 @@
 	      subterm_list/2
     ] ).
 
+/** <module> Basic utils
+ 
+@author Tomas Uribe
+@license MIT
+*/
+
 
 % split list in half:
 split_list(L, A, B) :- length(L, N),

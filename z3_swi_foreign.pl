@@ -1,37 +1,43 @@
-%%% -*- Mode: Prolog; Module: z3; -*-
+%%% -*- Mode: Prolog; Module: z3_swi_foreign; -*-
 
-%% This is the lowest-level wrapper.
-%% It has no global variables except those in the C code.
+/** <module> Low-level Z3-SWI integration
+
+This is the lowest-level Prolog wrapper.
+It has no global variables except those in the C code.
+
+@author Tomas Uribe
+@license MIT
+*/
 
 :- module(z3_swi_foreign, [
-	      z3_assert/3,
-	      z3_context/1,
-	      z3_declarations_string/2,
-	      z3_free_model/1,
-	      z3_free_solver/1,
+              z3_assert/3,
+              z3_context/1,
+              z3_declarations_string/2,
+              z3_free_model/1,
+              z3_free_solver/1,
               z3_free_declaration_map/1,
-	      z3_declare_function/3,
-	      z3_make_solver/1,
+              z3_declare_function/3,
+              z3_make_solver/1,
               z3_make_declaration_map/1,
               z3_declaration_map_size/2,
-	      z3_model_eval/5,             %% +decl_map, +model_pointer, +formula, +completion_flag, -value
+              z3_model_eval/5,             %% +decl_map, +model_pointer, +formula, +completion_flag, -value
               z3_model_map_for_solver/2,
-	      z3_reset_declaration_map/1,
-	      z3_solver_assertions/2,
-	      z3_solver_check/2,
-	      z3_solver_check_and_print/2, % calls Z2_model_to_string
-	      z3_solver_get_model/2,
-	      z3_solver_pop/3,
-	      z3_solver_push/2,
-	      z3_solver_scopes/2,
-	      op(750, xfy, and), % =, >, etc. are 700 ; Local to the module
+              z3_reset_declaration_map/1,
+              z3_solver_assertions/2,
+              z3_solver_check/2,
+              z3_solver_check_and_print/2, % calls Z2_model_to_string
+              z3_solver_get_model/2,
+              z3_solver_pop/3,
+              z3_solver_push/2,
+              z3_solver_scopes/2,
+              op(750, xfy, and), % =, >, etc. are 700 ; Local to the module
               op(751, xfy, or),
               op(740, xfy, <>)
             ]).
 
 :- load_foreign_library(z3_swi_foreign).
 
-%% Next: solver and map should go together in a named map;
+%% Next: solver and declaration map could go together in a named structure;
 %% could even add the Z3 context to it later?
 
 reset_declarations(M) :- ground(M), z3_reset_declaration_map(M).

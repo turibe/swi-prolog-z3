@@ -1,6 +1,11 @@
 %%% -*- Mode: Prolog; Module: z3; -*-
 
-%% This file is included by z3.pl, for additional unit tests:
+/*  This file is included by z3.pl, for additional unit tests.
+
+@author Tomas Uribe
+@license MIT
+
+*/
 
 % :- use_module(z3).
 

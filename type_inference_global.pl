@@ -1,18 +1,20 @@
-%%% -*- Mode: Prolog; Module: z3; -*-
-
-%%%%%%%%%%%%%%%%%%%%
-%%
-%% This module builds on type_inference.pl and keeps a global backtrackable type map so we can incrementally typecheck in the REPL.
-%%
-%% Note also that we keep a mirror of this state in the C Z3 package as well (needed to build terms), which should reset between queries.
-%%
+%%% -*- Mode: Prolog; Module: type_inference_global_backtrackable; -*-
 
 :- module(type_inference_global, [
               assert_type/2,
               get_map/1,               % -Assoc : gets map as an assoc
               get_map_list/1           % gets map as a list
-
           ]).
+
+/** <module> Global backtrackable type inference
+
+This module builds on type_inference.pl and keeps a global backtrackable type map so we can incrementally typecheck in the REPL.
+Note also that we keep a mirror of this state in the C Z3 package as well (needed to build terms), which should reset between queries.
+
+@author Tomas Uribe
+@license MIT
+*/
+
 
 :- use_module(library(assoc)).
 

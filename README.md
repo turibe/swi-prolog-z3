@@ -3,6 +3,7 @@
 - Using Z3 as a constraint solver inside SWI Prolog, for a basic CLP(CC) implementation.
 
 - Prolog code for Junker's explanation (minimal unsatisfiable subsets) and relaxation (maximal satisfiable subsets). See [https://cdn.aaai.org/AAAI/2004/AAAI04-027.pdf](https://cdn.aaai.org/AAAI/2004/AAAI04-027.pdf).
+Can be used independently, with any monotonic `assert` predicate.
 
 ## Installation:
 
@@ -22,6 +23,8 @@ See [https://github.com/Z3Prover/z3](https://github.com/Z3Prover/z3).
 ```bash
 swipl-ld -I/Users/uribe/git/z3/src/api/ -L/Users/uribe/git/z3/build/ -o z3_swi_foreign -shared z3_swi_foreign.c -lz3
 ```
+
+This creates a `z3_swi_foreign.so` binary that is loaded into SWI Prolog when `use_module(z3)` is executed.
 
 4. Start swipl, import the `z3.pl` module, and you're done!
 
@@ -47,16 +50,20 @@ M1 = model{constants:[a-2, b-1], functions:[f/1-else-2, f(4)-5, f(2)-4]}.
 ### High-level: z3.pl
 
 The z3.pl module offers a high-level, user-friendly API, with:
+
     - Type inference, to minimize the number of declarations needed.
+
     - Prolog goals push assertions onto the Z3 solver, and those assertions are automatically popped when Prolog backtracks.
 
 The type inference uses a backtrackable map too. Types can be different from one query to the next. 
 Assertions also start afresh from one query to the next. The basic operations are:
 
 - `z3_push` : Typechecks and pushes a formula, as in
+
 ```prolog
 z3_push(f(a:int) = b and b = 3, Status). %% Status = l_true
 ```
+
 Status will be one of `{l_true, l_false, l_undef}`. One can also use `push/1`, which expects status to not be `l_false`.
 
 - `z3_is_consistent(+Formula)`: Tests whether `Formula` is consistent with what has been pushed so far.
@@ -83,8 +90,8 @@ M = model{constants:[a-0, b- -1, c-5], functions:[f/1-else- -1, f(5)-1]}.
 
 ### Attributed Variables.
 
-Terms with Prolog variables can be asserted as well. The variables will be associated with fresh Z3 constants, and new
-assertions will be pushed upon unification. For example:
+Terms with Prolog variables can be asserted as well. Prolog attributes will associate the  variables with fresh Z3 constants,
+and new equalities will be pushed upon unification. For example:
 
 ```prolog
 z3_push(X > b), z3_push(b > c), member(X, [a,b,c,d])
@@ -96,6 +103,16 @@ will only succeed for `X = a` and `X = d`.
 
 The lower-level module has no Prolog globals, and can be used to write an alterative to z3.pl that keeps state between queries,
 more like the Python integration.
+
+### Lowest level: z3_swi_foreign.c
+
+The `z3_swi_foreign.c` file has the C code that glues things together, to be compiled with `swipl-ld` tool.
+(See [#installation]).
+
+### Type inference
+
+`type_inference.pl` has basic capabilities for inferring types for constants and functions in Prolog Z3 expressions, saving the work of having to declare everything beforehand (funtions, in particular).
+
 
 
 ## Future Work
