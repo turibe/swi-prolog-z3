@@ -787,7 +787,7 @@ Z3_func_decl mk_func_decl(Z3_context ctx, decl_map declaration_map, const term_t
 
    Z3_func_decl result = get_function_declaration(ctx, declaration_map, name_string, arity);
 
-   if (result == NULL) { // make a new one
+   if (result == NULL) { // make a new one, register it:
      result = Z3_mk_func_decl(ctx, symbol, arity, arity == 0 ?  0 : domain, range_sort);
      if (result != NULL) {
        register_function_declaration_string(ctx, declaration_map, name_string, arity, result);

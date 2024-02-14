@@ -1,7 +1,7 @@
 # swi-prolog-z3
 
-Using Z3 as a constraint solver inside SWI Prolog, for a basic CLP(CC) implementation.
-The code in this repo currently supports a subset of Z3's capabilities,
+Code to use Z3 as a constraint solver inside SWI Prolog, for a basic CLP(CC) implementation.
+Currently supports a basic subset of Z3's capabilities,
 including propositional logic, equality, arithmetic, and uninterpreted function symbols.
 
 With the high-level API in `z3.pl`,
@@ -142,7 +142,8 @@ The `z3_swi_foreign.c` file has the C code that glues things together, to be com
 
 ## Future Work
 
-The current version handles the basic Z3 capabilities: {int,real,bool} types, propositional logic, equality, arithmetic, and uninterpreted function symbols.
-
+- The current version handles only the basic Z3 capabilities: {int,real,bool} types, propositional logic, equality, arithmetic, and uninterpreted function symbols.
 Bit vectors, sets, and quantifiers are future work.
+
+- A version that keeps state between queries (simple to do).
 
