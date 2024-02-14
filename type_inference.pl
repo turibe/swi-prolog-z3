@@ -69,6 +69,13 @@ signature(<=> , A, B) :- signature(iff, A, B).
 :- declare(=, [real, int], bool). % works in Z3
 :- declare(=, [int, real], bool).
 :- declare(<>, [T, T], bool).
+:- declare(<>, [int, real], bool).
+:- declare(<>, [int, bool], bool).
+:- declare(<>, [real, int], bool).
+:- declare(<>, [real, bool], bool).
+:- declare(<>, [bool, real], bool).
+:- declare(<>, [bool, int], bool).
+
 :- declare(distinct, all(_T), bool).
 
 % A possible improvement is to support expressions like all(number) AND oneof(float),

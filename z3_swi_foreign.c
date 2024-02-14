@@ -944,7 +944,7 @@ foreign_t model_functions(Z3_context ctx, Z3_model m, term_t list) {
     }
 
     const functor_t slash_functor = PL_new_functor(PL_new_atom("/"), 2);
-    term_t top_pair_term = PL_new_term_ref(); // now needs to include arity
+    term_t top_pair_term = PL_new_term_ref();
     term_t else_term = PL_new_term_ref();
     term_t fname_term = PL_new_term_ref();
     term_t arity_term = PL_new_term_ref();
@@ -959,7 +959,6 @@ foreign_t model_functions(Z3_context ctx, Z3_model m, term_t list) {
     if (!PL_cons_functor(fname_arity_term, slash_functor, fname_term, arity_term)) {
       return FALSE;
     }
-    // if (!PL_cons_functor(else_term, pair_functor, fname_arity_term, else_value)) {      return FALSE;    }
 
     // else_term is a pair " F/N-else ":
     term_t else_singleton = PL_new_term_ref();
@@ -1119,25 +1118,12 @@ Z3_sort mk_sort(Z3_context ctx, term_t expression) {
     break;
   case PL_VARIABLE: {
     // We'll do this in Prolog, rather than here, so fail:
-    fprintf(stderr, "WARN - mk_sort can't take variables\n");
+    ERROR("mk_sort can't take variables\n");
     return NULL;
-    /********
-    DEBUG("making sort for variable\n");
-    // generate a new symbol
-    char newname[100];
-    snprintf(newname, sizeof(newname), "undef_sort_%d", global_symbol_count);
-    term_t a = PL_new_term_ref();
-    PL_put_atom_chars(a, newname);
-    DEBUG("unifying type variable with %s\n", newname);
-    int res = PL_unify(a, expression);
-    assert(res);
-    Z3_symbol Uninterpreted_name = Z3_mk_string_symbol(ctx, newname);
-    return Z3_mk_uninterpreted_sort(ctx, Uninterpreted_name);
-    ******/
   }
   default:
-      fprintf(stderr, "WARN - unimplemented mk_sort\n");
-      return NULL;
+    ERROR("WARN - unimplemented mk_sort\n");
+    return NULL;
   }
   assert(false); // unreachable
 }
