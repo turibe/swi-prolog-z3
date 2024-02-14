@@ -376,8 +376,7 @@ z3_push_and_print(F) :- z3_push_and_print(F, l_true).
 %% succeeds if F is consistent with the current context. Fails if l_undef.
 z3_is_consistent(F) :- z3_push(F, l_true), popn(1).
 
-%% tofix: when something has a type error, e.g. z3_is_implied(x:int = 3.0).
-
+%% to handle type errors correctly, need to distiguish failure-by-type-error from failure-by-inconsistency:
 z3_is_implied(F) :- z3_push(not(F), Status),
                     (Status == l_true -> (popn(1) , fail)
                     ;
@@ -391,7 +390,8 @@ z3_is_implied(F) :- z3_push(not(F), Status),
                     )))).
 
 %% does not work if there are type errors:
-%% z3_is_implied(F) :- \+ \+ z3_is_consistent(F).
+%% z3_is_implied(F) :- \+ z3_is_consistent(not(F)).
+
 
 {}(X) :- z3_push(X).
 
