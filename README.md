@@ -7,10 +7,6 @@ including propositional logic, equality, arithmetic, and uninterpreted function 
 With the high-level API in `z3.pl`,
 Z3 asserts are incremental and backtrackable, and the Z3 solver context is pushed and popped automatically.
 
-- We also include a generic Prolog implementation of Junker's QuickXplain algorithms,
-for explanation (finding minimal unsatisfiable subsets) and relaxation (maximal satisfiable subsets).
-See [https://cdn.aaai.org/AAAI/2004/AAAI04-027.pdf](https://cdn.aaai.org/AAAI/2004/AAAI04-027.pdf).
-This code can be used on stand-alone basis, plugging in any monotonic `check` or `assert` predicate.
 
 ### Contact
 
@@ -138,7 +134,7 @@ similarly to the Python integration or the Z3 promp.
 ### Lowest level: z3_swi_foreign.c
 
 The `z3_swi_foreign.c` file has the C code that glues things together, to be compiled with `swipl-ld` tool.
-(See [#Installation](Installation)).
+(See [Installation](#Installation)).
 
 ### Type inference
 
@@ -146,6 +142,14 @@ The `z3_swi_foreign.c` file has the C code that glues things together, to be com
 
 `type_inference_global_backtrackable.pl` uses this to implement a global backtrackable type inference map.
 
+
+### Explanations and Relaxation
+
+- We also include a generic Prolog implementation of Junker's QuickXplain algorithms,
+for explanation (finding minimal unsatisfiable subsets) and relaxation (maximal satisfiable subsets).
+See [https://cdn.aaai.org/AAAI/2004/AAAI04-027.pdf](https://cdn.aaai.org/AAAI/2004/AAAI04-027.pdf).
+This code can be used on stand-alone basis, plugging in any monotonic `check` or `assert` predicate.
+See [quickexplain.pl](https://github.com/turibe/swi-prolog-z3/blob/main/quickexplain.pl).
 
 ## Future Work
 
