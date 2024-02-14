@@ -57,8 +57,13 @@ true.
 You can now issue Z3 queries, for example:
 
 ```bash
-?- z3_push(a:int=f(b) and b = 1 and f(a) > 3), z3_model(M), z3_push(f(f(a)) = 5), z3_model(M1).
-M = model{constants:[a-2, b-1], functions:[f/1-else-2, f(2)-4]},
+?- z3_push(a:int > b:int), z3_push(b:int > a:int).
+false.
+
+?- z3_push(a:int > b:int), z3_push(b:int > c:int), z3_is_implied(a > c).
+true.
+
+?- z3_push(a:int=f(b) and b = 1 and f(a) > 3), z3_push(f(f(a)) = 5), z3_model(M).
 M1 = model{constants:[a-2, b-1], functions:[f/1-else-2, f(4)-5, f(2)-4]}.
 ```
 
@@ -133,7 +138,7 @@ similarly to the Python integration or the Z3 promp.
 ### Lowest level: z3_swi_foreign.c
 
 The `z3_swi_foreign.c` file has the C code that glues things together, to be compiled with `swipl-ld` tool.
-(See [#installation]).
+(See [#Installation](Installation)).
 
 ### Type inference
 

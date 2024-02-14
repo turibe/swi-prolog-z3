@@ -200,12 +200,12 @@ test(declare_fail2, [fail]) :-
     reset_declarations(M),
     z3_declare_function(M, a, _Y).
 
-test(declare_fail_diffent_types, [fail]) :-
+test(declare_fail_different_types, [fail]) :-
     reset_declarations(M),
     z3_declare_function(M, a, bool),
     z3_declare_function(M, a, int).
 
-test(declare_fail_diffent_types1, [fail, cleanup(z3_free_declaration_map(M)) ]) :-
+test(declare_fail_different_types1, [fail, cleanup(z3_free_declaration_map(M)) ]) :-
     reset_declarations(M),
     z3_declare_function(M, f(int), bool),
     z3_declare_function(M, f(bool), bool).
