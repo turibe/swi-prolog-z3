@@ -63,6 +63,11 @@ signature(<=> , A, B) :- signature(iff, A, B).
 % Notation: "all(T)" means there can be an arbitrary number of arguments, all of type T.
 
 :- declare(=, [T, T], bool).
+% for more flexible arithmetic, eventually, perhaps:
+% :- declare(=, [bool, real], bool). % not allowed by Z3
+% :- declare(=, [bool, int], bool). % not allowed by Z3
+:- declare(=, [real, int], bool). % works in Z3
+:- declare(=, [int, real], bool).
 :- declare(<>, [T, T], bool).
 :- declare(distinct, all(_T), bool).
 

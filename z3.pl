@@ -233,7 +233,7 @@ ground_version(X, G, Result) :- compound(X),
 ground_list([], [], S) :- ord_empty(S).
 ground_list([F|Rest], [FG|Grest], Result) :- ground_version(F, FG, GFG), ground_list(Rest, Grest, Arest), ord_union(GFG, Arest, Result).
 
-valid_status_list([l_true, l_false, l_undef]).
+valid_status_list([l_true, l_false, l_undef, l_type_error]).
 valid_status(X) :- valid_status_list(L), member(X, L).
 
 
@@ -245,10 +245,12 @@ check_status_arg(Status) :- nonvar(Status),
                             )), !.
 
 
-%% We now use backtrackable types, resetting declarations at the first push.
+%% We now use backtrackable types in Prolog, resetting declarations at the first push.
 %% Note that type declarations in Z3 can't be pushed and popped.
 
 %% We could allow different types on different branches if new declarations overwrite old ones without error.
+
+%% Note that z3_push(false, R) will still push false onto the solver.
 
 z3_push(F, Status) :-
     check_status_arg(Status),
@@ -256,23 +258,29 @@ z3_push(F, Status) :-
     get_type_inference_map(OldAssoc),
     %% report(status("asserting", F)),
     ground_version(F, FG, Symbols),
-    (type_inference_global_backtrackable:assert_type(FG, bool) -> true ;
-     (report(type_error(FG)),
-      get_type_inference_map_list(L),
-      report(map(L)),
-      fail)),
-    get_type_inference_map(Assoc),
-    %% we only need to declare new symbols:
-    exclude(>>({OldAssoc}/[X], get_assoc(X, OldAssoc, _Y)), Symbols, NewSymbols),
-    %% writeln(compare(Symbols, NewSymbols)),
-    declare_z3_types_for_symbols(NewSymbols, Assoc),
-    push_solver(Solver),
-    internal_assert_and_check(Solver, FG, Status).
+    (type_inference_global_backtrackable:assert_type(FG, bool) ->
+         (
+             get_type_inference_map(Assoc),
+             %% we only need to declare new symbols:
+             exclude(>>({OldAssoc}/[X], get_assoc(X, OldAssoc, _Y)), Symbols, NewSymbols),
+             %% writeln(compare(Symbols, NewSymbols)),
+             declare_z3_types_for_symbols(NewSymbols, Assoc),
+             push_solver(Solver),
+             internal_assert_and_check(Solver, FG, Status)
+         )
+    ;  (
+        Status = l_type_error,
+        report(type_error(FG)),
+        get_type_inference_map_list(L),
+        report(map(L))
+    )
+    ).
 
 
-%% z3_push/1 fails if solver reports inconsistency:
+%% z3_push/1 fails if solver reports inconsistency or type error.
+%% l_type_error is the only one that does not push onto the solver.
 
-z3_push(F) :- z3_push(F, R), \+ (R == l_false).
+z3_push(F) :- z3_push(F, R), (R == l_true ; R == l_undef), !.
 
 %% goes through a list of symbols and declares them in Z3, using z3_declare
 declare_z3_types_for_symbols([], _M).
@@ -370,7 +378,20 @@ z3_is_consistent(F) :- z3_push(F, l_true), popn(1).
 
 %% tofix: when something has a type error, e.g. z3_is_implied(x:int = 3.0).
 
-z3_is_implied(F) :- \+ z3_is_consistent(not(F)).
+z3_is_implied(F) :- z3_push(not(F), Status),
+                    (Status == l_true -> (popn(1) , fail)
+                    ;
+                    (Status == l_undef -> (popn(1) , fail)
+                    ;
+                    (Status == l_type_error -> fail
+                    ;
+                    (
+                        assertion(Status == l_false),
+                        popn(1)
+                    )))).
+
+%% does not work if there are type errors:
+%% z3_is_implied(F) :- \+ \+ z3_is_consistent(F).
 
 {}(X) :- z3_push(X).
 
@@ -444,7 +465,15 @@ test(consistent) :-
     z3_push(a > d).
 
 test(implied) :-
-    z3_push(and(a:int>b,b>c,c>d)), z3_is_implied(a>d).
+    z3_is_implied(true),
+    \+ z3_is_implied(false),
+    z3_push(and(a:int>b, b>c, c>d)), z3_is_implied(a>d).
+
+test(implied_with_error) :-
+    \+ z3_is_implied(x:foo = y:bar).
+
+test(consistent_with_error) :-
+    \+ z3_is_consistent(x:foo = y:bar).
 
 test(boolean) :-
     z3_push(or(and(a:bool, b:bool), not(c:bool))),
@@ -456,15 +485,21 @@ test(eval, [true(R == 6)]) :-
     z3_push(b = 3),
     z3_eval(a * b, R).
 
+test(undefs, [true(R2 == l_true)]) :-
+    z3_push(power(a:real,b:int) = c, l_true), z3_push(c=2.0, R1), z3_push(a=2.0, R2),
+    assertion(R1 == l_undef).
 
-%% todo: undef, as in:
-%% z3_push(power(a:real,b:int) = c, R), z3_push(c=2.0, R1), z3_push(a=2.0, R2).
+test(undef_implied) :-
+    z3_push(power(a:real,b:int) = c, l_true), \+ z3_is_implied(c=2.0).
+
+test(undef_consistent) :- % consistency check fails if l_undef
+    z3_push(power(a:real,b:int) = c, l_true), \+ z3_is_consistent(c=2.0).
 
 %% to see how the model changes:
 %% z3:z3_push(b:int>c,R), z3:z3_push(and(a>d:int,b>e:int),R1), z3_push(f > b), z3_model(M), z3_is_consistent(f < a), z3_model(M1), z3_push(f > a), z3_model(M2).
 %% or z3_push_and_print(a > 1), z3_push_and_print(b > 2), z3_push_and_print(a > b), solver_scopes(N).
 
-test(scopes, [true(N1 == 1), true(N2==2)] ) :-
+test(scopes, [true(((N1 == 1), (N2==2))) ] ) :-
     solver_scopes(0),
     z3_push(a:int=14), solver_scopes(N1), z3_push(b:int=a-5), solver_scopes(N2).
 
@@ -539,6 +574,15 @@ test(bool_implies) :-
 test(bool_iff) :-
     z3_push(a<=>b), z3_push(a), z3_model(M),
     assertion(M.constants = [a-true, b-true]).
+
+test(type_error_scopes) :-
+    z3_push(x:foo = y:bar, R), solver_scopes(S),
+    assertion(R == l_type_error),
+    assertion(S == 0).
+
+test(weird_bug) :-
+    z3_is_implied(true),
+    \+ z3_is_implied(false).
 
 :- end_tests(boolean_tests).
 
