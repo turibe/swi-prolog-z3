@@ -2,8 +2,9 @@
 
 - Using Z3 as a constraint solver inside SWI Prolog, for a basic CLP(CC) implementation.
 
-- Prolog code for Junker's explanation (minimal unsatisfiable subsets) and relaxation (maximal satisfiable subsets). See [https://cdn.aaai.org/AAAI/2004/AAAI04-027.pdf](https://cdn.aaai.org/AAAI/2004/AAAI04-027.pdf).
-Can be used independently, with any monotonic `assert` predicate.
+- Generic Prolog code for Junker's QuickXplain algorithms, for explanation (finding minimal unsatisfiable subsets) and relaxation (maximal satisfiable subsets).
+See [https://cdn.aaai.org/AAAI/2004/AAAI04-027.pdf](https://cdn.aaai.org/AAAI/2004/AAAI04-027.pdf).
+This code can be used on stand-alone basis, plugging in any monotonic `check` or `assert` predicate.
 
 
 ### Contact
@@ -34,7 +35,9 @@ swipl-ld -I/Users/uribe/git/z3/src/api/ -L/Users/uribe/git/z3/build/ -o z3_swi_f
 
 This creates a `z3_swi_foreign.so` binary that is loaded into SWI Prolog when `use_module(z3)` is executed.
 
-4. Start swipl, import the `z3.pl` module, and you're done!
+4. Add a symbolic link to the `libz3.dylib` file in this directory (or copy it over).
+
+5. Start `swipl`, import the `z3.pl` module, and you're done!
 
 ```bash
 swipl
@@ -45,7 +48,7 @@ Initializing global context
 true.
 ```
 
-You can now issue queries, for example:
+You can now issue Z3 queries, for example:
 
 ```bash
 ?- z3_push(a:int=f(b) and b = 1 and f(a) > 3), z3_model(M), z3_push(f(f(a)) = 5), z3_model(M1).
@@ -55,7 +58,7 @@ M1 = model{constants:[a-2, b-1], functions:[f/1-else-2, f(4)-5, f(2)-4]}.
 
 Unit tests can be run with `?- run_tests.`
 
-## Quick Overview
+## Code and Functionality Overview
 
 ### High-level: z3.pl
 
