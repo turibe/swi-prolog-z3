@@ -11,7 +11,7 @@ This module builds on the basic functionality of z3_swi_foreign.pl to provide:
 For incrementality, this module maintains a global_solver, where the push and pops happen.
 So even though it is a single Z3 C object, kept in a non-backtrackable Prolog variable, it is meant to works as a backtrackable one.
 
-type_inference_global does keep a backtrackable type map.
+type_inference_global_backtrackable does keep a --- backtrackable --- type map.
 
 @author Tomas Uribe
 @license MIT
@@ -43,9 +43,10 @@ type_inference_global does keep a backtrackable type map.
               % {}/1, % clashes with other CLP libraries
               ]).
 
-:- use_module(type_inference_global, [
+:- use_module(type_inference_global_backtrackable, [
                   assert_type/2,
-                  get_map/1
+                  get_map/1 as get_type_inference_map,
+                  get_map_list/1 as get_type_inference_map_list
               ]).
 
 :- use_module(library(assoc)).
@@ -252,15 +253,15 @@ check_status_arg(Status) :- nonvar(Status),
 z3_push(F, Status) :-
     check_status_arg(Status),
     (b_getval(solver_depth, 0) -> z3_reset_declarations ; true),
-    type_inference_global:get_map(OldAssoc),
+    get_type_inference_map(OldAssoc),
     %% report(status("asserting", F)),
     ground_version(F, FG, Symbols),
-    (type_inference_global:assert_type(FG, bool) -> true ;
+    (type_inference_global_backtrackable:assert_type(FG, bool) -> true ;
      (report(type_error(FG)),
-      type_inference_global:get_map_list(L),
+      get_type_inference_map_list(L),
       report(map(L)),
       fail)),
-    type_inference_global:get_map(Assoc),
+    get_type_inference_map(Assoc),
     %% we only need to declare new symbols:
     exclude(>>({OldAssoc}/[X], get_assoc(X, OldAssoc, _Y)), Symbols, NewSymbols),
     %% writeln(compare(Symbols, NewSymbols)),
@@ -344,7 +345,7 @@ z3_declare(F, lambda(Arglist, Range)) :- (var(F) -> type_error(nonvar, F) ; true
 %% %% typecheck_and_declare/2, % +Formula,-Assoc  : Typechecks Formula, declares types, and returns new Assoc
 %% typecheck_and_declare(Formulas, Assoc) :-
 %%     assert_formula_list_types(Formulas), !, %% updates the global (backtrackable) type map
-%%     get_map(Assoc),
+%%     get_type_inference_map(Assoc),
 %%     assoc_to_list(Assoc, L),
 %%     declare_type_list(L).                   %% updates the Z3 (C) internal map
 
@@ -399,8 +400,8 @@ test(sat, [true(R == l_true)] ) :-
 
 test(typetest, [true(A-F == int-lambda([foobarsort], int)) , nondet ] ) :-
     test_formulas(Formulas),
-    type_inference_global:assert_formula_list_types(Formulas),
-    type_inference_global:get_map(Map),
+    type_inference_global_backtrackable:assert_formula_list_types(Formulas),
+    get_type_inference_map(Map),
     get_assoc(a, Map, A),
     get_assoc(f/1, Map, F).
 

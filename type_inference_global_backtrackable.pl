@@ -1,6 +1,6 @@
 %%% -*- Mode: Prolog; Module: type_inference_global_backtrackable; -*-
 
-:- module(type_inference_global, [
+:- module(type_inference_global_backtrackable, [
               assert_type/2,
               get_map/1,               % -Assoc : gets map as an assoc
               get_map_list/1           % gets map as a list
@@ -24,16 +24,17 @@ Note also that we keep a mirror of this state in the C Z3 package as well (neede
 
 %% global_typemap is a backtrackable variable.
 
+initialize_map(Map) :- nb_setval(global_typemap, Map).
+
 initialize_map :- empty_assoc(Empty),
 		  initialize_map(Empty).
 
-initialize_map(Map) :- nb_setval(global_typemap, Map).
 
 get_map(Map) :- b_getval(global_typemap, Map).
     
 set_map(Map) :- b_setval(global_typemap, Map).
 
-%% more readable:
+%% lists are more readable than assocs:
 get_map_list(L) :- get_map(Map),
                    assoc_to_list(Map, L).
 

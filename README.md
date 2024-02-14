@@ -5,6 +5,14 @@
 - Prolog code for Junker's explanation (minimal unsatisfiable subsets) and relaxation (maximal satisfiable subsets). See [https://cdn.aaai.org/AAAI/2004/AAAI04-027.pdf](https://cdn.aaai.org/AAAI/2004/AAAI04-027.pdf).
 Can be used independently, with any monotonic `assert` predicate.
 
+
+### Contact
+
+Tomas Uribe, t****.u****@gmail.com
+
+Github: [https://github.com/turibe/swi-prolog-z3](https://github.com/turibe/swi-prolog-z3).
+
+
 ## Installation:
 
 Tested on MacOS Sonoma.
@@ -45,6 +53,8 @@ M = model{constants:[a-2, b-1], functions:[f/1-else-2, f(2)-4]},
 M1 = model{constants:[a-2, b-1], functions:[f/1-else-2, f(4)-5, f(2)-4]}.
 ```
 
+Unit tests can be run with `?- run_tests.`
+
 ## Quick Overview
 
 ### High-level: z3.pl
@@ -64,7 +74,7 @@ Assertions also start afresh from one query to the next. The basic operations ar
 z3_push(f(a:int) = b and b = 3, Status). %% Status = l_true
 ```
 
-Status will be one of `{l_true, l_false, l_undef}`. One can also use `push/1`, which expects status to not be `l_false`.
+Status will be one of `{l_true, l_false, l_undef}`. One can also use `push/1`, which will fails if status is `l_false`.
 
 - `z3_is_consistent(+Formula)`: Tests whether `Formula` is consistent with what has been pushed so far.
 
@@ -90,7 +100,7 @@ M = model{constants:[a-0, b- -1, c-5], functions:[f/1-else- -1, f(5)-1]}.
 
 ### Attributed Variables.
 
-Terms with Prolog variables can be asserted as well. Prolog attributes will associate the  variables with fresh Z3 constants,
+Terms with Prolog variables can be asserted as well. Prolog attributes are used to associate each variable with a fresh Z3 constant,
 and new equalities will be pushed upon unification. For example:
 
 ```prolog
