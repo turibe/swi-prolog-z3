@@ -366,10 +366,9 @@ z3_push_and_print(F,R) :- z3_push(F,R), z3_check_and_print(R1), assertion(R == R
 z3_push_and_print(F) :- z3_push_and_print(F, l_true).
 
 %% succeeds if F is consistent with the current context. Fails if l_undef.
-z3_is_consistent(F) :- setup_call_cleanup(true,
-                                          z3_push(F, l_true),
-                                          popn(1)
-                                         ).
+z3_is_consistent(F) :- z3_push(F, l_true), popn(1).
+
+%% tofix: when something has a type error, e.g. z3_is_implied(x:int = 3.0).
 
 z3_is_implied(F) :- \+ z3_is_consistent(not(F)).
 
