@@ -580,7 +580,8 @@ test(type_error_scopes) :-
     assertion(R == l_type_error),
     assertion(S == 0).
 
-test(weird_bug) :-
+%% makes sure that not(false) is popped after checking z3_is_implied(true):
+test(is_implied_pop) :-
     z3_is_implied(true),
     \+ z3_is_implied(false).
 
