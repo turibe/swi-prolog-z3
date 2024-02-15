@@ -33,7 +33,7 @@ See [https://github.com/Z3Prover/z3](https://github.com/Z3Prover/z3).
 (Adapt the `-I` and `-L` paths accordingly.)
 
 ```bash
-swipl-ld -I/Users/uribe/git/z3/src/api/ -L. -o z3_swi_foreign -shared z3_swi_foreign.c -lz3
+swipl-ld -I/<path-to-z3>/z3/src/api/ -L. -o z3_swi_foreign -shared z3_swi_foreign.c -lz3
 ```
 
 This creates a `z3_swi_foreign.so` binary that is loaded into SWI Prolog when `use_module(z3)` is executed.

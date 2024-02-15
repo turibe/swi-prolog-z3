@@ -69,6 +69,13 @@ signature(<=> , A, B) :- signature(iff, A, B).
 :- declare(=, [real, int], bool). % works in Z3
 :- declare(=, [int, real], bool).
 :- declare(<>, [T, T], bool).
+:- declare(<>, [int, real], bool).
+:- declare(<>, [int, bool], bool).
+:- declare(<>, [real, int], bool).
+:- declare(<>, [real, bool], bool).
+:- declare(<>, [bool, real], bool).
+:- declare(<>, [bool, int], bool).
+
 :- declare(distinct, all(_T), bool).
 
 % A possible improvement is to support expressions like all(number) AND oneof(float),
@@ -78,7 +85,7 @@ signature(<=> , A, B) :- signature(iff, A, B).
 
 :- declare(+, all(T), T).
 :- declare(*, all(T), T).
-:- declare(-, [T, T], T).
+:- declare(-, all(T), T).
 
 :- declare(+, [real, _T], real).
 :- declare(+, [_T, real], real).
@@ -99,12 +106,19 @@ signature(<=> , A, B) :- signature(iff, A, B).
 :- declare(power, [real, int], real).
 :- declare(power, [_T, real], real).
 
+:- declare(real2int, [real], int).
+:- declare(int2real, [int], real).
+:- declare(is_int, [real], bool).
+
 % From the Z3 docs:
 % "The arguments must either both have int type or both have real type. If the arguments have int type, then the result type is an int type, otherwise the the result type is real."
 :- declare(div, [real, real], real).
 :- declare(div, [int, int], int).
 :- declare(div, [real, int], real).
 :- declare(div, [int, real], real).
+
+:- declare(divides, [int, int], bool).
+:- declare(rem, [int, int], int).
 
 % :- declare(<, [T, T], bool).
 % :- declare(>, [T, T], bool).
