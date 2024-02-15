@@ -106,6 +106,10 @@ signature(<=> , A, B) :- signature(iff, A, B).
 :- declare(power, [real, int], real).
 :- declare(power, [_T, real], real).
 
+:- declare(real2int, [real], int).
+:- declare(int2real, [int], real).
+:- declare(is_int, [real], bool).
+
 % From the Z3 docs:
 % "The arguments must either both have int type or both have real type. If the arguments have int type, then the result type is an int type, otherwise the the result type is real."
 :- declare(div, [real, real], real).

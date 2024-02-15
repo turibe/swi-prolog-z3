@@ -872,7 +872,7 @@ foreign_t model_functions(Z3_context ctx, Z3_model m, term_t list) {
     if (finterp == NULL) {
       continue;
     }
-    Z3_func_interp_inc_ref(ctx, finterp); // crashes without this!
+    Z3_func_interp_inc_ref(ctx, finterp);
 
     unsigned arity = Z3_func_interp_get_arity(ctx, finterp);
     DEBUG("Arity is %d\n", arity);
@@ -1338,13 +1338,18 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
       CHECK_ARITY(name_string, 2, arity);
       result = Z3_mk_ge(ctx, subterms[0], subterms[1]);
     }
-    else if (strcmp(name_string, "isint") == 0) {
+    else if (strcmp(name_string, "is_int") == 0) {
       CHECK_ARITY(name_string, 1, arity);
       result = Z3_mk_is_int(ctx, subterms[0]);
     }
-    // crashes: {int2real(1.0) = X}.
-    // else if (strcmp(name_string, "int2real") == 0) {assert(arity == 1); result = Z3_mk_int2real(ctx, subterms[0]);}
-    // else if (strcmp(name_string, "real2int") == 0) {assert(arity == 1); result = Z3_mk_real2int(ctx, subterms[0]);}
+    else if (strcmp(name_string, "int2real") == 0) {
+      CHECK_ARITY(name_string, 1, arity);
+      result = Z3_mk_int2real(ctx, subterms[0]);
+    }
+    else if (strcmp(name_string, "real2int") == 0) {
+      CHECK_ARITY(name_string, 1, arity);
+      result = Z3_mk_real2int(ctx, subterms[0]);
+    }
     else if (strcmp(name_string, "=") == 0 || strcmp(name_string, "==") == 0 || strcmp(name_string, "equals") == 0 ) {
       DEBUG("making equals\n");
       CHECK_ARITY(name_string, 2, arity);

@@ -585,6 +585,20 @@ test(is_implied_pop) :-
     z3_is_implied(true),
     \+ z3_is_implied(false).
 
+test(int2real) :-
+    z3_push(x = int2real(3)),
+    z3_model(M),
+    assertion(M.constants = [x-3]).
+
+test(real2int) :-
+    z3_push(x = real2int(3.3)),
+    z3_model(M),
+    assertion(M.constants = [x-3]).
+
+test(isint) :-
+    z3_push(is_int(3.0)),
+    \+ z3_push(is_int(2)).
+
 :- end_tests(boolean_tests).
 
 
