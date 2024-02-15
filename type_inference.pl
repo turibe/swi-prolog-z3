@@ -85,7 +85,7 @@ signature(<=> , A, B) :- signature(iff, A, B).
 
 :- declare(+, all(T), T).
 :- declare(*, all(T), T).
-:- declare(-, [T, T], T).
+:- declare(-, all(T), T).
 
 :- declare(+, [real, _T], real).
 :- declare(+, [_T, real], real).
@@ -116,6 +116,9 @@ signature(<=> , A, B) :- signature(iff, A, B).
 :- declare(div, [int, int], int).
 :- declare(div, [real, int], real).
 :- declare(div, [int, real], real).
+
+:- declare(divides, [int, int], bool).
+:- declare(rem, [int, int], int).
 
 % :- declare(<, [T, T], bool).
 % :- declare(>, [T, T], bool).

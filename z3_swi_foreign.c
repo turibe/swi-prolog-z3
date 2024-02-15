@@ -1299,6 +1299,7 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
         result = Z3_mk_unary_minus(ctx, subterms[0]);
       }
       else {
+        // we allow arities > 2
         result = Z3_mk_sub(ctx, arity, subterms);
       }
     }
@@ -1368,7 +1369,13 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
       result = Z3_mk_eq(ctx, subterms[0], subterms[1]);
       DEBUG("made equals\n");
     }
-    else if (strcmp(name_string, "distinct") == 0 ) {result = Z3_mk_distinct(ctx, arity, subterms);}
+    else if (strcmp(name_string, "distinct") == 0 ) {
+      result = Z3_mk_distinct(ctx, arity, subterms);
+    }
+    else if (strcmp(name_string, "divides") == 0) {
+      CHECK_ARITY(name_string, 2, arity);
+      result = Z3_mk_divides(ctx, subterms[0], subterms[1]);
+    }
     else if (strcmp(name_string, "not") == 0 ) {
       CHECK_ARITY(name_string, 1, arity);
       result = Z3_mk_not(ctx, subterms[0]);
