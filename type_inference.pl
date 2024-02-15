@@ -294,19 +294,28 @@ test(nodottest) :-
 test(atleast) :-
     typecheck(atleast(a,b,c,d), bool, Map),
     get_assoc(a, Map, bool),
-    get_assoc(d, Map, int),
-    true.
+    get_assoc(d, Map, int).
 
 test(intreal, set(T == [bool, int, real]) ) :-
     typecheck(a>1, bool, t, R),
     get_assoc(a,R,T).
 
-typecheck(bool_plus, all(T == [bool, int]) ) :-
+test(bool_plus, set(T == [bool, int]) ) :-
     typecheck((a:int) + b, int, R),
     get_assoc(b, R, T).
 
-typecheck(bool_times, all(T == [bool, int]) ) :-
+test(bool_times, set(T == [bool, int]) ) :-
     typecheck((a:int) * b, int, R),
     get_assoc(b, R, T).
+
+test(nested_decl, [true((FT == lambda([int], int), GT=FT)), nondet ]) :-
+    typecheck(f(g(a:int):int):int = b:int, bool, t, R),
+    get_assoc(f/1, R, FT),
+    get_assoc(g/1, R, GT).
+
+test(basic_eq, set(T == [int, real])) :-
+    typecheck(a = b:int, bool, t, R),
+    get_assoc(a, R, T),
+    get_assoc(b, R, int).
 
 :- end_tests(type_inference_tests).

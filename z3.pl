@@ -284,8 +284,13 @@ z3_push(F) :- z3_push(F, R), (R == l_true ; R == l_undef), !.
 
 %% goes through a list of symbols and declares them in Z3, using z3_declare
 declare_z3_types_for_symbols([], _M).
-declare_z3_types_for_symbols([X|Rest], M) :- (get_assoc(X, M, Def) -> z3_declare(X, Def) ; true),
-                                 declare_z3_types_for_symbols(Rest, M).
+declare_z3_types_for_symbols([X|Rest], M) :-
+    (get_assoc(X, M, Def) -> (
+                                  %% write("Declaring "), writeln(Def),
+                                  z3_declare(X, Def)
+                              )
+    ; true),
+    declare_z3_types_for_symbols(Rest, M).
 
 
 print_declarations :- get_z3_declaration_map(M), z3_declarations_string(M, S), current_output(Out), write(Out, S).
@@ -344,11 +349,14 @@ z3_declare(F, lambda(Arglist, Range)) :- (var(F) -> type_error(nonvar, F) ; true
                                          F = F1/N,
                                          length(Arglist, Len),
                                          assertion(N == Len),
+                                         ground_arglist(Arglist),
                                          Fapp =.. [F1|Arglist],
                                          (var(Range) -> Range = uninterpreted ; true), !,
                                          get_z3_declaration_map(M),
                                          z3_declare_function(M, Fapp, Range).
 
+mk_uninterpreted(X) :- var(X) -> X = uninterpreted ; true.
+ground_arglist(L) :- maplist(mk_uninterpreted, L).
 
 %% Not used --- not incremental, declares everything in the map:
 %% %% typecheck_and_declare/2, % +Formula,-Assoc  : Typechecks Formula, declares types, and returns new Assoc
@@ -621,6 +629,13 @@ test(rem) :-
 test(nary_minus) :-
     z3_push(x:int = -(0,1,2,3,4)),
     z3_is_implied( x = -10 ).
+
+test(declare_lambda, [true(X==uninterpreted)]) :-
+    z3_declare(f/1, lambda([X], real)).
+
+test(nested_uninterpreted) :-
+    z3_push(f(g(a,b)) = c),
+    z3_model(_M).
 
 :- end_tests(boolean_tests).
 
