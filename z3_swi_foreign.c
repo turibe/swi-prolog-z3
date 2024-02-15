@@ -741,11 +741,24 @@ foreign_t z3_solver_check_and_print_foreign(term_t solver_term, term_t status_ar
 Z3_func_decl mk_func_decl(Z3_context ctx, decl_map declaration_map, const term_t formula, term_t range) {
    atom_t name;
    size_t arity;
-   int res = PL_get_name_arity(formula, &name, &arity);
-   if (!res) {
-     char **formula_string = NULL;
-     if (PL_get_chars(formula, formula_string, BUF_STACK)) {
-       ERROR("Bad argument to mk_func_decl: %s\n", *formula_string);
+   int res;
+
+   /*
+   char *formula_string;
+   int res = PL_get_chars(formula, &formula_string, CVT_ALL | CVT_VARIABLE | CVT_EXCEPTION | CVT_WRITE);
+   if (res) {
+     INFO("Argument to mk_func_decl: %s\n", formula_string);
+   }
+   else {
+     INFO("Could not make mk_func_decl formula string\n");
+   }
+   */     
+   
+   res = PL_get_name_arity(formula, &name, &arity);
+   if (!res || !PL_is_ground(formula)) {
+     char *formula_string = NULL;
+     if (PL_get_chars(formula, &formula_string, BUF_STACK)) {
+       ERROR("Bad argument to mk_func_decl: %s\n", formula_string);
      }
      return NULL;
    }
@@ -754,11 +767,10 @@ Z3_func_decl mk_func_decl(Z3_context ctx, decl_map declaration_map, const term_t
    DEBUG("Making function declaration based on %s/%lu\n", name_string, arity);
    Z3_symbol symbol = Z3_mk_string_symbol(ctx, name_string);
    Z3_sort *domain = malloc(sizeof(Z3_sort) * arity);
-   DEBUG("domain is %p\n", domain);
    term_t a = PL_new_term_ref();
    for (int i=1; i<=arity; ++i) {
      int res = PL_get_arg(i, formula, a);
-     DEBUG("Argument %d, res is %d\n", i, res);
+     // DEBUG("Argument %d, res is %d\n", i, res);
      if (!res) {
        ERROR("PL_get_arg in mk_func_decl failed\n");
        free(domain);
@@ -791,7 +803,7 @@ Z3_func_decl mk_func_decl(Z3_context ctx, decl_map declaration_map, const term_t
      result = Z3_mk_func_decl(ctx, symbol, arity, arity == 0 ?  0 : domain, range_sort);
      if (result != NULL) {
        register_function_declaration_string(ctx, declaration_map, name_string, arity, result);
-       DEBUG("mk_func_decl result is %s\n", Z3_ast_to_string(ctx, Z3_func_decl_to_ast(ctx, result)));
+       DEBUG("Z3_mk_func_decl result is %s\n", Z3_ast_to_string(ctx, Z3_func_decl_to_ast(ctx, result)));
      }
    }
    else {
@@ -816,8 +828,7 @@ Z3_func_decl mk_func_decl(Z3_context ctx, decl_map declaration_map, const term_t
 // Example: z3_declare_function(f(int, bool), int, R).
 // Example: z3_declare_function(f(int, int), int, X)
 
-// Note: This does not handle the case where formula is a variable.
-
+// Note: This does not handle the case where formula is not ground.
 
 foreign_t z3_declare_function_foreign(const term_t decl_map_term, const term_t formula, const term_t range, term_t result) {
   atom_t name;
@@ -844,6 +855,10 @@ foreign_t z3_declare_function_foreign(const term_t decl_map_term, const term_t f
   }
   if (!PL_is_atom(range)) {
     ERROR("z3_declare_function range should be an atom\n");
+    return FALSE;
+  }
+  if (!PL_is_ground(formula)) {
+    ERROR("z3_declare_function should have ground arguments\n");
     return FALSE;
   }
   const Z3_context ctx = get_context();
@@ -1088,9 +1103,14 @@ Z3_sort mk_sort(Z3_context ctx, term_t expression) {
   }
   case PL_TERM:
     assert(PL_is_compound(expression));
+
+    char *formula_string = NULL;
+    int res = PL_get_chars(expression, &formula_string, CVT_ALL | CVT_VARIABLE | CVT_EXCEPTION | CVT_WRITE);
+    INFO("mk_sort got compound term %s\n", formula_string);
+    
     atom_t name;
     size_t arity;
-    int res = PL_get_name_arity(expression, &name, &arity);
+    res = PL_get_name_arity(expression, &name, &arity);
     if (!res) {
       ERROR("PL_get_name_arity failed\n");
       return FALSE;
@@ -1113,7 +1133,7 @@ Z3_sort mk_sort(Z3_context ctx, term_t expression) {
       }
     }
     // for bitvectors, subarg is an int.
-    fprintf(stderr, "WARN - need to finish compound case for mk_sort\n");
+    ERROR("WARN - need to finish compound case for mk_sort\n");
     return NULL;
     break;
   case PL_VARIABLE: {
