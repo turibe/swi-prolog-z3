@@ -260,8 +260,6 @@ foreign_t z3_declarations_string_foreign(term_t dmap_term, term_t result) {
 }
 
 
-// Question: how to garbage collect the context?
-
 /*
  * Unifies the global context with the arg. Wraps in "context(X)".
  * Eventually should use blob mechanism to represent all pointers.
@@ -426,6 +424,7 @@ Z3_symbol mk_symbol(Z3_context ctx, term_t formula) {
     int res = PL_get_chars(formula, &fchars, CVT_WRITE);
     if (!res) return NULL;
     ERROR("error making symbol %s, term type is %d\n", fchars, term_type);
+    return NULL;
   }
   } // end switch
 
@@ -662,7 +661,7 @@ foreign_t z3_assert_foreign(term_t decl_map_term, term_t solver_term, term_t for
 
   if (z3_formula == NULL) {
     char *formula_string;
-    int res = PL_get_chars(formula, &formula_string, CVT_ALL | CVT_VARIABLE | CVT_EXCEPTION | CVT_WRITE);
+    int res = PL_get_chars(formula, &formula_string, CVT_WRITE);
     if (!res) {
       ERROR("z3_assert/3: PL_get_chars failed");
       return FALSE;
@@ -676,7 +675,7 @@ foreign_t z3_assert_foreign(term_t decl_map_term, term_t solver_term, term_t for
   Z3_sort formula_sort = Z3_get_sort(ctx, z3_formula);
   if (formula_sort != BOOL_SORT) {
     char * formula_string;
-    int res = PL_get_chars(formula, &formula_string, CVT_ALL | CVT_VARIABLE | CVT_EXCEPTION | CVT_WRITE);
+    int res = PL_get_chars(formula, &formula_string, CVT_WRITE);
     if (!res) {
       ERROR("PL_get_chars failed\n");
       return FALSE;
@@ -745,7 +744,7 @@ Z3_func_decl mk_func_decl(Z3_context ctx, decl_map declaration_map, const term_t
 
    /*
    char *formula_string;
-   int res = PL_get_chars(formula, &formula_string, CVT_ALL | CVT_VARIABLE | CVT_EXCEPTION | CVT_WRITE);
+   int res = PL_get_chars(formula, &formula_string, CVT_WRITE);
    if (res) {
      INFO("Argument to mk_func_decl: %s\n", formula_string);
    }
@@ -776,6 +775,12 @@ Z3_func_decl mk_func_decl(Z3_context ctx, decl_map declaration_map, const term_t
        free(domain);
        return NULL;
      }
+     /*
+     char *formula_string;
+     if (PL_get_chars(a, &formula_string, CVT_WRITE)) {
+        INFO("Calling mk_sort for domain %s\n", formula_string);
+      }
+     */
      domain[i-1] = mk_sort(ctx, a);
      if (domain[i-1] == NULL) {
        INFO("mk_func_decl returning NULL\n");
@@ -790,8 +795,10 @@ Z3_func_decl mk_func_decl(Z3_context ctx, decl_map declaration_map, const term_t
      ERROR("Got null for range_sort\n");
      char *fchars, *rchars;
      int res = PL_get_chars(formula, &fchars, CVT_WRITE);
+     if (!res) fchars = NULL;
      ERROR("Formula was %s\n", fchars);
      res = PL_get_chars(range, &fchars, CVT_WRITE);
+     if (!res) fchars = NULL;
      ERROR("Range was %s\n", fchars);
      free(domain);
      return NULL;
@@ -1105,7 +1112,7 @@ Z3_sort mk_sort(Z3_context ctx, term_t expression) {
     assert(PL_is_compound(expression));
 
     char *formula_string = NULL;
-    int res = PL_get_chars(expression, &formula_string, CVT_ALL | CVT_VARIABLE | CVT_EXCEPTION | CVT_WRITE);
+    int res = PL_get_chars(expression, &formula_string, CVT_WRITE);
     INFO("mk_sort got compound term %s\n", formula_string);
     
     atom_t name;
@@ -1127,7 +1134,13 @@ Z3_sort mk_sort(Z3_context ctx, term_t expression) {
       if (!res) {
         return FALSE;
       }
-      subterms[n-1] = mk_sort(ctx, a); // datatypes use constructors, not subsorts...
+      /*
+      char *formula_string;
+      if (PL_get_chars(a, &formula_string, CVT_WRITE)) {
+        INFO("Calling mk_sort for subterm %s\n", formula_string);
+      }
+      */
+      subterms[n-1] = mk_sort(ctx, a); // datatypes use constructors, not subsorts.
       if (subterms[n-1] == NULL) {
         return NULL;
       }
@@ -1214,7 +1227,7 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
   case PL_INTEGER:
     if (PL_get_long_ex(formula, &lval)) {
       DEBUG("Got PL_get_long\n");
-      Z3_sort intsort = INT_SORT; // Z3_mk_int_sort(ctx);
+      Z3_sort intsort = INT_SORT;
       return Z3_mk_int64(ctx, lval, intsort);
     }
     else {
@@ -1259,6 +1272,7 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
     DEBUG("functor name: %s\n", name_string);
 
     if (strcmp(name_string, ":")==0) { // Path where : is not handled at the Prolog level but given directly to Z3
+      // z3.pl strips all the ":" from the term, so this path is not taken.
       // we expect symbol:sort
       CHECK_ARITY(name_string, 2, arity);
       term_t name_term = PL_new_term_ref();
@@ -1267,6 +1281,14 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
         ERROR("PL_get_arg 1 failed\n");
         return NULL;
       }
+      if (!PL_is_atom(name_term)) {
+        char *term_string = NULL;
+        int res = PL_get_chars(formula, &term_string, CVT_WRITE);
+        if (!res) term_string = NULL;
+        ERROR("The c wrapper can only handle atoms on the lhs of \":\", got %s\n", term_string);
+        return NULL;
+        // TODO: To improve this, we need to infer the function type for the lhs, and compare with the rhs.
+      }
       Z3_symbol symbol_name = mk_symbol(ctx, name_term);
       term_t range = PL_new_term_ref();
       res = PL_get_arg(2, formula, range);
@@ -1274,12 +1296,20 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
         ERROR("PL_get_arg 2 failed\n");
         return NULL;
       }
+      
+      /*
+        char *formula_string;
+        if (PL_get_chars(range, &formula_string, CVT_WRITE) ) {
+           INFO("Calling mk_sort for range %s\n", formula_string);
+        }
+      */
+      
       Z3_sort sort = mk_sort(ctx, range);
       if (sort == NULL) {
         INFO("mk_sort for symbol is null\n");
         return NULL;
       }
-      // We are converting PL to Z3. We should declare
+      // We are converting PL to Z3. We call
       // mk_func_decl(ctx, symbol_name, ...);
       // to catch inconsistent uses of the same constant.
       atom_t name_atom;
@@ -1305,7 +1335,7 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
       assert(res);
       subterms[n-1] = term_to_ast(ctx, declaration_map, a);
       if (subterms[n-1] == NULL) {
-        INFO("Making subterm %d failed\n", n);
+        // INFO("Making subterm %d failed\n", n);
         free(subterms);
         return NULL;
       }
@@ -1482,7 +1512,7 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
   default: {
     char *formula_string;
     int type = PL_term_type(formula);
-    if (! PL_get_chars(formula, &formula_string, CVT_ALL | CVT_VARIABLE | CVT_EXCEPTION | CVT_WRITE) ) {
+    if (! PL_get_chars(formula, &formula_string, CVT_WRITE)) {
       ERROR("PL_get_chars failed in term_to_ast for unhandled Prolog term of type %d", type);
     }
     else {

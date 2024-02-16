@@ -45,13 +45,11 @@ assert_formula_list_types(L) :-
     set_map(Enew).
 
 
-assert_type(Term, Type) :- ground(Term), !,
+
+assert_type(Term, Type) :- must_be(ground, Term),
                            get_map(E),
                            typecheck(Term, Type, E, Enew),
                            set_map(Enew).
-assert_type(Term, _Type) :- \+ ground(Term),
-                            instantiation_error(Term).
-
 
 
 %%%%%%%%%%%% unit tests %%%%%%%%%%%
