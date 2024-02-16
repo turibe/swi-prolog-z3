@@ -215,7 +215,9 @@ z3_model_assoc(Model) :-
 
 
 % We now allow overloading by arity.
-% Grounds any variables in X, and returns the symbols it finds, using f/N for arities bigger than 1.
+
+% Grounds any variables in X, and returns the symbols it finds, using f/N for arities bigger than 1:
+
 ground_version(X, Attr, [Attr]) :- var(X), !, add_attribute(X, Attr).
 ground_version(X, X, S) :- number(X), !, ord_empty(S).
 ground_version(X, X, [X]) :- atom(X), !, true.
@@ -229,6 +231,9 @@ ground_version(X, G, Result) :- compound(X),
                                 G =.. [F|Grest],
                                 ord_add_element(R, F/Arity, Result).
 
+remove_type_annotations(X, X) :- atomic(X), !.
+remove_type_annotations(X:_T, X1) :- mapargs(remove_type_annotations, X, X1), !.
+remove_type_annotations(F, F1) :- compound(F), !, mapargs(remove_type_annotations, F, F1).
 
 ground_list([], [], S) :- ord_empty(S).
 ground_list([F|Rest], [FG|Grest], Result) :- ground_version(F, FG, GFG), ground_list(Rest, Grest, Arest), ord_union(GFG, Arest, Result).
@@ -247,10 +252,9 @@ check_status_arg(Status) :- nonvar(Status),
 
 %% We now use backtrackable types in Prolog, resetting declarations at the first push.
 %% Note that type declarations in Z3 can't be pushed and popped.
-
 %% We could allow different types on different branches if new declarations overwrite old ones without error.
 
-%% Note that z3_push(false, R) will still push false onto the solver.
+%% Note that z3_push(false, R) will still push "false" onto the solver.
 
 z3_push(F, Status) :-
     check_status_arg(Status),
@@ -261,12 +265,16 @@ z3_push(F, Status) :-
     (type_inference_global_backtrackable:assert_type(FG, bool) ->
          (
              get_type_inference_map(Assoc),
-             %% we only need to declare new symbols:
+             %% Only need to declare new symbols:
              exclude(>>({OldAssoc}/[X], get_assoc(X, OldAssoc, _Y)), Symbols, NewSymbols),
              %% writeln(compare(Symbols, NewSymbols)),
              declare_z3_types_for_symbols(NewSymbols, Assoc),
              push_solver(Solver),
-             internal_assert_and_check(Solver, FG, Status)
+             %% We now remove ":" terms from FG. Unfortunately, this can't be done by "ground_version", because
+             %% we use the ":" annotations in the type checking after variables are grounded (assert_type);
+             %% so we do two passes through the term.
+             remove_type_annotations(FG, FG_notypes),
+             internal_assert_and_check(Solver, FG_notypes, Status)
          )
     ;  (
         Status = l_type_error,

@@ -329,6 +329,13 @@ test(neq_incompatible, [fail]) :-
 test(neq_numeric) :-
     z3_make_solver(S), reset_declarations(M), z3_assert(M, S, a:bool <> b:real), z3_solver_check(S, l_true).
 
+% The C code does not handle <compound_term>:int annotations.
+% The types for functions should be declared separately, if needed.
+% The higher-level API, z3.pl, does handle this case.
 
+test(nested_fail, [fail]) :-
+    z3_make_solver(S),
+    reset_declarations(M),
+    z3_assert(M, S, f(a:int):int = 3).
 
 :- end_tests(foreign_tests).
