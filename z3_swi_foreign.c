@@ -1468,6 +1468,15 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
         result = Z3_mk_not(ctx, equality);
       }
     }
+    // between, inclusive (as in python):
+    else if (strcmp(name_string, "between") == 0) {
+      CHECK_ARITY(name_string, 3, arity);
+      Z3_ast conj1 = Z3_mk_ge(ctx, subterms[0], subterms[1]);
+      Z3_ast conj2 = Z3_mk_le(ctx, subterms[0], subterms[2]);
+      if (conj1 == NULL || conj2 == NULL) return(NULL);
+      Z3_ast conjuncts[2] = {conj1, conj2};
+      return Z3_mk_and(ctx, 2, conjuncts);
+    }
     else if (strcmp(name_string, "and") == 0 ) {result = Z3_mk_and(ctx, arity, subterms);}
     else if (strcmp(name_string, ",") == 0 ) {result = Z3_mk_and(ctx, arity, subterms);}
     else if (strcmp(name_string, "or") == 0 ) {result = Z3_mk_or(ctx, arity, subterms);}

@@ -63,7 +63,7 @@ signature(<=> , A, B) :- signature(iff, A, B).
 % Notation: "all(T)" means there can be an arbitrary number of arguments, all of type T.
 
 :- declare(=, [T, T], bool).
-% for more flexible arithmetic, eventually, perhaps:
+% for more flexible arithmetic:
 % :- declare(=, [bool, real], bool). % not allowed by Z3
 % :- declare(=, [bool, int], bool). % not allowed by Z3
 :- declare(=, [real, int], bool). % works in Z3
@@ -75,6 +75,12 @@ signature(<=> , A, B) :- signature(iff, A, B).
 :- declare(<>, [real, bool], bool).
 :- declare(<>, [bool, real], bool).
 :- declare(<>, [bool, int], bool).
+
+:- declare(between, [T, T, T], bool).
+:- declare(between, [int, real, real], bool).
+:- declare(between, [int, int, real], bool).
+:- declare(between, [int, real, int], bool).
+:- declare(between, [int, real, real], bool).
 
 :- declare(distinct, all(_T), bool).
 
@@ -140,6 +146,10 @@ signature(<=> , A, B) :- signature(iff, A, B).
 
 :- declare(atleast, allthen(bool, int), bool).
 :- declare(atmost, allthen(bool, int), bool).
+
+% TODO: allow a list as a single argument, add list(T) opion.
+% isoneof(x, v1, v2, ...) is expanded to (x = v1 or x = v2 or ...)k
+:- declare(isoneof, T, all(T)).
 
 sub_type(int, real).
 sub_type(bool, int).

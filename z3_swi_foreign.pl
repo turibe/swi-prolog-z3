@@ -56,7 +56,9 @@ z3_declare_function(Map, F, T) :- z3_declare_function(Map, F, T, _C).
 
 z3_model_map(M, Map) :- z3_model_functions(M, F),
                         z3_model_constants(M, C),
-                        Map = model{functions:F, constants:C}.
+                        sort(F, FS),
+                        sort(C, CS),
+                        Map = model{functions:FS, constants:CS}.
 
 
 % gets a Prolog term representing a model for the given solver S:

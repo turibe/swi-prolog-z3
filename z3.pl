@@ -73,11 +73,12 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
               ]).
 
 
-reset_z3_declaration_map :- nb_current(global_decl_map, M) -> z3_reset_declaration_map(M)
+reset_z3_declaration_map :- (nb_current(global_decl_map, M) -> z3_reset_declaration_map(M)
                                  ;
                                  ( z3_make_declaration_map(M),
                                    nb_setval(global_decl_map, M)
-                                 ).
+                                 )
+                             ).
 
 % The declaration map that lives in Z3
 get_z3_declaration_map(M) :- nb_getval(global_decl_map, M).
@@ -177,7 +178,10 @@ resolve_solver_depth(X, Scopes) :- X < Scopes,
                                    popn(Numpops).
 
 popn(Numpops) :- get_global_solver(S),
-                 z3_solver_pop(S, Numpops, _) -> true ; report("error popping Z3 solver\n").
+                 (  z3_solver_pop(S, Numpops, _)
+                 -> true
+                 ; report("error popping Z3 solver\n")
+                 ).
 
 %% user-visible:
 solver_scopes(N) :- resolve_solver_depth(_), raw_solver_scopes(N).
@@ -249,15 +253,21 @@ check_status_arg(Status) :- nonvar(Status),
                                 domain_error(L, Status)
                             )), !.
 
-
+expand_macros(F, R) :- functor(F, isoneof, _N), !,
+                       F =.. [isoneof | [X | Rest]],
+                       maplist({X}/[V,X=V]>>true, Rest, L),
+                       R =.. [or | L].
+expand_macros(X, X).
+                       
 %% We now use backtrackable types in Prolog, resetting declarations at the first push.
 %% Note that type declarations in Z3 can't be pushed and popped.
 %% We could allow different types on different branches if new declarations overwrite old ones without error.
 
 %% Note that z3_push(false, R) will still push "false" onto the solver.
 
-z3_push(F, Status) :-
+z3_push(Foriginal, Status) :-
     check_status_arg(Status),
+    expand_macros(Foriginal, F),
     (b_getval(solver_depth, 0) -> z3_reset_declarations ; true),
     get_type_inference_map(OldAssoc),
     %% report(status("asserting", F)),
@@ -363,7 +373,7 @@ z3_declare(F, lambda(Arglist, Range)) :- (var(F) -> type_error(nonvar, F) ; true
                                          get_z3_declaration_map(M),
                                          z3_declare_function(M, Fapp, Range).
 
-mk_uninterpreted(X) :- var(X) -> X = uninterpreted ; true.
+mk_uninterpreted(X) :- (var(X) -> X = uninterpreted ; true ).
 ground_arglist(L) :- maplist(mk_uninterpreted, L).
 
 %% Not used --- not incremental, declares everything in the map:
@@ -519,6 +529,10 @@ test(scopes, [true(((N1 == 1), (N2==2))) ] ) :-
     solver_scopes(0),
     z3_push(a:int=14), solver_scopes(N1), z3_push(b:int=a-5), solver_scopes(N2).
 
+
+test(between) :-
+    z3_push(between(x:int, 1, 4)), z3_push(between(x, 2, 3)), z3_is_implied(x = 3 or x = 2).
+
 :- end_tests(push_assert_tests).
 
 
@@ -555,17 +569,23 @@ test(attribute_model) :-
     assertion(member(a-13, M.constants)),
     assertion(member(b-81, M.constants)).
 
+
+test(isoneof) :-
+    z3_push(isoneof(x:int, a, b, c)),
+    z3_push(x <> a), z3_push(x <> c),
+    z3_is_implied(x = b).
+
 :- end_tests(attribute_tests).
 
 :- begin_tests(boolean_tests).
 
 test(bool_plus) :-
     z3_push((a:real) + (b:bool) = 3.0), z3_push(b), z3_model(M),
-    M.constants == [b-true, a-2].
+    M.constants == [a-2, b-true].
 
 test(bool_times) :-
     z3_push((a:real) * (b:bool) = 0.0), z3_push(a = 3.2), z3_model(M),
-    assertion(M.constants == [b-false, a-16/5]).
+    assertion(M.constants == [a-16/5, b-false]).
 
 test(more_arith) :-
     z3_push(a:bool + b:real = 1.0), z3_model(M1), z3_push(b < 1), z3_model(M2),    
