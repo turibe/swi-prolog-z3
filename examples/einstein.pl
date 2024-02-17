@@ -38,14 +38,14 @@ assertions(L) :-
     L = [
         distinct(yellowhouse:int, greenhouse, redhouse, bluehouse, whitehouse),
         distinct(norwegian:int, brit, swede, dane, german),
-        distinct(cats:pet, birds, horses, dogs, fish),
-        distinct(beer:drink, water, milk, coffee, tea),
-        distinct(dunhill:smoke, blends, prince, pallmall, bluemaster),
+        distinct(cats:pet_enum, birds, horses, dogs, fish),
+        distinct(beer:beverage_enum, water, milk, coffee, tea),
+        distinct(dunhill:smoke_enum, blends, prince, pallmall, bluemaster),
 
         distinct(owner(yellowhouse):int, owner(greenhouse), owner(redhouse), owner(bluehouse), owner(whitehouse)),
-        distinct(smokes(norwegian):smoke, smokes(brit), smokes(swede), smokes(dane), smokes(german)),
-        distinct(pet(norwegian):pet, pet(brit), pet(swede), pet(dane), pet(german)),
-        distinct(drinks(norwegian):drink, drinks(brit), drinks(swede), drinks(dane), drinks(german)),
+        distinct(smokes(norwegian):smoke_enum, smokes(brit), smokes(swede), smokes(dane), smokes(german)),
+        distinct(pet(norwegian):pet_enum, pet(brit), pet(swede), pet(dane), pet(german)),
+        distinct(drinks(norwegian):beverage_enum, drinks(brit), drinks(swede), drinks(dane), drinks(german)),
 
         %% The Brit lives in the red house
         owner(redhouse) = brit,
@@ -61,7 +61,7 @@ assertions(L) :-
         smokes(pallmallbirdperson) = pallmall and pet(pallmallbirdperson) = birds and between(pallmallbirdperson, 1, 5),
 
         %% The owner of the yellow house smokes Dunhill
-        owner(yellowhouse) = dunhillsmoker:int and smokes(dunhillsmoker) = dunhill and between(dunhillsmoker:int, 1, 5),
+        owner(yellowhouse) = dunhillsmoker:int and smokes(dunhillsmoker) = dunhill and between(dunhillsmoker, 1, 5),
         
         %% The green house’s owner drinks coffee
         drinks(owner(greenhouse)) = coffee,
@@ -120,7 +120,8 @@ basic_assertions(L) :- L = [
                                owner(redhouse) = redhouse,
                                owner(whitehouse) = whitehouse,
                                owner(yellowhouse) = yellowhouse,
-                               
+
+                               %% not needed if enums are used:
                                isoneof(pet(1), dogs, fish, horses, cats, birds),
                                isoneof(pet(2), dogs, fish, horses, cats, birds),
                                isoneof(pet(3), dogs, fish, horses, cats, birds),
@@ -137,6 +138,13 @@ basic_assertions(L) :- L = [
                                true ].
 
 all_assertions(L) :- assertions(A), basic_assertions(G), append(A, G, L).
+
+%% FIXME: things gets messed up if we execute this twice.
+declare_enums :-
+    z3_mk_enumeration_sort(pet_enum, [dogs,fish,horses,cats,birds], _),
+    z3_mk_enumeration_sort(beverage_enum, [beer, water, milk, coffee, tea], _),
+    z3_mk_enumeration_sort(smoke_enum, [pallmall, prince, blends, bluemaster, dunhill], _),
+    true.
 
 push_assertions(L) :- maplist(z3_push, L).
 %% push_assertions(L) :- F =.. [and | L], z3_push(F).

@@ -27,6 +27,7 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
               z3_eval/2,               % +Expression,-Result  Evals Expression in a current model, if the current solver is SAT.
               z3_is_consistent/1,      % +Formula  Succeeds if Formula is consistent with current solver/context. Fails if l_undet.
               z3_is_implied/1,         % +Formula  Succeeds if Formula is implied by current solver/context. Fails if l_undet.
+              z3_mk_enumeration_sort/3,
               z3_model/1,              % +ModelTerm  Gets a model if possible. Fails if not l_sat.
               z3_model_assoc/1,        % +ModelAssocTerm  A model that uses assoc lists (less readable).
               z3_push/1,               % +Formula   Pushes the formula, fails if status is l_false.
@@ -34,6 +35,9 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
               z3_push_and_print/1,     % +Formula   Convenience
               z3_push_and_print/2,     % +Formula,+Status  Convenience
               print_declarations/0,    % print declarations so far, or those used in the previous query (reset on a new push).
+              z3_get_enum_declarations_list/1,
+
+              z3_reset/0,      % resets everything, use sparingly
               
               op(750, xfy, and), % =, >, etc. are 700
               op(751, xfy, or),
@@ -60,6 +64,7 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
                   z3_free_solver/1,
                   z3_declare_function/3,
                   z3_make_solver/1,
+                  z3_mk_enumeration_sort/3,
                   z3_model_eval/5,
                   z3_model_map_for_solver/2,
                   z3_make_declaration_map/1,
@@ -69,7 +74,9 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
                   z3_solver_get_model/2,
                   z3_solver_pop/3,
                   z3_solver_push/2,
-                  z3_solver_scopes/2
+                  z3_solver_scopes/2,
+                  z3_reset_context/0,
+                  z3_get_enum_declarations_list/1
               ]).
 
 
@@ -78,15 +85,24 @@ reset_z3_declaration_map :- (nb_current(global_decl_map, M) -> z3_reset_declarat
                                  ( z3_make_declaration_map(M),
                                    nb_setval(global_decl_map, M)
                                  )
-                             ).
+                            ).
 
-% The declaration map that lives in Z3
+%% need a new map, old maps and solvers are invalidated:
+z3_reset :-
+    assertion(b_getval(solver_depth, 0)),
+    z3_reset_context,
+    z3_make_declaration_map(M),
+    nb_setval(global_decl_map, M),
+    z3_make_solver(S),
+    nb_setval(global_solver, S),
+    nb_setval(solver_depth, 0).
+
 get_z3_declaration_map(M) :- nb_getval(global_decl_map, M).
-
 
 % if solver push/pop and backtrackable type inference work as they should,
 % end-users don't need to call this:
-z3_reset_declarations :- get_z3_declaration_map(M), z3_reset_declaration_map(M).
+z3_reset_declarations :- get_z3_declaration_map(M),
+                         z3_reset_declaration_map(M).
 
 %% have a global variable, backtrackable, with the depth level.
 %% before the assert, check that variable, and pop the solver as many times as needed.
@@ -103,7 +119,24 @@ reset_globals :-
     reset_z3_declaration_map,
     reset_global_solver,
     reset_var_counts,
-    type_inference:initialize.
+    %% type_inference:initialize. %% what PL module is this?
+    type_inference_global_backtrackable:initialize_map.
+
+
+%% declare_enum(Pair) :- Pair = (div(F,0) - Type), !, type_inference_global_backtrackable:assert_type(F, Type).
+add_enums([], M, M).
+add_enums([Pair | Rest], Min, Mout) :-
+    Pair = (div(F,0) - Type),
+    type_inference:typecheck(F, Type, Min, Mnew),
+    add_enums(Rest, Mnew, Mout).
+
+%% Map for initializing type inference:
+enum_declarations_map(M) :-
+    z3_get_enum_declarations_list(L),
+    add_enums(L, t, M).
+
+initialize_enums :- enum_declarations_map(M),
+                    type_inference_global_backtrackable:initialize_map(M).
 
 reset_var_counts :- nb_setval(varcount, 0).
 

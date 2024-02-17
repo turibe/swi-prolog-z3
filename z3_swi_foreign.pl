@@ -20,6 +20,7 @@ It has no global variables except those in the C code.
               z3_make_solver/1,
               z3_make_declaration_map/1,
               z3_declaration_map_size/2,
+              z3_mk_enumeration_sort/3,
               z3_model_eval/5,             %% +decl_map, +model_pointer, +formula, +completion_flag, -value
               z3_model_map_for_solver/2,
               z3_reset_declaration_map/1,
@@ -30,6 +31,8 @@ It has no global variables except those in the C code.
               z3_solver_pop/3,
               z3_solver_push/2,
               z3_solver_scopes/2,
+              z3_reset_context/0, % invalidates solvers, declaration maps
+              z3_get_enum_declarations_list/1,
               op(750, xfy, and), % =, >, etc. are 700 ; Local to the module
               op(751, xfy, or),
               op(740, xfy, <>)
@@ -42,6 +45,10 @@ It has no global variables except those in the C code.
 
 reset_declarations(M) :- ground(M), z3_reset_declaration_map(M).
 reset_declarations(M) :- var(M), z3_make_declaration_map(M).
+
+z3_get_enum_declarations_list(L) :-
+    z3_get_enum_declarations(M),
+    z3_declaration_map_to_term(M,L).
 
 z3_print_declarations(M) :-
     z3_declarations_string(M, X), print_message(information, format(X, [])).
