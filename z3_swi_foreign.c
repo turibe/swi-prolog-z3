@@ -118,6 +118,7 @@ Z3_lbool solver_check_and_print(Z3_context ctx, Z3_solver s)
 
 
 typedef Z3_ast_map decl_map;
+typedef Z3_ast_map sort_map;
 
 // ***************************** GLOBAL VARIABLES ********************************************
 
@@ -129,6 +130,7 @@ typedef Z3_ast_map decl_map;
 functor_t pair_functor;
 
 Z3_context global_z3_context = NULL;
+sort_map global_sort_map = NULL;
 
 // Keeps around the declarations; not affected by push and pop:
 // declaration_map global_declaration_map = NULL;
@@ -159,7 +161,9 @@ void z3_swi_initialize() {
   BOOL_SORT = Z3_mk_bool_sort(global_z3_context);
   INT_SORT = Z3_mk_int_sort(global_z3_context);
   REAL_SORT = Z3_mk_real_sort(global_z3_context);
-  
+
+  global_sort_map = Z3_mk_ast_map(global_z3_context);
+  Z3_ast_map_inc_ref(global_z3_context, global_sort_map);
 }
 
 
@@ -174,7 +178,7 @@ foreign_t z3_make_declaration_map_foreign(term_t decl_map_term) {
     return FALSE;
   }
   Z3_context ctx = get_context();
-  decl_map declaration_map = Z3_mk_ast_map(ctx);
+  decl_map declaration_map = Z3_mk_ast_map(ctx);  
   Z3_ast_map_inc_ref(ctx, declaration_map);
   return PL_unify_pointer(decl_map_term, declaration_map);
 }
@@ -206,7 +210,7 @@ foreign_t z3_reset_declaration_map_foreign(term_t decl_map_term) {
   }
   Z3_ast_map_reset(ctx, declaration_map);
 
-  DEBUG("Cleared Z3  declaration map\n");
+  DEBUG("Cleared Z3 declaration map\n");
   return TRUE;
 }
 
@@ -379,14 +383,16 @@ foreign_t z3_model_eval_foreign(term_t dmap_term, term_t model_term, term_t term
 
 
 
-Z3_symbol mk_symbol(Z3_context ctx, term_t formula) {
+// Makes a Z3 symbol based on a Prolog term "pl_term":
 
-  const int term_type = PL_term_type(formula);
+Z3_symbol mk_symbol(Z3_context ctx, term_t pl_term) {
+
+  const int term_type = PL_term_type(pl_term);
 
   switch (term_type) {
   case PL_ATOM: {
     char *chars;
-    int res = PL_get_atom_chars(formula, &chars);
+    int res = PL_get_atom_chars(pl_term, &chars);
     if (!res) return NULL;
     DEBUG("mk_symbol got atom %s\n", chars);
     Z3_symbol s = Z3_mk_string_symbol(ctx, chars);
@@ -395,7 +401,7 @@ Z3_symbol mk_symbol(Z3_context ctx, term_t formula) {
   }
   case PL_VARIABLE: {
     char *chars;
-    int res = PL_get_chars(formula, &chars, CVT_WRITE);
+    int res = PL_get_chars(pl_term, &chars, CVT_WRITE);
     if (!res) return NULL;
     INFO("mk_symbol got variable %s\n", chars);
     Z3_symbol s = Z3_mk_string_symbol(ctx, chars);
@@ -405,7 +411,7 @@ Z3_symbol mk_symbol(Z3_context ctx, term_t formula) {
   case PL_STRING: {
     char *string;
     size_t len;
-    int res = PL_get_string_chars(formula, &string, &len);
+    int res = PL_get_string_chars(pl_term, &string, &len);
     if (!res) return NULL;
     Z3_symbol s = Z3_mk_string_symbol(ctx, string);
     return s;
@@ -413,16 +419,15 @@ Z3_symbol mk_symbol(Z3_context ctx, term_t formula) {
   }
   case PL_INTEGER: {
     long lval;
-    int res = PL_get_long(formula, &lval);
+    int res = PL_get_long(pl_term, &lval);
     if (!res) return NULL;
     Z3_symbol s = Z3_mk_int_symbol(ctx, lval);
     return s;
     break;
   }
   default: {
-    char *fchars;
-    int res = PL_get_chars(formula, &fchars, CVT_WRITE);
-    if (!res) return NULL;
+    char *fchars = NULL;
+    int res = PL_get_chars(pl_term, &fchars, CVT_WRITE);
     ERROR("error making symbol %s, term type is %d\n", fchars, term_type);
     return NULL;
   }
@@ -430,6 +435,49 @@ Z3_symbol mk_symbol(Z3_context ctx, term_t formula) {
 
   return NULL;
 }
+
+
+// z3_mk_enumeration_sort can only be called once for a given name, per context.
+// resulting Z3_sort can be used by mk_var(ctx, varname, sort) or mk_func_decl
+
+foreign_t z3_mk_enumeration_sort_foreign(term_t name_term, term_t names, term_t result) {
+  Z3_context ctx = get_context();
+  Z3_symbol name = mk_symbol(ctx, name_term);
+
+  char * name_string;
+  int res = PL_get_atom_chars(name_term, &name_string);
+  if (!res) {
+    return res;
+  }
+  size_t n;
+  PL_skip_list(names, 0, &n);
+  INFO("Names has length %lu\n", n);
+  Z3_symbol *enum_names = malloc(sizeof(Z3_symbol) * n);
+
+  // here we go through the names list and put them in enum_names; see https://www.swi-prolog.org/pldoc/man?section=foreign-read-list
+  term_t head = PL_new_term_ref();   // the elements 
+  term_t tail = PL_copy_term_ref(names); // copy (we modify tail)
+  int rc = TRUE;
+  int i = 0;
+  while( rc && PL_get_list_ex(tail, head, tail) )
+    {
+      Z3_symbol a = mk_symbol(ctx, head);      
+      enum_names[i] = a;
+      i++;
+  }
+  
+  Z3_func_decl *enum_consts  = malloc(sizeof(Z3_func_decl) * n);
+  Z3_func_decl *enum_testers  = malloc(sizeof(Z3_func_decl) * n);
+  Z3_sort s = Z3_mk_enumeration_sort(ctx, name, n, enum_names, enum_consts, enum_testers);
+  // NEXT: we should remember the enum_names so that Prolog atoms can be matched to them.
+  // less important, the enum_testers can be used to define is_XXX unary predicates.
+
+  Z3_ast key = mk_ast_key(ctx, name_string, 0);
+  Z3_ast_map_insert(ctx, global_sort_map, key, (Z3_ast) s);
+  
+  return PL_unify_pointer(result, s);
+}
+
 
 /*
   For debugging:
@@ -826,7 +874,7 @@ Z3_func_decl mk_func_decl(Z3_context ctx, decl_map declaration_map, const term_t
    }
 
    free(domain);
-   return(result);
+   return result;
 }
 
 
@@ -1078,7 +1126,16 @@ foreign_t z3_model_constants_foreign(term_t model_term, term_t list) {
   rval = model_constants(ctx, model, list);
   Z3_model_dec_ref(ctx, model);
   return rval;
-}    
+}
+
+/*
+int contains(char *str, char *target) {
+  int l1 = strlen(str);
+  int lt = strlen(target);
+  if (lt > l1) return(FALSE);
+  return (strstr(str, target) != NULL);
+}
+*/
 
 Z3_sort mk_sort(Z3_context ctx, term_t expression) {
   switch (PL_term_type(expression)) {
@@ -1095,13 +1152,26 @@ Z3_sort mk_sort(Z3_context ctx, term_t expression) {
     }
     if (strcmp(name_string, "int") == 0 || strcmp(name_string, "integer") == 0) {
       DEBUG("returning int sort\n");
-      // return Z3_mk_int_sort(ctx);
       return INT_SORT;
     }
     if (strcmp(name_string, "float") == 0 || strcmp(name_string, "real") == 0 || strcmp(name_string, "double") == 0) {
       DEBUG("returning sort for float/real/double\n");
       return REAL_SORT;  // not the same as a floating point number in Z3
       // return Z3_mk_fpa_sort_double(ctx);
+    }
+    // FIXME: here we'd want to check if there's an enumeration sort for it...
+    // for now, just assume there's a previous declaration, if the name includes enum:
+    if (strstr(name_string, "enum") != NULL) {
+      DEBUG("looking for enum declaration for %s\n", name_string);
+      Z3_ast key = mk_ast_key(ctx, name_string, 0);
+      if (!Z3_ast_map_contains(ctx, global_sort_map, key)) {
+          DEBUG("Did not find sort %s in map\n", name_string);
+          // will make uninterpreted
+      }
+      else {  
+        Z3_sort sort = (Z3_sort) Z3_ast_map_find(ctx, global_sort_map, key);
+        return sort;
+      }
     }
     Z3_symbol uninterpreted_name = Z3_mk_string_symbol(ctx, name_string);
     DEBUG("Making uninterpreted sort for %s\n", name_string);
@@ -1175,6 +1245,7 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
   case PL_VARIABLE:
     // It could be nice to look at the attributes, if any, and use them instead of the variable,
     // but the foreign interface does not offer methods for doing so.
+    ERROR("Can't call term_to_ast on non-ground terms\n");
     return NULL;
   case PL_ATOM: {
     int bval;
@@ -1575,6 +1646,8 @@ install_t install()
   PRED("z3_free_declaration_map", 1, z3_free_declaration_map_foreign, 0); // +decl_map
   
   PRED("z3_assert", 3, z3_assert_foreign, 0); // +decl_map, +solver, +formula
+
+  PRED("z3_mk_enumeration_sort", 3, z3_mk_enumeration_sort_foreign, 0);
 
   // for debugging and unit tests, testing round-trips between Prolog and Z3:
   PRED("term_to_z3_ast", 3, term_to_z3_ast_foreign, 0); // +decl_map, +formula, -z3_ast_pointer

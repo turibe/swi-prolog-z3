@@ -253,6 +253,7 @@ check_status_arg(Status) :- nonvar(Status),
                                 domain_error(L, Status)
                             )), !.
 
+%% TODO: map "alldifferent" to "distinct".
 expand_macros(F, R) :- functor(F, isoneof, _N), !,
                        F =.. [isoneof | [X | Rest]],
                        maplist({X}/[V,X=V]>>true, Rest, L),

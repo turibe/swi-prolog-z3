@@ -32,7 +32,7 @@ Now to solve, tell me who owns the fish?
 
 %% functions people->X : pet, owns, drinks, smokes
 
-%% TODO: add support for Z3_mk_finite_domain_sort, useful here.
+%% TODO: add support for Z3_mk_enumeration_sort, useful here.
 
 assertions(L) :-
     L = [
