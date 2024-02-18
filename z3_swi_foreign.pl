@@ -13,11 +13,11 @@ It has no global variables except those in the C code.
               z3_assert/2,
               z3_context/1,
               z3_declarations_string/1,
-              z3_free_model/1,
-              z3_free_solver/1,
-              z3_declare_function/2,
               z3_make_solver/1,
-              z3_mk_enumeration_sort/2,
+              z3_free_solver/1,
+              z3_free_model/1,
+              z3_declare_function/2,
+              z3_declare_enum/2,
               z3_model_eval/4,             %% +model_pointer, +formula, +completion_flag, -value
               z3_model_map_for_solver/2,
               z3_reset_declarations/0,     %% does not invalidate solvers
@@ -307,7 +307,7 @@ test(nested_fail, [fail, setup(z3_make_solver(S)), cleanup(z3_free_solver(S))]) 
 
 test(enums, [setup((z3_reset_context, z3_make_solver(S))),
              cleanup((z3_free_solver(S), z3_reset_context))] ) :-
-    z3_mk_enumeration_sort(color, [black, white, red]),
+    z3_declare_enum(color, [black, white, red]),
     z3_assert(S, and(a:color <> black, a:color <> white)),
     z3_solver_check(S, l_true),
     z3_assert(S, a <> red),

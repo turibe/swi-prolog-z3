@@ -1,4 +1,4 @@
-%%% -*- Mode: Prolog; Module: z3; -A*-
+%%% -*- Mode: Prolog; Module: einstein; -A*-
 
 
 :- module(einstein, [
@@ -39,8 +39,6 @@ Now to solve, tell me who owns the fish?
 :- use_module(z3).
 
 %% functions people->X : pet, owns, drinks, smokes
-
-%% TODO: add support for Z3_mk_enumeration_sort, useful here.
 
 assertions(L) :-
     L = [
@@ -147,21 +145,20 @@ basic_assertions(L) :- L = [
 
 all_assertions(L) :- assertions(A), basic_assertions(G), append(A, G, L).
 
-%% FIXME: things gets messed up if we execute this twice.
 declare_enums :-
-    z3_add_enumeration_sort(pet_enum, [dogs,fish,horses,cats,birds]),
-    z3_add_enumeration_sort(beverage_enum, [beer, water, milk, coffee, tea]),
-    z3_add_enumeration_sort(smoke_enum, [pallmall, prince, blends, bluemaster, dunhill] ).
+    z3:z3_declare_enum(pet_enum, [dogs,fish,horses,cats,birds]),
+    z3:z3_declare_enum(beverage_enum, [beer, water, milk, coffee, tea]),
+    z3:z3_declare_enum(smoke_enum, [pallmall, prince, blends, bluemaster, dunhill] ).
 
 push_assertions(L) :- maplist(z3_push, L).
 %% push_assertions(L) :- F =.. [and | L], z3_push(F).
 
 print_model(M) :- print_term(M, [right_margin(10)] ).
 
-assert_and_print(M) :- all_assertions(All), push_assertions(All), z3_model(M), print_model(M).
+assert_puzzle(M) :- all_assertions(All), push_assertions(All), z3_model(M).
 
-doit(M) :- z3:reset_globals, assert_and_print(M).
-doit_enums(M) :- z3:reset_globals, declare_enums, assert_and_print(M).
+doit(M) :- z3:reset_globals, assert_puzzle(M), print_model(M).
+doit_enums(M) :- z3:reset_globals, declare_enums, assert_puzzle(M), print_model(M).
 
 implies_test1 :- all_assertions(A), push_assertions(A),
                  z3_is_implied(norwegian = 1 and dane = 2 and brit = 3 and german = 4 and swede = 5).
@@ -196,8 +193,16 @@ alternate_drinks_order(M) :- drinks_order(Order), counterexample(Order, M).
 
 :- begin_tests(einstein_tests).
 
-test(einstein1) :- doit(M).
+test(einstein1) :-
+    z3:reset_globals,
+    assert_puzzle(M),
+    assertion(member(bluehouse - 2, M.constants)),
+    assertion(member(german - 4, M.constants)).
 
-test(einstein2) :- doit_enums(M).
+test(einstein2) :-
+    z3:reset_globals,
+    declare_enums,
+    assert_puzzle(M),
+    assertion(member(pet(4) - fish, M.functions)).
 
 :- end_tests(einstein_tests).

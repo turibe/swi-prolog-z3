@@ -352,7 +352,7 @@ foreign_t z3_make_solver_foreign(term_t solver_term) {
 
 /**
    Frees the solver, which must be an instantiated solver object.
-   In Prolog, can use setup_call_cleanup to do this automatically.
+   In Prolog, we can use setup_call_cleanup to do this automatically.
 **/
 
 foreign_t z3_free_solver_foreign(term_t u) {
@@ -382,6 +382,7 @@ foreign_t z3_free_model_foreign(term_t u) {
 /*
   Gets a model object from the solver; "z3_solver_check" must have been run on the solver first.
   Otherwise, an error is reported and we fail.
+  Used for model_eval in PL; otherwise, use 
 */
 
 foreign_t z3_solver_get_model_foreign(term_t solver_term, term_t model_term) {
@@ -505,8 +506,10 @@ foreign_t z3_declaration_map_to_term(decl_map declaration_map, term_t result) {
     
     Z3_sort sort = Z3_get_range(ctx, value);
     Z3_symbol sname = Z3_get_sort_name(ctx, sort);
-    Z3_string sname_string = Z3_get_symbol_string(ctx, sname);
-    PL_put_atom_chars(vterm, sname_string);
+    {
+      Z3_string sname_string = Z3_get_symbol_string(ctx, sname);
+      PL_put_atom_chars(vterm, sname_string);
+    }
 
     // TODO: convert entire term on the lhs, in general.
 
@@ -532,14 +535,13 @@ foreign_t z3_get_declarations_foreign(term_t result) {
 }
 
 
-// z3_mk_enumeration_sort can only be called once for a given name, per context.
-// resulting Z3_sort can be used by mk_var(ctx, varname, sort) or mk_func_decl
-
+// Declare enumerations:
+// can only be called once for a given enum name, per context.
+// The resulting Z3_sort can be used by mk_var(ctx, varname, sort) or mk_func_decl.
 // enums are accumulated in global_context->enum_declarations.
-// Should be the responsability of this code to use them?
 
 // +atom, +list
-foreign_t z3_mk_enumeration_sort_foreign(term_t sort_name_term, term_t enum_names_list) {
+foreign_t z3_declare_enum_foreign(term_t sort_name_term, term_t enum_names_list) {
   Z3_context ctx = get_context();
   const Z3_symbol sort_name = mk_symbol(ctx, sort_name_term);
 
@@ -719,9 +721,12 @@ foreign_t z3_ast_to_term_internal(const Z3_context ctx, Z3_ast ast, term_t term)
     }
     Z3_func_decl decl = Z3_get_app_decl(ctx, app);
     Z3_symbol symbol = Z3_get_decl_name(ctx, decl);
-    Z3_string str = Z3_get_symbol_string(ctx, symbol);
     term_t t = PL_new_term_ref();
-    functor_t func = PL_new_functor(PL_new_atom(str), arity);
+    functor_t func;
+    {
+      Z3_string str = Z3_get_symbol_string(ctx, symbol);
+      func = PL_new_functor(PL_new_atom(str), arity);
+    }
     if (!PL_cons_functor_v(t, func, subterms)) {
       return FALSE;
     }
@@ -1099,10 +1104,12 @@ foreign_t model_functions(Z3_context ctx, Z3_model m, term_t list) {
       }
 
       // NEXT: Use PL_put_dict to make a map directly.
-
-      const Z3_string function_name = Z3_get_symbol_string(ctx, symbol);
-      DEBUG("Making func using %s\n", function_name);
-      functor_t func = PL_new_functor(PL_new_atom(function_name), arity);
+      functor_t func;
+      {
+        const Z3_string function_name = Z3_get_symbol_string(ctx, symbol);
+        DEBUG("Making func using %s\n", function_name);
+        func = PL_new_functor(PL_new_atom(function_name), arity);
+      }
       if (!PL_cons_functor_v(lhs, func, subterms)) {
         return FALSE;
       }
@@ -1145,9 +1152,11 @@ foreign_t model_functions(Z3_context ctx, Z3_model m, term_t list) {
     term_t fname_term = PL_new_term_ref();
     term_t arity_term = PL_new_term_ref();
     term_t fname_arity_term = PL_new_term_ref();
-    const Z3_string function_name = Z3_get_symbol_string(ctx, symbol);
-    int res = PL_put_atom_chars(fname_term, function_name);
-    if (!res) return res;
+    {
+      const Z3_string function_name = Z3_get_symbol_string(ctx, symbol);
+      int res = PL_put_atom_chars(fname_term, function_name);
+      if (!res) return res;
+    }
     if (!PL_put_integer(arity_term, arity)) {
       return FALSE;
     }
@@ -1158,7 +1167,7 @@ foreign_t model_functions(Z3_context ctx, Z3_model m, term_t list) {
 
     // else_term is a pair " F/N-else ":
     term_t else_singleton = PL_new_term_ref();
-    res = PL_put_atom_chars(else_singleton, "else");
+    int res = PL_put_atom_chars(else_singleton, "else");
     if (!res) return res;
     if (!PL_cons_functor(else_term, pair_functor, fname_arity_term, else_singleton)) {
       return FALSE;
@@ -1773,13 +1782,8 @@ install_t install()
   // make a new solver:
   PRED("z3_make_solver", 1, z3_make_solver_foreign, 0); // -solver
   PRED("z3_free_solver", 1, z3_free_solver_foreign, 0); // +solver
-  
-  // PRED("z3_make_declaration_map", 1, z3_make_declaration_map_foreign, 0); // -decl_map
-  // PRED("z3_free_declaration_map", 1, z3_free_declaration_map_foreign, 0); // +decl_map
-  
+    
   PRED("z3_assert", 2, z3_assert_foreign, 0); // +decl_map, +solver, +formula
-
-  PRED("z3_mk_enumeration_sort", 2, z3_mk_enumeration_sort_foreign, 0);
 
   // for debugging and unit tests, testing round-trips between Prolog and Z3:
   PRED("term_to_z3_ast", 2, term_to_z3_ast_foreign, 0); // +formula, -z3_ast_pointer
@@ -1788,19 +1792,14 @@ install_t install()
   PRED("z3_symbol", 2, z3_symbol_foreign, 0); // +formula, -symbol_pointer
   
   PRED("z3_declare_function", 3, z3_declare_function_foreign, 0); // +pl_term, +range_atom, -declaration_pointer
-
-  PRED("z3_solver_push", 2, z3_solver_push_foreign, 0); // +solver, -num_scopes
+  PRED("z3_declare_enum", 2, z3_declare_enum_foreign, 0);
   
+  PRED("z3_solver_push", 2, z3_solver_push_foreign, 0); // +solver, -num_scopes  
   PRED("z3_solver_pop", 3, z3_solver_pop_foreign, 0); // +solver, +numpops, -num_scopes
   
   PRED("z3_solver_scopes", 2, z3_solver_scopes_foreign, 0); // +solver, -num_scopes):
-
   PRED("z3_solver_check", 2, z3_solver_check_foreign, 0); // +solver, -status
   PRED("z3_solver_check_and_print", 2, z3_solver_check_and_print_foreign, 0); // +solver, -status
-  
-  PRED("z3_declarations_string", 1, z3_declarations_string_foreign, 0); // -string
-  
-  // PRED("z3_declaration_map_size", 2, z3_declaration_map_size_foreign, 0); // +decl_map, -size_int
   
   PRED("z3_solver_get_model", 2, z3_solver_get_model_foreign, 0); // +solver, -model_pointer
   PRED("z3_model_eval", 4, z3_model_eval_foreign, 0); // +model_pointer, +formula, +completion_flag, -value
@@ -1812,11 +1811,11 @@ install_t install()
   PRED("z3_model_functions", 2, z3_model_functions_foreign, 0); // +model_pointer, -functions_term
   PRED("z3_model_constants", 2, z3_model_constants_foreign, 0); // +model_pointer, -constants_term
 
-  PRED("z3_reset_context", 0, z3_reset_context_foreign, 0); // clears everything, use sparingly
-  
-  PRED("z3_reset_enums", 0, z3_reset_enums_foreign, 0);
+  PRED("z3_reset_context", 0, z3_reset_context_foreign, 0); // clears everything, use sparingly  
+  PRED("z3_reset_enums", 0, z3_reset_enums_foreign, 0); // resets only enums
   PRED("z3_reset_declarations", 0, z3_reset_declarations_foreign, 0); // clears declarations, including enums, keeps Z3 context
   PRED("z3_get_enum_declarations", 1, z3_get_enum_declarations_foreign, 0); // -term
   PRED("z3_get_declarations", 1, z3_get_declarations_foreign, 0); // -term
-
+  PRED("z3_declarations_string", 1, z3_declarations_string_foreign, 0); // -string
+  
 }

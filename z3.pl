@@ -27,7 +27,7 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
               z3_eval/2,               % +Expression,-Result  Evals Expression in a current model, if the current solver is SAT.
               z3_is_consistent/1,      % +Formula  Succeeds if Formula is consistent with current solver/context. Fails if l_undet.
               z3_is_implied/1,         % +Formula  Succeeds if Formula is implied by current solver/context. Fails if l_undet.
-              z3_add_enumeration_sort/2,
+              z3_declare_enum/2,
               z3_model/1,              % +ModelTerm  Gets a model if possible. Fails if not l_sat.
               z3_model_assoc/1,        % +ModelAssocTerm  A model that uses assoc lists (less readable).
               z3_push/1,               % +Formula   Pushes the formula, fails if status is l_false.
@@ -62,7 +62,7 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
                   z3_free_solver/1,
                   z3_declare_function/2,
                   z3_make_solver/1,
-                  z3_mk_enumeration_sort/2,
+                  %% z3_declare_enum/2, %% override it here
                   z3_model_eval/4,
                   z3_model_map_for_solver/2,
                   z3_reset_declarations/0,
@@ -73,6 +73,7 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
                   z3_solver_push/2,
                   z3_solver_scopes/2,
                   z3_reset_context/0, %% cannot be called directly, use this module's z3_reset instead
+                  z3_get_declarations/1,
                   z3_get_enum_declarations/1
               ]).
 
@@ -107,7 +108,6 @@ reset_globals :-
     type_inference_global_backtrackable:initialize_map.
 
 
-%% declare_enum(Pair) :- Pair = (div(F,0) - Type), !, type_inference_global_backtrackable:assert_type(F, Type).
 add_enums([], M, M).
 add_enums([Pair | Rest], Min, Mout) :-
     Pair = (div(F,0) - Type),
@@ -308,9 +308,12 @@ z3_push(Foriginal, Status) :-
     )
     ).
 
-z3_add_enumeration_sort(Name, Values) :-
+%% have to z3_push(true) so that the enums are not wiped at the first z3_push.
+%% (want to start fresh each time at this API)
+
+z3_declare_enum(Name, Values) :-
     z3_push(true),
-    z3_mk_enumeration_sort(Name, Values).
+    z3_swi_foreign:z3_declare_enum(Name, Values).
 
 
 %% z3_push/1 fails if solver reports inconsistency or type error.
@@ -673,7 +676,7 @@ test(nested_uninterpreted) :-
 :- begin_tests(enum_tests, [setup(z3_reset), cleanup(z3_reset)]).
 
 test(enums_basic) :-
-    z3_add_enumeration_sort(fruit, [apple, banana, pear]),
+    z3_declare_enum(fruit, [apple, banana, pear]),
     z3_push(x:fruit <> pear),
     z3_is_implied(or(x = banana or x = apple)),
     z3_push(x <> apple),
