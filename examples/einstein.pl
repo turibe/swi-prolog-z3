@@ -1,5 +1,12 @@
 %%% -*- Mode: Prolog; Module: z3; -A*-
 
+
+:- module(einstein, [
+              doit/1,
+              declare_enums/0
+              ]).
+              
+
 %% The so-called "Einstein puzzle":
 %% From, e.g., https://www.freecodecamp.org/news/einsteins-riddle/
 /****
@@ -141,9 +148,9 @@ all_assertions(L) :- assertions(A), basic_assertions(G), append(A, G, L).
 
 %% FIXME: things gets messed up if we execute this twice.
 declare_enums :-
-    z3_mk_enumeration_sort(pet_enum, [dogs,fish,horses,cats,birds], _),
-    z3_mk_enumeration_sort(beverage_enum, [beer, water, milk, coffee, tea], _),
-    z3_mk_enumeration_sort(smoke_enum, [pallmall, prince, blends, bluemaster, dunhill], _),
+    z3_mk_enumeration_sort(pet_enum, [dogs,fish,horses,cats,birds]),
+    z3_mk_enumeration_sort(beverage_enum, [beer, water, milk, coffee, tea]),
+    z3_mk_enumeration_sort(smoke_enum, [pallmall, prince, blends, bluemaster, dunhill] ),
     true.
 
 push_assertions(L) :- maplist(z3_push, L).
@@ -158,11 +165,9 @@ doit(M) :- doit0(M), print_model(M).
 implies_test1 :- all_assertions(A), push_assertions(A),
                  z3_is_implied(norwegian = 1 and dane = 2 and brit = 3 and german = 4 and swede = 5).
 
-
-house_order(F) :- F = (yellowhouse = 1 and bluehouse = 2 and redhouse = 3 and greenhouse = 4 and whitehouse = 5).
-
 implies_formula(F) :- all_assertions(A), push_assertions(A), z3_is_implied(F).
 
+house_order(F) :- F = (yellowhouse = 1 and bluehouse = 2 and redhouse = 3 and greenhouse = 4 and whitehouse = 5).
 implies_house_order :- house_order(F), implies_formula(F).
 
 %% fails, so house order is implied:

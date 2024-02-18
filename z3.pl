@@ -27,7 +27,7 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
               z3_eval/2,               % +Expression,-Result  Evals Expression in a current model, if the current solver is SAT.
               z3_is_consistent/1,      % +Formula  Succeeds if Formula is consistent with current solver/context. Fails if l_undet.
               z3_is_implied/1,         % +Formula  Succeeds if Formula is implied by current solver/context. Fails if l_undet.
-              z3_mk_enumeration_sort/3,
+              z3_mk_enumeration_sort/2,
               z3_model/1,              % +ModelTerm  Gets a model if possible. Fails if not l_sat.
               z3_model_assoc/1,        % +ModelAssocTerm  A model that uses assoc lists (less readable).
               z3_push/1,               % +Formula   Pushes the formula, fails if status is l_false.
@@ -35,7 +35,6 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
               z3_push_and_print/1,     % +Formula   Convenience
               z3_push_and_print/2,     % +Formula,+Status  Convenience
               print_declarations/0,    % print declarations so far, or those used in the previous query (reset on a new push).
-              z3_get_enum_declarations_list/1,
 
               z3_reset/0,      % resets everything, use sparingly
               
@@ -57,52 +56,35 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
 :- use_module(library(ordsets)).
 
 :- use_module(z3_swi_foreign, [
-                  z3_assert/3,
-                  z3_declarations_string/2,
-                  z3_declaration_map_size/2,
+                  z3_assert/2,
+                  z3_declarations_string/1,
                   z3_free_model/1,
                   z3_free_solver/1,
-                  z3_declare_function/3,
+                  z3_declare_function/2,
                   z3_make_solver/1,
-                  z3_mk_enumeration_sort/3,
-                  z3_model_eval/5,
+                  z3_mk_enumeration_sort/2,
+                  z3_model_eval/4,
                   z3_model_map_for_solver/2,
-                  z3_make_declaration_map/1,
-                  z3_reset_declaration_map/1,
+                  z3_reset_declarations/0,
                   z3_solver_check/2,
                   z3_solver_check_and_print/2,
                   z3_solver_get_model/2,
                   z3_solver_pop/3,
                   z3_solver_push/2,
                   z3_solver_scopes/2,
-                  z3_reset_context/0,
-                  z3_get_enum_declarations_list/1
+                  z3_reset_context/0, %% cannot be called directly, use this module's z3_reset instead
+                  z3_get_enum_declarations/1
               ]).
 
 
-reset_z3_declaration_map :- (nb_current(global_decl_map, M) -> z3_reset_declaration_map(M)
-                                 ;
-                                 ( z3_make_declaration_map(M),
-                                   nb_setval(global_decl_map, M)
-                                 )
-                            ).
-
-%% need a new map, old maps and solvers are invalidated:
+%% old maps and solvers are invalidated:
 z3_reset :-
-    assertion(b_getval(solver_depth, 0)),
+    %% assertion(b_getval(solver_depth, 0)),
     z3_reset_context,
-    z3_make_declaration_map(M),
-    nb_setval(global_decl_map, M),
     z3_make_solver(S),
     nb_setval(global_solver, S),
     nb_setval(solver_depth, 0).
 
-get_z3_declaration_map(M) :- nb_getval(global_decl_map, M).
-
-% if solver push/pop and backtrackable type inference work as they should,
-% end-users don't need to call this:
-z3_reset_declarations :- get_z3_declaration_map(M),
-                         z3_reset_declaration_map(M).
 
 %% have a global variable, backtrackable, with the depth level.
 %% before the assert, check that variable, and pop the solver as many times as needed.
@@ -116,10 +98,11 @@ indent :- assert_depth(N),
           forall(between(1, N, _X), (print(---), print(N))).
 
 reset_globals :-
-    reset_z3_declaration_map,
+    z3_reset,
+    z3_reset_declarations,
     reset_global_solver,
     reset_var_counts,
-    %% type_inference:initialize. %% what PL module is this?
+    %% type_inference:initialize. %% name clash! what PL module is this? undocumented?
     type_inference_global_backtrackable:initialize_map.
 
 
@@ -132,11 +115,8 @@ add_enums([Pair | Rest], Min, Mout) :-
 
 %% Map for initializing type inference:
 enum_declarations_map(M) :-
-    z3_get_enum_declarations_list(L),
+    z3_get_enum_declarations(L),
     add_enums(L, t, M).
-
-initialize_enums :- enum_declarations_map(M),
-                    type_inference_global_backtrackable:initialize_map(M).
 
 reset_var_counts :- nb_setval(varcount, 0).
 
@@ -196,7 +176,7 @@ push_solver(S) :- get_global_solver(S),
 
 raw_solver_scopes(N) :- get_global_solver(S), z3_solver_scopes(S,N).
 
-%% Pops the Z3 context to match the PL solver_depth:
+%% Pops the Z3 solver to match the PL solver_depth:
 resolve_solver_depth(X) :- b_getval(solver_depth, X),
                            raw_solver_scopes(N),
                            resolve_solver_depth(X, N).
@@ -222,8 +202,7 @@ solver_scopes(N) :- resolve_solver_depth(_), raw_solver_scopes(N).
 % should not be used directly. Types in Formula could clash with previously defined types,
 % so should use z3_push. Also the matter of push and pop.
 internal_assert_and_check(Solver, Formula, Status) :-
-    get_z3_declaration_map(Map),
-    z3_assert(Map, Solver, Formula),
+    z3_assert(Solver, Formula),
     z3_solver_check(Solver, Status).
 
 z3_check(Status) :-
@@ -302,7 +281,7 @@ expand_macros(X, X).
 z3_push(Foriginal, Status) :-
     check_status_arg(Status),
     expand_macros(Foriginal, F),
-    (b_getval(solver_depth, 0) -> z3_reset_declarations ; true),
+    (b_getval(solver_depth, 0) -> z3_reset_declarations ; true), %% clears enums too
     get_type_inference_map(OldAssoc),
     %% report(status("asserting", F)),
     ground_version(F, FG, Symbols),
@@ -328,6 +307,10 @@ z3_push(Foriginal, Status) :-
     )
     ).
 
+z3_add_enumeration_sort(Name, Values) :-
+    z3_push(true),
+    z3_mk_enumeration_sort(Name, Values).
+
 
 %% z3_push/1 fails if solver reports inconsistency or type error.
 %% l_type_error is the only one that does not push onto the solver.
@@ -345,17 +328,16 @@ declare_z3_types_for_symbols([X|Rest], M) :-
     declare_z3_types_for_symbols(Rest, M).
 
 
-print_declarations :- get_z3_declaration_map(M), z3_declarations_string(M, S), current_output(Out), write(Out, S).
+print_declarations :- z3_declarations_string(S), current_output(Out), write(Out, S).
 
 z3_eval(Expression, Completion, Result) :-  \+ is_list(Expression),
                                 get_global_solver(S),
-                                get_z3_declaration_map(Map),
                                 z3_solver_check(S, Status),
                                 Status == l_true,
                                 replace_var_attributes(Expression, E1),
                                 setup_call_cleanup(
                                     z3_solver_get_model(S, Model),
-                                    z3_swi_foreign:z3_model_eval(Map, Model, E1, Completion, Result),
+                                    z3_swi_foreign:z3_model_eval(Model, E1, Completion, Result),
                                     z3_free_model(Model)
                                 ).
 
@@ -391,12 +373,10 @@ z3_declare(F, T) :- var(F), !,
 z3_declare(F, int) :- integer(F), !, true.
 z3_declare(F, real) :- float(F), !, true.
 z3_declare(F, T) :- atom(T), !,
-                    get_z3_declaration_map(M),
-                    z3_declare_function(M, F, T).
+                    z3_declare_function(F, T).
 z3_declare(F, T) :- var(T), !,
                     T = uninterpreted,
-                    get_z3_declaration_map(M),
-                    z3_declare_function(M, F, T).
+                    z3_declare_function(F, T).
 z3_declare(F, lambda(Arglist, Range)) :- (var(F) -> type_error(nonvar, F) ; true), !,
                                          F = F1/N,
                                          length(Arglist, Len),
@@ -404,24 +384,10 @@ z3_declare(F, lambda(Arglist, Range)) :- (var(F) -> type_error(nonvar, F) ; true
                                          ground_arglist(Arglist),
                                          Fapp =.. [F1|Arglist],
                                          (var(Range) -> Range = uninterpreted ; true), !,
-                                         get_z3_declaration_map(M),
-                                         z3_declare_function(M, Fapp, Range).
+                                         z3_declare_function(Fapp, Range).
 
 mk_uninterpreted(X) :- (var(X) -> X = uninterpreted ; true ).
 ground_arglist(L) :- maplist(mk_uninterpreted, L).
-
-%% Not used --- not incremental, declares everything in the map:
-%% %% typecheck_and_declare/2, % +Formula,-Assoc  : Typechecks Formula, declares types, and returns new Assoc
-%% typecheck_and_declare(Formulas, Assoc) :-
-%%     assert_formula_list_types(Formulas), !, %% updates the global (backtrackable) type map
-%%     get_type_inference_map(Assoc),
-%%     assoc_to_list(Assoc, L),
-%%     declare_type_list(L).                   %% updates the Z3 (C) internal map
-
-%% %% declare_type_list/1,     % +List of Term-Type or Term:Type pairs
-%% declare_type_list([]).
-%% declare_type_list([A-B|R]) :- z3_declare(A, B), declare_type_list(R).
-%% declare_type_list([A:B|R]) :- z3_declare(A, B), declare_type_list(R).
 
 
 internal_assert_and_check_list(Solver, List, Status) :-
@@ -459,7 +425,7 @@ z3_is_implied(F) :- z3_push(not(F), Status),
 %%%%%%%%%%%%%%%%%%%%%%%%%% unit tests %%%%%%%%%%%%%%%%%
 
 
-:- begin_tests(push_assert_tests).
+:- begin_tests(push_assert_tests, [setup(reset_globals)]).
 
 test_formulas(Formulas) :-
     Formulas = [foo(a) = b+c,
@@ -479,6 +445,7 @@ check_test_formulas(Formulas, R) :-
 test(sat, [true(R == l_true)] ) :-
     check_test_formulas(_F, R).
 
+%% only tests type inference:
 test(typetest, [true(A-F == int-lambda([foobarsort], int)) , nondet ] ) :-
     test_formulas(Formulas),
     type_inference_global_backtrackable:assert_formula_list_types(Formulas),
@@ -570,7 +537,7 @@ test(between) :-
 :- end_tests(push_assert_tests).
 
 
-:- begin_tests(attribute_tests).
+:- begin_tests(attribute_tests, [setup(reset_globals)]).
 
 test(avar_succeeds) :-
     z3_push(X>10, R), X = 12, R = l_true.
@@ -611,7 +578,7 @@ test(isoneof) :-
 
 :- end_tests(attribute_tests).
 
-:- begin_tests(boolean_tests).
+:- begin_tests(boolean_tests, [setup(reset_globals)]).
 
 test(bool_plus) :-
     z3_push((a:real) + (b:bool) = 3.0), z3_push(b), z3_model(M),
@@ -701,5 +668,16 @@ test(nested_uninterpreted) :-
 
 :- end_tests(boolean_tests).
 
+:- begin_tests(enum_tests, [setup(z3_reset), cleanup(z3_reset)]).
+
+test(enums_basic) :-
+    z3_add_enumeration_sort(fruit, [apple, banana, pear]),
+    z3_push(x:fruit <> pear),
+    z3_is_implied(or(x = banana or x = apple)),
+    z3_push(x <> apple),
+    z3_model(M),
+    assertion(M.constants == [x-banana]).
+
+:- end_tests(enum_tests).
 
 :- include(z3_unit_tests).
