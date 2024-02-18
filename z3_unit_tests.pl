@@ -12,7 +12,7 @@
 
 %% for coverage: show_coverage(run_tests, [dir(cov)]).
 
-:- begin_tests(z3_pl_tests).
+:- begin_tests(z3_pl_tests, [setup(reset_globals)] ).
 
 test(findall, [true(R == [a,c]) ] ) :-
     z3_push(f(a:int) = b:int),
@@ -28,7 +28,7 @@ test(declare_lambda) :-
     z3_declare(f/1,lambda([int],int)),
     z3_push(f(a) > b).
 
-test(get_model, [true(C1 == [(a-13), (b-13), (d-4)] ), true(F1 == [(f(4)-5), ((f/1-else)-20)] )]) :-
+test(get_model, [true(C1 == [(a-13), (b-13), (d-4)] ), true(F1 == [(f(4)-5), ((f/1-else)-20)] ) ]) :-
     z3_push(a:int > 10),
     z3_push(b:int > 12),
     z3_push(a=b),

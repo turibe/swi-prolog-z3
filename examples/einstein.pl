@@ -3,6 +3,7 @@
 
 :- module(einstein, [
               doit/1,
+              doit_enums/1,
               declare_enums/0
               ]).
               
@@ -148,19 +149,19 @@ all_assertions(L) :- assertions(A), basic_assertions(G), append(A, G, L).
 
 %% FIXME: things gets messed up if we execute this twice.
 declare_enums :-
-    z3_mk_enumeration_sort(pet_enum, [dogs,fish,horses,cats,birds]),
-    z3_mk_enumeration_sort(beverage_enum, [beer, water, milk, coffee, tea]),
-    z3_mk_enumeration_sort(smoke_enum, [pallmall, prince, blends, bluemaster, dunhill] ),
-    true.
+    z3_add_enumeration_sort(pet_enum, [dogs,fish,horses,cats,birds]),
+    z3_add_enumeration_sort(beverage_enum, [beer, water, milk, coffee, tea]),
+    z3_add_enumeration_sort(smoke_enum, [pallmall, prince, blends, bluemaster, dunhill] ).
 
 push_assertions(L) :- maplist(z3_push, L).
 %% push_assertions(L) :- F =.. [and | L], z3_push(F).
 
 print_model(M) :- print_term(M, [right_margin(10)] ).
 
-doit0(M) :- all_assertions(All), push_assertions(All), z3_model(M).
+assert_and_print(M) :- all_assertions(All), push_assertions(All), z3_model(M), print_model(M).
 
-doit(M) :- doit0(M), print_model(M).
+doit(M) :- z3:reset_globals, assert_and_print(M).
+doit_enums(M) :- z3:reset_globals, declare_enums, assert_and_print(M).
 
 implies_test1 :- all_assertions(A), push_assertions(A),
                  z3_is_implied(norwegian = 1 and dane = 2 and brit = 3 and german = 4 and swede = 5).
@@ -190,20 +191,13 @@ drinks_order(F) :- F = (drinks(1) = water and drinks(2) = tea and drinks(3) = mi
 implies_drinks_order :- drinks_order(F), implies_formula(F).
 alternate_drinks_order(M) :- drinks_order(Order), counterexample(Order, M).
 
-:- use_module(library(clpfd)).
 
-puzzle(Houses, Drinks, Pets, Smokes) :-
-    length(Houses, 5),
-    length(Drinks, 5),
-    length(Pets, 5),
-    length(Smokes, 5),
-    all_different(Houses), all_different(Drinks), all_different(Pets), all_different(Smokes),
-    Houses ins 1..5, % can only be int
-    Drinks ins 1..5, % can only be int
-    Pets ins 1..5, % can only be int
-    Smokes ins 1..5, % can only be int
-    %% TODO: defines has_pet, is_pet, owns, is_owned, etc. functions in Z3?
-    true.
+%% note that doit(M), doit(M). will fail
 
+:- begin_tests(einstein_tests).
 
+test(einstein1) :- doit(M).
 
+test(einstein2) :- doit_enums(M).
+
+:- end_tests(einstein_tests).

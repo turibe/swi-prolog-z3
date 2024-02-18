@@ -53,7 +53,7 @@ assert_type(Term, Type) :- must_be(ground, Term),
 
 %%%%%%%%%%%% unit tests %%%%%%%%%%%
 
-:- begin_tests(type_inference_global).
+:- begin_tests(type_inference_global, [setup(initialize_map)] ).
 
 test(init) :-
     get_map(E), empty_assoc(E).

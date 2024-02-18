@@ -219,13 +219,14 @@ foreign_t z3_reset_context_foreign() {
 
   Z3_del_context(ctx);  
   global_context = NULL;
-  // Z3_finalize_memory(); don't want to do this now
+  // Z3_finalize_memory(); // for good measure too?
   z3_swi_initialize();
   return TRUE;
 }
 
 // ************************* END GLOBALS *************************
 
+/****
 foreign_t z3_make_declaration_map_foreign(term_t decl_map_term) {
   
   if (!PL_is_variable(decl_map_term)) {
@@ -259,6 +260,8 @@ foreign_t z3_reset_declaration_map_foreign(term_t decl_map_term) {
   DEBUG("Cleared Z3 declaration map\n");
   return TRUE;
 }
+
+*/
 
 // We need function declarations to make terms.
 
@@ -1771,7 +1774,7 @@ install_t install()
   PRED("z3_make_solver", 1, z3_make_solver_foreign, 0); // -solver
   PRED("z3_free_solver", 1, z3_free_solver_foreign, 0); // +solver
   
-  PRED("z3_make_declaration_map", 1, z3_make_declaration_map_foreign, 0); // -decl_map
+  // PRED("z3_make_declaration_map", 1, z3_make_declaration_map_foreign, 0); // -decl_map
   // PRED("z3_free_declaration_map", 1, z3_free_declaration_map_foreign, 0); // +decl_map
   
   PRED("z3_assert", 2, z3_assert_foreign, 0); // +decl_map, +solver, +formula

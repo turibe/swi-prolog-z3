@@ -141,8 +141,7 @@ test(get_model_no_check, [fail, setup(z3_make_solver(S)), cleanup(z3_free_solver
     z3_assert(S, a = 3),
     z3_solver_get_model(S, _Model).
 
-test(incompatible_types1, [fail]) :-
-    z3_make_solver(S),
+test(incompatible_types1, [fail, setup(z3_make_solver(S)), cleanup(z3_free_solver(S)) ]) :-
     z3_reset_declarations,
     z3_declare_function(a, foo),
     z3_assert(S, a = 3),
@@ -286,8 +285,7 @@ test(combined_bool_int, [setup(z3_make_solver(S)), cleanup(z3_free_solver(S)) ])
     z3_model_map_for_solver(S,Model),
     assertion(Model.constants == [a-4, b-false]).
 
-test(arity_error, [fail]) :-
-    z3_make_solver(S),
+test(arity_error, [fail, setup(z3_make_solver(S)), cleanup(z3_free_solver(S)) ]) :-
     z3_reset_declarations,
     z3_assert(S, =(a,b,c)).
 

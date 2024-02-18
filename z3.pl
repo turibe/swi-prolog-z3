@@ -27,7 +27,7 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
               z3_eval/2,               % +Expression,-Result  Evals Expression in a current model, if the current solver is SAT.
               z3_is_consistent/1,      % +Formula  Succeeds if Formula is consistent with current solver/context. Fails if l_undet.
               z3_is_implied/1,         % +Formula  Succeeds if Formula is implied by current solver/context. Fails if l_undet.
-              z3_mk_enumeration_sort/2,
+              z3_add_enumeration_sort/2,
               z3_model/1,              % +ModelTerm  Gets a model if possible. Fails if not l_sat.
               z3_model_assoc/1,        % +ModelAssocTerm  A model that uses assoc lists (less readable).
               z3_push/1,               % +Formula   Pushes the formula, fails if status is l_false.
@@ -97,8 +97,9 @@ report(T) :- indent, print(T), nl, flush_output.
 indent :- assert_depth(N),
           forall(between(1, N, _X), (print(---), print(N))).
 
+%% Makes sure that the solver goes with latest context.
 reset_globals :-
-    z3_reset,
+    z3_reset, %% crash without this?
     z3_reset_declarations,
     reset_global_solver,
     reset_var_counts,
@@ -566,7 +567,8 @@ test(attribute_eval, [true(R == 126)]) :-
     z3_push(X=14), z3_push(Y=X-5), z3_eval(X*Y,R).
 
 test(attribute_model) :-
-    z3_push(X=14), z3_push(Y=X-5), z3_push(a = X-1), z3_push(b = Y*Y), z3_model(M),
+    z3_push(X=14), z3_push(Y=X-5), z3_push(a = X-1), z3_push(b = Y*Y),
+    z3_model(M),
     assertion(member(a-13, M.constants)),
     assertion(member(b-81, M.constants)).
 
