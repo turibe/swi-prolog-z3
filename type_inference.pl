@@ -177,6 +177,8 @@ typecheck(F, _, _, _) :- var(F), !, instantiation_error(F).
 typecheck(Term:Type, T, Envin, Envout) :- !, Type = T,
                                           typecheck(Term, Type, Envin, Envout).
 typecheck(X, int, E, E) :- integer(X), !.
+typecheck(true, bool, E, E) :- true, !.
+typecheck(false, bool, E, E) :- true, !.
 %% We could allow integer constants  to be real, but this leads to duplicate answers.
 %% Without this, we must use, e.g., 2.0 instead of 2 when warranted.
 %% typecheck(X, real, E, E) :- integer(X).

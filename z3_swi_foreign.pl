@@ -62,8 +62,7 @@ z3_model_map_for_solver(S, Model) :-
                       ).
 
 
-:- begin_tests(foreign_tests).
-
+:- begin_tests(z3_swi_foreign).
 
 test(reset_declarations) :-
     z3_reset_declarations,
@@ -313,4 +312,4 @@ test(enums, [setup((z3_reset_context, z3_make_solver(S))),
     z3_assert(S, a <> red),
     z3_solver_check(S, l_false).
 
-:- end_tests(foreign_tests).
+:- end_tests(z3_swi_foreign).

@@ -69,9 +69,8 @@ Z3_ast mk_ast_key(Z3_context ctx, const char * name, const size_t arity)
 {
   Z3_ast v1 = mk_int_var(ctx, name);
   Z3_ast v2 = Z3_mk_int64(ctx, arity, INT_SORT);
-  return Z3_mk_div(ctx, v1, v2);
+  return Z3_mk_eq(ctx, v1, v2);
 }
-
 
 /**
    \brief Check whether the logical context is satisfiable.
@@ -149,6 +148,7 @@ void z3_swi_error_handler(Z3_context ctx, Z3_error_code e) {
   fprintf(stderr, "Z3 ERROR: code %ul %s\n", e, msg);
 }
 
+
 void z3_swi_initialize() {
   Z3_string version = Z3_get_full_version();
   fprintf(stderr, "Using Z3 version %s\n", version);
@@ -194,30 +194,61 @@ void print_map_stats(Context ctxstruct) {
 Z3_context get_context() { return global_context->ctx; }
 
 
-foreign_t z3_reset_enums_foreign() {
-  Z3_context ctx = global_context->ctx;
-  Z3_ast_map_reset(ctx, global_context->enum_sorts);
-  Z3_ast_map_reset(ctx, global_context->enum_declarations);
+foreign_t map_test_foreign() {
+  Z3_context ctx = get_context();
+  decl_map mymap = Z3_mk_ast_map(ctx);
+  char name_string[] = "foo";
+  int arity = 1;
+  Z3_ast key = mk_ast_key(ctx, name_string, arity);
+  // Z3_ast key = mk_int_var(ctx, "foo");
+  Z3_ast value = mk_int_var(ctx, "bar");
+  Z3_ast_map_insert(ctx, mymap, key, key);
+  if (Z3_ast_map_contains(ctx, mymap, key)) {
+    INFO("found key\n");
+  }
+  else {
+    INFO("did not find key\n");
+  }
+  Z3_ast key1 = mk_ast_key(ctx, "foo", arity);
+  if (Z3_ast_map_contains(ctx, mymap, key1)) {
+    INFO("found key1\n");
+  }
+  else {
+    INFO("did not find key1\n");
+  }
+
   return TRUE;
 }
 
 
+// Not enough: the context remembers the enums.
+// foreign_t z3_reset_enums_foreign() {
+//  Z3_context ctx = global_context->ctx;
+//  Z3_ast_map_reset(ctx, global_context->enum_sorts);
+//  Z3_ast_map_reset(ctx, global_context->enum_declarations);
+//  return TRUE;
+// }
+
+
+// resets declarations but not enums:
 foreign_t z3_reset_declarations_foreign() {
   Z3_context ctx = global_context->ctx;
-  z3_reset_enums_foreign();
   Z3_ast_map_reset(ctx, global_context->declarations);
   return TRUE;
 }
 
 foreign_t z3_reset_context_foreign() {
   Z3_context ctx = global_context->ctx;
-  z3_reset_declarations_foreign();
+  Z3_ast_map_reset(ctx, global_context->declarations);
+  Z3_ast_map_reset(ctx, global_context->enum_sorts);
+  Z3_ast_map_reset(ctx, global_context->enum_declarations);
   // for good measure:
   Z3_ast_map_dec_ref(ctx, global_context->enum_sorts);
   Z3_ast_map_dec_ref(ctx, global_context->enum_declarations);
   Z3_ast_map_dec_ref(ctx, global_context->declarations);
 
-  Z3_del_context(ctx);  
+  Z3_del_context(ctx);
+  free(global_context);
   global_context = NULL;
   // Z3_finalize_memory(); // for good measure too?
   z3_swi_initialize();
@@ -558,6 +589,9 @@ foreign_t z3_declare_enum_foreign(term_t sort_name_term, term_t enum_names_list)
     INFO("enumeration sort %s already defined, can't re-define\n", sort_name_string);
     return FALSE;
   }
+  else {
+    DEBUG("did not find sort %s in enum_sorts map\n", sort_name_string);
+  }
   size_t n;
   PL_skip_list(enum_names_list, 0, &n); // gets list length
   DEBUG("Names has length %lu\n", n);
@@ -578,6 +612,7 @@ foreign_t z3_declare_enum_foreign(term_t sort_name_term, term_t enum_names_list)
   Z3_func_decl *enum_consts  = malloc(sizeof(Z3_func_decl) * n);
   Z3_func_decl *enum_testers  = malloc(sizeof(Z3_func_decl) * n);
   Z3_sort s = Z3_mk_enumeration_sort(ctx, sort_name, n, enum_names, enum_consts, enum_testers);
+  
   // NEXT: we should remember the enum_names so that Prolog atoms can be matched to them.
   // less important, the enum_testers can be used to define is_XXX unary predicates.
 
@@ -595,6 +630,8 @@ foreign_t z3_declare_enum_foreign(term_t sort_name_term, term_t enum_names_list)
 
   // pointer is not useful in PL
   // return PL_unify_pointer(result, s);
+  free(enum_consts);
+  free(enum_testers);
   return TRUE;
 }
 
@@ -1811,11 +1848,13 @@ install_t install()
   PRED("z3_model_functions", 2, z3_model_functions_foreign, 0); // +model_pointer, -functions_term
   PRED("z3_model_constants", 2, z3_model_constants_foreign, 0); // +model_pointer, -constants_term
 
-  PRED("z3_reset_context", 0, z3_reset_context_foreign, 0); // clears everything, use sparingly  
-  PRED("z3_reset_enums", 0, z3_reset_enums_foreign, 0); // resets only enums
+  PRED("z3_reset_context", 0, z3_reset_context_foreign, 0); // clears everything, use sparingly; but is the only way to reset enums
+  
   PRED("z3_reset_declarations", 0, z3_reset_declarations_foreign, 0); // clears declarations, including enums, keeps Z3 context
   PRED("z3_get_enum_declarations", 1, z3_get_enum_declarations_foreign, 0); // -term
   PRED("z3_get_declarations", 1, z3_get_declarations_foreign, 0); // -term
   PRED("z3_declarations_string", 1, z3_declarations_string_foreign, 0); // -string
+
+  PRED("map_test", 0, map_test_foreign, 0); //
   
 }

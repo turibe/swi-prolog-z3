@@ -191,18 +191,19 @@ alternate_drinks_order(M) :- drinks_order(Order), counterexample(Order, M).
 
 %% note that doit(M), doit(M). will fail
 
-:- begin_tests(einstein_tests).
+:- begin_tests(einstein).
 
-test(einstein1) :-
+test(no_enums) :-
     z3:reset_globals,
     assert_puzzle(M),
     assertion(member(bluehouse - 2, M.constants)),
     assertion(member(german - 4, M.constants)).
 
-test(einstein2) :-
-    z3:reset_globals,
+test(enums, [
+         setup(z3:z3_reset), cleanup(z3:z3_reset)
+     ]) :-
     declare_enums,
     assert_puzzle(M),
     assertion(member(pet(4) - fish, M.functions)).
 
-:- end_tests(einstein_tests).
+:- end_tests(einstein).

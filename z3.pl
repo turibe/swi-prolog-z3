@@ -35,6 +35,8 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
               z3_push_and_print/1,     % +Formula   Convenience
               z3_push_and_print/2,     % +Formula,+Status  Convenience
               print_declarations/0,    % print declarations so far, or those used in the previous query (reset on a new push).
+              z3_get_enum_declarations/1,
+              z3_get_declarations/1,
 
               z3_reset/0,      % resets everything, use sparingly
               
@@ -62,7 +64,7 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
                   z3_free_solver/1,
                   z3_declare_function/2,
                   z3_make_solver/1,
-                  %% z3_declare_enum/2, %% override it here
+                  z3_declare_enum/2,
                   z3_model_eval/4,
                   z3_model_map_for_solver/2,
                   z3_reset_declarations/0,
@@ -72,25 +74,37 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
                   z3_solver_pop/3,
                   z3_solver_push/2,
                   z3_solver_scopes/2,
-                  z3_reset_context/0, %% cannot be called directly, use this module's z3_reset instead
+                  z3_reset_context/0, %% should not be called directly, use this module's z3_reset instead
                   z3_get_declarations/1,
                   z3_get_enum_declarations/1
               ]).
 
+:- initialization(reset_global_solver).
+
 
 %% old maps and solvers are invalidated:
 z3_reset :-
-    %% assertion(b_getval(solver_depth, 0)),
+    %% assertion(b_getval(solver_depth, 0)), %% test cleanup violates this
+    (get_global_solver(Old) ->
+         (
+             %% z3_free_solver(Old), %% causes crashes!
+             nb_delete(global_solver)
+         )
+    ;
+    true), 
     z3_reset_context,
+    reset_global_solver.
+
+/*
     z3_make_solver(S),
     nb_setval(global_solver, S),
     nb_setval(solver_depth, 0).
-
+*/
 
 %% have a global variable, backtrackable, with the depth level.
 %% before the assert, check that variable, and pop the solver as many times as needed.
 
-:- initialization(reset_globals).
+
 
 %% indent according to solver pushes:
 report(T) :- indent, print(T), nl, flush_output.
@@ -99,12 +113,14 @@ indent :- assert_depth(N),
           forall(between(1, N, _X), (print(---), print(N))).
 
 %% Makes sure that the solver goes with latest context.
+%% does not reset the context, so does not reset enums.
 reset_globals :-
-    z3_reset, %% crash without this?
+    %% z3_reset, %% crash without this; would be nice if it was not needed.
     z3_reset_declarations,
+    %% the only way to really reset the enums is to get a new context.
     reset_global_solver,
     reset_var_counts,
-    %% type_inference:initialize. %% name clash! what PL module is this? undocumented?
+    %% type_inference:initialize. %% annoying that X:initialize works for any X.
     type_inference_global_backtrackable:initialize_map.
 
 
@@ -154,7 +170,7 @@ attr_unify_hook(Attr, Formula) :-
 
 %% should only be called at the top-most level:
 reset_global_solver :-
-    (get_global_solver(Old) -> z3_free_solver(Old) ; true),
+    %% by now, we could have a new context, so can't free the solver    
     z3_make_solver(S),
     nb_setval(global_solver, S),
     nb_setval(solver_depth, 0).
@@ -171,7 +187,7 @@ assert_depth(N) :- b_getval(solver_depth, N).
 push_solver(S) :- get_global_solver(S),
                   resolve_solver_depth(X),
                   New is X + 1,
-                  b_setval(solver_depth, New),
+                  b_setval(solver_depth, New), %% backtrackable assignment
                   z3_solver_push(S, _D).
 
 
@@ -308,13 +324,6 @@ z3_push(Foriginal, Status) :-
     )
     ).
 
-%% have to z3_push(true) so that the enums are not wiped at the first z3_push.
-%% (want to start fresh each time at this API)
-
-z3_declare_enum(Name, Values) :-
-    z3_push(true),
-    z3_swi_foreign:z3_declare_enum(Name, Values).
-
 
 %% z3_push/1 fails if solver reports inconsistency or type error.
 %% l_type_error is the only one that does not push onto the solver.
@@ -394,9 +403,11 @@ mk_uninterpreted(X) :- (var(X) -> X = uninterpreted ; true ).
 ground_arglist(L) :- maplist(mk_uninterpreted, L).
 
 
+/*
 internal_assert_and_check_list(Solver, List, Status) :-
     Conj =.. [and | List],
     internal_assert_and_check(Solver, Conj, Status).
+*/
 
 
 z3_push_and_print(F,R) :- z3_push(F,R), z3_check_and_print(R1), assertion(R == R1).
@@ -429,7 +440,7 @@ z3_is_implied(F) :- z3_push(not(F), Status),
 %%%%%%%%%%%%%%%%%%%%%%%%%% unit tests %%%%%%%%%%%%%%%%%
 
 
-:- begin_tests(push_assert_tests, [setup(reset_globals)]).
+:- begin_tests(push_assert, [setup(reset_globals)]).
 
 test_formulas(Formulas) :-
     Formulas = [foo(a) = b+c,
@@ -538,10 +549,10 @@ test(scopes, [true(((N1 == 1), (N2==2))) ] ) :-
 test(between) :-
     z3_push(between(x:int, 1, 4)), z3_push(between(x, 2, 3)), z3_is_implied(x = 3 or x = 2).
 
-:- end_tests(push_assert_tests).
+:- end_tests(push_assert).
 
 
-:- begin_tests(attribute_tests, [setup(reset_globals)]).
+:- begin_tests(attribute, [setup(reset_globals)]).
 
 test(avar_succeeds) :-
     z3_push(X>10, R), X = 12, R = l_true.
@@ -581,9 +592,9 @@ test(isoneof) :-
     z3_push(x <> a), z3_push(x <> c),
     z3_is_implied(x = b).
 
-:- end_tests(attribute_tests).
+:- end_tests(attribute).
 
-:- begin_tests(boolean_tests, [setup(reset_globals)]).
+:- begin_tests(boolean, [setup(reset_globals)]).
 
 test(bool_plus) :-
     z3_push((a:real) + (b:bool) = 3.0), z3_push(b), z3_model(M),
@@ -671,9 +682,9 @@ test(nested_uninterpreted) :-
     z3_push(f(g(a,b)) = c),
     z3_model(_M).
 
-:- end_tests(boolean_tests).
+:- end_tests(boolean).
 
-:- begin_tests(enum_tests, [setup(z3_reset), cleanup(z3_reset)]).
+:- begin_tests(enum, [setup(z3_reset), cleanup(z3_reset) ]).
 
 test(enums_basic) :-
     z3_declare_enum(fruit, [apple, banana, pear]),
@@ -683,6 +694,6 @@ test(enums_basic) :-
     z3_model(M),
     assertion(M.constants == [x-banana]).
 
-:- end_tests(enum_tests).
+:- end_tests(enum).
 
 :- include(z3_unit_tests).
