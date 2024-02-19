@@ -164,6 +164,7 @@ void z3_swi_initialize() {
 
   global_context->ctx = Z3_mk_context(config);
   Z3_context ctx = global_context->ctx;
+  INFO("Made context %p\n", ctx);
   
   Z3_set_error_handler(ctx, z3_swi_error_handler);
   Z3_del_config(config);
@@ -239,6 +240,7 @@ foreign_t z3_reset_declarations_foreign() {
 
 foreign_t z3_reset_context_foreign() {
   Z3_context ctx = global_context->ctx;
+  INFO("Calling reset_context for %p\n", ctx);
   Z3_ast_map_reset(ctx, global_context->declarations);
   Z3_ast_map_reset(ctx, global_context->enum_sorts);
   Z3_ast_map_reset(ctx, global_context->enum_declarations);
@@ -250,7 +252,7 @@ foreign_t z3_reset_context_foreign() {
   Z3_del_context(ctx);
   free(global_context);
   global_context = NULL;
-  // Z3_finalize_memory(); // for good measure too?
+  // Z3_finalize_memory(); // for good measure too? dangerous.
   z3_swi_initialize();
   return TRUE;
 }
@@ -405,7 +407,7 @@ foreign_t z3_free_model_foreign(term_t u) {
   if (!rval) {
     return rval;
   }
-  DEBUG("freeing model %p\n", (void *) model);
+  INFO("freeing model %p\n", (void *) model);
   Z3_model_dec_ref(ctx, model);
   return rval;
 }
@@ -913,6 +915,7 @@ foreign_t z3_solver_check_foreign(term_t solver_term, term_t status_arg) {
     return rval;
   }
   const Z3_context ctx = get_context();
+  INFO("Checking solver %p with context %p\n", solver, ctx);
 
   Z3_lbool check_status = Z3_solver_check(ctx, solver);
   DEBUG("did check, status %d\n", check_status);

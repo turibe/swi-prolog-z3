@@ -26,6 +26,8 @@ Tested on MacOS Sonoma.
 2. Install and build Z3, including `libz3.dylib` . This can also be done via brew, macports, or download.
 See [https://github.com/Z3Prover/z3](https://github.com/Z3Prover/z3).
 
+Tested with version 4.12.5.0 and SWI-Prolog version 9.1.21 for arm64-darwin.
+
 3. Add a symbolic link to the `libz3.dylib` file in this directory (or copy it over).
 
 3. Compile the C code for the Prolog-Z3 interface, using the `swipl-ld` tool.

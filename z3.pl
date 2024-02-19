@@ -87,7 +87,7 @@ z3_reset :-
     %% assertion(b_getval(solver_depth, 0)), %% test cleanup violates this
     (get_global_solver(Old) ->
          (
-             %% z3_free_solver(Old), %% causes crashes!
+             %% z3_free_solver(Old), %% causes crashes! Interacts with z3_del_context in z3_reset_context?
              nb_delete(global_solver)
          )
     ;
