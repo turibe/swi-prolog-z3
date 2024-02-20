@@ -15,14 +15,14 @@
 
      The main decision is how to handle state -- context, declarations and solvers.
 
-     It would be nice to embed all the function declarations in the context object; to get this, we define a "ContextStruct" object
+     It would be nice to embed all the function declarations in the context object; for this, we define a "ContextStruct" object
      that has the Z3 context, plus the function declarations.
 
-     This now includes enums and enum sorts. While normal declarations can be reset without having to create a new context,
-     Eums can't be reset without resetting the context too.
+     This includes enums and enum sorts. However, while normal declarations can be reset without having to create a new context,
+     enums can't be reset without resetting the context too.
 
-     For now, we go with one global, implicit context+ object. Solvers and models are created and destroyed at the Prolog level.
-     (It is now trivial to support multiple "context+" objects if we needed to.)
+     For now, we go with one global, implicit ContextStruct object. Solvers and models are created and destroyed at the Prolog level.
+     It is now trivial to support multiple ContextStruct objects if we needed to.
      
 *****/
 
@@ -71,6 +71,7 @@ Z3_ast mk_ast_key(Z3_context ctx, const char * name, const size_t arity)
   return Z3_mk_div(ctx, v1, v2); // closest to F/N
 }
 
+// From Z3 examples/c/test_capi.c:
 /**
    \brief Check whether the logical context is satisfiable.
    If the context is satisfiable, then display the model.
