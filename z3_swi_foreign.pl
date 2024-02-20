@@ -13,6 +13,8 @@ It has no global variables except those in the C code.
               z3_assert/2,
               z3_context/1,
               z3_declarations_string/1,
+              z3_declarations/1,
+              z3_enum_declarations/1,
               z3_make_solver/1,
               z3_free_solver/1,
               z3_free_model/1,
@@ -30,8 +32,6 @@ It has no global variables except those in the C code.
               z3_simplify_term/2,
               z3_solver_scopes/2,
               z3_reset_context/0, % invalidates solvers, declaration maps
-              z3_get_enum_declarations/1,
-              z3_get_declarations/1,
               op(750, xfy, and), % =, >, etc. are 700 ; Local to the module
               op(751, xfy, or),
               op(740, xfy, <>)
@@ -61,6 +61,11 @@ z3_model_map_for_solver(S, Model) :-
                        z3_free_model(M)
                       ).
 
+
+translate_entry(Entry, NewEntry) :- Entry = (Key-Value), Key =.. [_ | Args], NK =.. [/ | Args], NewEntry = (NK-Value).
+
+z3_declarations(L) :- z3_get_declarations(LG), maplist(translate_entry, LG, L).
+z3_enum_declarations(L) :- z3_get_enum_declarations(LG), maplist(translate_entry, LG, L).
 
 :- begin_tests(z3_swi_foreign).
 

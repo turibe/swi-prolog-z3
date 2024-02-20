@@ -61,15 +61,14 @@ Z3_ast mk_int_var(Z3_context ctx, const char * name) {
   return Z3_mk_const(ctx, s, ty);
 }
 
-// we use intvars called "name/arity" as keys ; could have any other sort or shape.
-// TODO: avoid sprintf by using a term "internalfn(name, arity)" as the key?
-// or 
+// Any binary term will work as the key (here, choose "div").
+// In Prolog, we convert them to f/N terms --- see z3_enum_declarations and z3_declarations.
 
 Z3_ast mk_ast_key(Z3_context ctx, const char * name, const size_t arity)
 {
   Z3_ast v1 = mk_int_var(ctx, name);
   Z3_ast v2 = Z3_mk_int64(ctx, arity, INT_SORT);
-  return Z3_mk_eq(ctx, v1, v2);
+  return Z3_mk_div(ctx, v1, v2); // closest to F/N
 }
 
 /**
@@ -104,7 +103,7 @@ Z3_lbool solver_check_and_print(Z3_context ctx, Z3_solver s)
     if (m) {
       Z3_model_dec_ref(ctx, m);
     }
-    return result; // this is the internal function
+    return result;
 }
 
 
@@ -165,7 +164,7 @@ void z3_swi_initialize() {
   Z3_config config = Z3_mk_config();
   global_context.ctx = Z3_mk_context(config);
   Z3_context ctx = global_context.ctx;
-  INFO("Made context %p\n", ctx);
+  DEBUG("Made context %p\n", ctx);
   
   Z3_set_error_handler(ctx, z3_swi_error_handler);
   Z3_del_config(config);
@@ -198,6 +197,7 @@ void print_map_stats() {
 Z3_context get_context() { return global_context.ctx; }
 
 
+// make sure that AST maps work:
 foreign_t map_test_foreign() {
   Z3_context ctx = get_context();
   decl_map mymap = Z3_mk_ast_map(ctx);
@@ -243,7 +243,7 @@ foreign_t z3_reset_declarations_foreign() {
 
 foreign_t z3_reset_context_foreign() {
   Z3_context ctx = global_context.ctx;
-  INFO("Calling reset_context for %p\n", ctx);
+  DEBUG("Calling reset_context for %p\n", ctx);
 
   Z3_ast_map_reset(ctx, global_context.declarations);
   Z3_ast_map_reset(ctx, global_context.enum_sorts);
@@ -255,8 +255,7 @@ foreign_t z3_reset_context_foreign() {
   Z3_ast_map_dec_ref(ctx, global_context.enum_declarations);
   
   Z3_del_context(ctx);
-  // free(global_context);
-  // global_context = NULL;
+
   // Z3_finalize_memory(); // for good measure too? dangerous.
 
   z3_swi_initialize();
@@ -340,10 +339,16 @@ void register_function_declaration(Z3_context ctx, decl_map declaration_map, Z3_
 
 /****
      for debugging; gets the declarations string into result:
-     // TODO: add enum declarations
 ***/
 foreign_t z3_declarations_string_foreign(term_t result) {
   decl_map declaration_map = global_context.declarations;
+  Z3_context ctx = get_context();
+  Z3_string rstring =  Z3_ast_map_to_string(ctx, declaration_map);
+  return PL_unify_string_chars(result, rstring);
+}
+
+foreign_t z3_enums_string_foreign(term_t result) {
+  decl_map declaration_map = global_context.enum_declarations;
   Z3_context ctx = get_context();
   Z3_string rstring =  Z3_ast_map_to_string(ctx, declaration_map);
   return PL_unify_string_chars(result, rstring);
@@ -384,7 +389,7 @@ foreign_t z3_make_solver_foreign(term_t solver_term) {
   }
   Z3_context ctx = get_context();
   Z3_solver solver = Z3_mk_solver(ctx);
-  INFO( "made solver %p\n", (void *) solver );
+  DEBUG( "made solver %p\n", (void *) solver );
   Z3_solver_inc_ref(ctx, solver); // should be freed with z3_free_solver
   return PL_unify_pointer(solver_term, solver);
 }
@@ -402,7 +407,7 @@ foreign_t z3_free_solver_foreign(term_t u) {
   if (!rval) {
     return rval;
   }
-  INFO("freeing solver %p\n", (void *) solver);
+  DEBUG("freeing solver %p\n", (void *) solver);
   Z3_solver_dec_ref(ctx, solver);
   return rval;
 }
@@ -414,7 +419,7 @@ foreign_t z3_free_model_foreign(term_t u) {
   if (!rval) {
     return rval;
   }
-  INFO("freeing model %p\n", (void *) model);
+  DEBUG("freeing model %p\n", (void *) model);
   Z3_model_dec_ref(ctx, model);
   return rval;
 }
@@ -490,7 +495,7 @@ Z3_symbol mk_symbol(Z3_context ctx, term_t pl_term) {
     char *chars;
     int res = PL_get_chars(pl_term, &chars, CVT_WRITE);
     if (!res) return NULL;
-    INFO("mk_symbol got variable %s\n", chars);
+    DEBUG("mk_symbol got variable %s\n", chars);
     Z3_symbol s = Z3_mk_string_symbol(ctx, chars);
     return s;
     break;
@@ -536,11 +541,12 @@ foreign_t z3_declaration_map_to_term(decl_map declaration_map, term_t result) {
 
   pair_functor = PL_new_functor(PL_new_atom("-"), 2);
   for (unsigned i = 0; i < size; i++) {
-    Z3_ast k = Z3_ast_vector_get(ctx, keys, i);
-    term_t kterm = PL_new_term_ref();
-    z3_ast_to_term_internal(ctx, k, kterm);
-    Z3_func_decl value = (Z3_func_decl) Z3_ast_map_find(ctx, declaration_map, k);
-    term_t vterm = PL_new_term_ref();
+    Z3_ast key = Z3_ast_vector_get(ctx, keys, i);
+    term_t key_term = PL_new_term_ref();
+    z3_ast_to_term_internal(ctx, key, key_term);
+    
+    Z3_func_decl value = (Z3_func_decl) Z3_ast_map_find(ctx, declaration_map, key);
+    term_t value_term = PL_new_term_ref();
 
     Z3_symbol s = Z3_get_decl_name(ctx, value);
     
@@ -548,13 +554,13 @@ foreign_t z3_declaration_map_to_term(decl_map declaration_map, term_t result) {
     Z3_symbol sname = Z3_get_sort_name(ctx, sort);
     {
       Z3_string sname_string = Z3_get_symbol_string(ctx, sname);
-      PL_put_atom_chars(vterm, sname_string);
+      PL_put_atom_chars(value_term, sname_string);
     }
 
     // TODO: convert entire term on the lhs, in general.
 
     term_t pair = PL_new_term_ref();
-    if (!PL_cons_functor(pair, pair_functor, kterm, vterm)) {
+    if (!PL_cons_functor(pair, pair_functor, key_term, value_term)) {
       DEBUG("error consing functor\n");
       return FALSE;
     }
@@ -585,7 +591,15 @@ foreign_t z3_declare_enum_foreign(term_t sort_name_term, term_t enum_names_list)
   Z3_context ctx = get_context();
   const Z3_symbol sort_name = mk_symbol(ctx, sort_name_term);
 
-  // TODO: check that name is an atom.
+  if (!PL_is_atom(sort_name_term)) {
+    ERROR("z3_declare_enum name should be an atom\n");
+    return FALSE;
+  }
+  if (!PL_is_list(enum_names_list) || !PL_is_ground(enum_names_list)) {
+    ERROR("z3_declare_enum range should be a ground list\n");
+    return FALSE;
+  }
+
   char * sort_name_string;
   int res = PL_get_atom_chars(sort_name_term, &sort_name_string);
   if (!res) {
@@ -922,7 +936,7 @@ foreign_t z3_solver_check_foreign(term_t solver_term, term_t status_arg) {
     return rval;
   }
   const Z3_context ctx = get_context();
-  INFO("Checking solver %p with context %p\n", solver, ctx);
+  DEBUG("Checking solver %p with context %p\n", solver, ctx);
 
   Z3_lbool check_status = Z3_solver_check(ctx, solver);
   DEBUG("did check, status %d\n", check_status);
@@ -989,12 +1003,14 @@ Z3_func_decl mk_func_decl(Z3_context ctx, decl_map declaration_map, const term_t
        free(domain);
        return NULL;
      }
+     
      /*
      char *formula_string;
      if (PL_get_chars(a, &formula_string, CVT_WRITE)) {
         INFO("Calling mk_sort for domain %s\n", formula_string);
       }
      */
+     
      domain[i-1] = mk_sort(ctx, a);
      if (domain[i-1] == NULL) {
        INFO("mk_func_decl returning NULL\n");
@@ -1863,7 +1879,10 @@ install_t install()
   PRED("z3_reset_declarations", 0, z3_reset_declarations_foreign, 0); // clears declarations, including enums, keeps Z3 context
   PRED("z3_get_enum_declarations", 1, z3_get_enum_declarations_foreign, 0); // -term
   PRED("z3_get_declarations", 1, z3_get_declarations_foreign, 0); // -term
+
+  // for debugging:
   PRED("z3_declarations_string", 1, z3_declarations_string_foreign, 0); // -string
+  PRED("z3_enums_string", 1, z3_enums_string_foreign, 0); // -string
 
   PRED("map_test", 0, map_test_foreign, 0); //
   

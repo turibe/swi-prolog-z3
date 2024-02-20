@@ -30,16 +30,15 @@ do_test(2) :-
     true,
     myrun(einstein:no_enums). %% resets globals 
 do_test(3) :-
-    myrun(einstein:enums), %% cause crashes? We never reset otherwise.
+    myrun(einstein:enums),
     myrun(push_assert).
 do_test(4) :-
     myrun(attribute).
 do_test(5) :-
-    run_tests(enums), %% cause crashes?
+    run_tests(enums),
     myrun(boolean).
 do_test(6) :-
-    %% z3_reset, %% causes crash
-    %% z3:z3_reset_context.
+    z3_reset,
     true.
 
 %% myrun(z3_swi_foreign).

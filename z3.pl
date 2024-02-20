@@ -35,8 +35,8 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
               z3_push_and_print/1,     % +Formula   Convenience
               z3_push_and_print/2,     % +Formula,+Status  Convenience
               print_declarations/0,    % print declarations so far, or those used in the previous query (reset on a new push).
-              z3_get_enum_declarations/1,
-              z3_get_declarations/1,
+              z3_enum_declarations/1,
+              z3_declarations/1,
 
               z3_reset/0,      % resets everything, use sparingly
               
@@ -49,10 +49,17 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
               ]).
 
 :- use_module(type_inference_global_backtrackable, [
+                  initialize_map/0 as initialize_type_inference_map,
                   assert_type/2,
+                  assert_formula_list_types/1,
                   get_map/1 as get_type_inference_map,
+                  set_map/1 as set_type_inference_map,
                   get_map_list/1 as get_type_inference_map_list
               ]).
+
+:- use_module(type_inference, [
+                  typecheck/4
+                  ]).
 
 :- use_module(library(assoc)).
 :- use_module(library(ordsets)).
@@ -75,8 +82,8 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
                   z3_solver_push/2,
                   z3_solver_scopes/2,
                   z3_reset_context/0, %% should not be called directly, use this module's z3_reset instead
-                  z3_get_declarations/1,
-                  z3_get_enum_declarations/1
+                  z3_declarations/1,
+                  z3_enum_declarations/1
               ]).
 
 :- initialization(new_global_solver).
@@ -115,19 +122,18 @@ reset_globals :-
     %% the only way to really reset the enums is to get a new context.
     new_global_solver,
     reset_var_counts,
-    %% type_inference:initialize. %% annoying that X:initialize works for any X.
-    type_inference_global_backtrackable:initialize_map.
+    initialize_type_inference_map.
 
 
 add_enums([], M, M).
 add_enums([Pair | Rest], Min, Mout) :-
-    Pair = (div(F,0) - Type),
-    type_inference:typecheck(F, Type, Min, Mnew),
+    Pair = ((F/0) - Type),
+    typecheck(F, Type, Min, Mnew),
     add_enums(Rest, Mnew, Mout).
 
 %% Map for initializing type inference:
 enum_declarations_map(M) :-
-    z3_get_enum_declarations(L),
+    z3_enum_declarations(L),
     add_enums(L, t, M).
 
 reset_var_counts :- nb_setval(varcount, 0).
@@ -293,11 +299,16 @@ expand_macros(X, X).
 z3_push(Foriginal, Status) :-
     check_status_arg(Status),
     expand_macros(Foriginal, F),
-    (b_getval(solver_depth, 0) -> z3_reset_declarations ; true), %% clears enums too
+    (b_getval(solver_depth, 0) ->
+         z3_reset_declarations, %% does not clear enums
+         enum_declarations_map(EnumMap),
+         set_type_inference_map(EnumMap)
+    ; true),
     get_type_inference_map(OldAssoc),
     %% report(status("asserting", F)),
     ground_version(F, FG, Symbols),
-    (type_inference_global_backtrackable:assert_type(FG, bool) ->
+    %% updates the type inference map:
+    (assert_type(FG, bool) ->
          (
              get_type_inference_map(Assoc),
              %% Only need to declare new symbols:
@@ -458,7 +469,7 @@ test(sat, [true(R == l_true)] ) :-
 %% only tests type inference:
 test(typetest, [true(A-F == int-lambda([foobarsort], int)) , nondet ] ) :-
     test_formulas(Formulas),
-    type_inference_global_backtrackable:assert_formula_list_types(Formulas),
+    assert_formula_list_types(Formulas),
     get_type_inference_map(Map),
     get_assoc(a, Map, A),
     get_assoc(f/1, Map, F).
@@ -679,15 +690,26 @@ test(nested_uninterpreted) :-
 
 :- end_tests(boolean).
 
-:- begin_tests(enums, [setup(z3_reset), cleanup(z3_reset) ]).
+:- begin_tests(enums).
 
-test(enums_basic) :-
+test(enums_basic, [setup(z3_reset), cleanup(z3_reset),
+                   true(Z == [x-banana])
+                   ]) :-
     z3_declare_enum(fruit, [apple, banana, pear]),
     z3_push(x:fruit <> pear),
     z3_is_implied(or(x = banana or x = apple)),
     z3_push(x <> apple),
     z3_model(M),
-    assertion(M.constants == [x-banana]).
+    Z = M.constants.
+
+tests(enum_declarations, [setup(z3_reset), cleanup(z3_reset),
+                          true(Declarations == [black/0-color, white/0-color])
+                         ]) :-
+    z3_declare_enum(color, [black, white]),
+    z3_enum_declarations(Declarations),
+    enum_declarations_map(Map),
+    assertion(get_assoc(Map, black, color)),
+    true.
 
 :- end_tests(enums).
 
