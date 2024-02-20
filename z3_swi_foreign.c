@@ -427,7 +427,7 @@ foreign_t z3_free_model_foreign(term_t u) {
 /*
   Gets a model object from the solver; "z3_solver_check" must have been run on the solver first.
   Otherwise, an error is reported and we fail.
-  Used for model_eval in PL; otherwise, use 
+  Unsafe, used for model_eval in Prolog; preferably use z3_model/1.
 */
 
 foreign_t z3_solver_get_model_foreign(term_t solver_term, term_t model_term) {
@@ -556,8 +556,6 @@ foreign_t z3_declaration_map_to_term(decl_map declaration_map, term_t result) {
       Z3_string sname_string = Z3_get_symbol_string(ctx, sname);
       PL_put_atom_chars(value_term, sname_string);
     }
-
-    // TODO: convert entire term on the lhs, in general.
 
     term_t pair = PL_new_term_ref();
     if (!PL_cons_functor(pair, pair_functor, key_term, value_term)) {
@@ -770,7 +768,7 @@ foreign_t z3_ast_to_term_internal(const Z3_context ctx, Z3_ast ast, term_t term)
 
   if (Z3_get_ast_kind(ctx, ast) == Z3_APP_AST) {
     Z3_app app = Z3_to_app(ctx, ast);
-    unsigned arity = Z3_get_app_num_args(ctx, app);
+    const unsigned arity = Z3_get_app_num_args(ctx, app);
     DEBUG("We have a Z3_app_ast of arity %d\n", arity);
     term_t subterms = PL_new_term_refs(arity);
     for (int i=0; i<arity; ++i) {
@@ -868,13 +866,12 @@ foreign_t z3_solver_pop_foreign(const term_t solver_term, const term_t npops, te
 
 /*
  Assert formula for solver.
- FIXME: can crash SWI Prolog by putting in a random int as the map or the solver solver.
+ unsafe: can crash SWI Prolog by putting in a random int as the solver pointer
 */
 
 foreign_t z3_assert_foreign(term_t solver_term, term_t formula) {
   int rval;
   const Z3_context ctx = get_context();
-
   decl_map declaration_map = global_context.declarations;
   
   Z3_solver solver;

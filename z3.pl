@@ -68,6 +68,7 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
 :- use_module(z3_swi_foreign, [
                   z3_assert/2,
                   z3_declarations_string/1,
+                  z3_enums_string/1,
                   z3_free_model/1,
                   z3_free_solver/1,
                   z3_declare_function/2,
@@ -232,7 +233,7 @@ z3_check(Status) :-
 z3_check_and_print(Status) :-
     check_status_arg(Status),
     get_global_solver(Solver),
-    z3_swi_foreign:z3_solver_check_and_print(Solver, Status).
+    z3_solver_check_and_print(Solver, Status).
     
 
 % returns a model for the current solver, if check succeeds:
@@ -278,18 +279,25 @@ valid_status_list([l_true, l_false, l_undef, l_type_error]).
 valid_status(X) :- valid_status_list(L), member(X, L).
 
 
+/*
 check_status_arg(Status) :- var(Status), !, true.
 check_status_arg(Status) :- nonvar(Status),
                             (valid_status(Status) -> true ; (
                                 valid_status_list(L),
                                 domain_error(L, Status)
                             )), !.
+*/
+check_status_arg(Status) :- valid_status_list(L),
+                            must_be((var; oneof(L)), Status).
 
 %% TODO: map "alldifferent" to "distinct".
 expand_macros(F, R) :- functor(F, isoneof, _N), !,
                        F =.. [isoneof | [X | Rest]],
                        maplist({X}/[V,X=V]>>true, Rest, L),
                        R =.. [or | L].
+expand_macros(F, R) :- functor(F, alldifferent, _N), !,
+                       F =.. [alldifferent | Rest],
+                       R =.. [distinct | Rest].
 expand_macros(X, X).
                        
 %% We now use backtrackable types in Prolog, resetting declarations at the first push.
@@ -349,7 +357,12 @@ declare_z3_types_for_symbols([X|Rest], M) :-
     declare_z3_types_for_symbols(Rest, M).
 
 
-print_declarations :- z3_declarations_string(S), current_output(Out), write(Out, S).
+print_declarations :-
+    current_output(Out),
+    z3_declarations_string(S),
+    writeln(Out, S),
+    z3_enums_string(S2),
+    writeln(Out, S2).
 
 z3_eval(Expression, Completion, Result) :-
     \+ is_list(Expression), !,

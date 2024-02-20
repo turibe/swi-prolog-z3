@@ -56,7 +56,7 @@ z3_model_map(M, Map) :- z3_model_functions(M, F),
 
 % gets a Prolog term representing a model for the given solver S:
 z3_model_map_for_solver(S, Model) :-
-    setup_call_cleanup(z3_solver_get_model(S,M),
+    setup_call_cleanup(z3_solver_get_model(S, M),
                        z3_model_map(M, Model),
                        z3_free_model(M)
                       ).
