@@ -24,7 +24,8 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
               z3_check/1,              % +Status Returns status of global solver: l_true, l_false, l_undet
               z3_check_and_print/1,    % +Status Returns status, prints model if possible
               z3_declare/2,            % +Formula,+Type    Declares Formula to have Type.
-              z3_eval/2,               % +Expression,-Result  Evals Expression in a current model, if the current solver is SAT.
+              z3_eval/2,               % +Expression,-Result  Evaluates Expression in a current model, if the current solver is SAT.
+              z3_eval/3,               % z3_eval, with boolean completion flag
               z3_is_consistent/1,      % +Formula  Succeeds if Formula is consistent with current solver/context. Fails if l_undet.
               z3_is_implied/1,         % +Formula  Succeeds if Formula is implied by current solver/context. Fails if l_undet.
               z3_declare_enum/2,
@@ -237,7 +238,8 @@ z3_check_and_print(Status) :-
 % returns a model for the current solver, if check succeeds:
 z3_model(Model) :-
     resolve_solver_depth(_),
-    z3_check(l_true),
+    z3_check(Status),
+    member(Status, [l_true, l_undef]), !,
     get_global_solver(S),
     z3_model_map_for_solver(S, Model).
 
@@ -349,25 +351,33 @@ declare_z3_types_for_symbols([X|Rest], M) :-
 
 print_declarations :- z3_declarations_string(S), current_output(Out), write(Out, S).
 
-z3_eval(Expression, Completion, Result) :-  \+ is_list(Expression),
-                                get_global_solver(S),
-                                z3_solver_check(S, Status),
-                                Status == l_true,
-                                replace_var_attributes(Expression, E1),
-                                setup_call_cleanup(
-                                    z3_solver_get_model(S, Model),
-                                    z3_swi_foreign:z3_model_eval(Model, E1, Completion, Result),
-                                    z3_free_model(Model)
-                                ).
+z3_eval(Expression, Completion, Result) :-
+    \+ is_list(Expression), !,
+    get_global_solver(S),
+    z3_solver_check(S, l_true),
+    replace_var_attributes(Expression, E1),
+    setup_call_cleanup(
+        z3_solver_get_model(S, Model),
+        z3_model_eval(Model, E1, Completion, Result),
+        z3_free_model(Model)
+    ).
+z3_eval(L, C, R) :-
+    is_list(L), !,
+    z3_eval_list(L, C, R).
 
 z3_eval(Expression, Result) :- z3_eval(Expression, false, Result).
 
 %% Map eval on a list:
-z3_eval([], []).
-z3_eval([X|Rest],[EX|Erest]) :-
-        z3_eval(X, EX),
-        z3_eval(Rest, Erest). % Cuold make more efficient, do only one check and one get_model.
-
+z3_eval_list(L, Completion, Result) :- must_be(list, L),
+                                       get_global_solver(S),
+                                       z3_solver_check(S, l_true),
+                                       replace_var_attributes(L, L1),
+                                       setup_call_cleanup(
+                                           z3_solver_get_model(S, Model),
+                                           maplist({Model, Completion}/[X]>>z3_model_eval(Model, X, Completion), L1, Result),
+                                           z3_free_model(Model)
+                                       ).
+                       
 
 %% A little inefficient for big terms, might be better to do in the C code eval:
 replace_var_attributes(X, A) :- var(X), get_attr(X, z3, A), !, true.
@@ -532,6 +542,11 @@ test(eval, [true(R == 6)]) :-
     z3_push(a = 2),
     z3_push(b = 3),
     z3_eval(a * b, R).
+
+test(eval_list, true(R == [3,4]) ) :-
+    z3_push(a = 1),
+    z3_push(b= 3),
+    z3_eval([1+2, a + b], true, R).
 
 test(undefs, [true(R2 == l_true)]) :-
     z3_push(power(a:real,b:int) = c, l_true), z3_push(c=2.0, R1), z3_push(a=2.0, R2),

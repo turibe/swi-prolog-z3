@@ -459,7 +459,7 @@ foreign_t z3_model_eval_foreign(term_t model_term, term_t term_to_eval, term_t c
   Z3_context ctx = get_context();
   Z3_ast to_eval = term_to_ast(ctx, declaration_map, term_to_eval);
   if (to_eval == NULL) {
-    return FALSE; // TODO: could return a status atom explaining what happened.
+    return FALSE; // Future: could return a status atom explaining what happened.
   }
   Z3_ast result_ast;
   bool result = Z3_model_eval(ctx,
@@ -1642,7 +1642,7 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
       CHECK_ARITY(name_string, 2, arity);
       result = Z3_mk_rem(ctx, subterms[0], subterms[1]);
     }
-    else if (strcmp(name_string, "power") == 0 || strcmp(name_string, "**") == 0) {
+    else if (strcmp(name_string, "power") == 0 || strcmp(name_string, "**") == 0 || strcmp(name_string, "^") == 0) {
       CHECK_ARITY(name_string, 2, arity);
       result = Z3_mk_power(ctx, subterms[0], subterms[1]);
     }

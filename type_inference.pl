@@ -59,6 +59,8 @@ signature(',', A, B) :- signature(and, A, B).
 signature(; , A, B) :- signature(or, A, B).
 signature(-> , A, B) :- signature(implies, A, B).
 signature(<=> , A, B) :- signature(iff, A, B).
+signature(**, A, B) :- signature(power, A, B).
+signature(^, A, B) :- signature(power, A, B).
 
 % Notation: "all(T)" means there can be an arbitrary number of arguments, all of type T.
 
@@ -110,7 +112,8 @@ signature(<=> , A, B) :- signature(iff, A, B).
 
 :- declare(power, [int, int], int).
 :- declare(power, [real, int], real).
-:- declare(power, [_T, real], real).
+:- declare(power, [int, real], real).
+:- declare(power, [real, real], real).
 
 :- declare(real2int, [real], int).
 :- declare(int2real, [int], real).
@@ -147,8 +150,7 @@ signature(<=> , A, B) :- signature(iff, A, B).
 :- declare(atleast, allthen(bool, int), bool).
 :- declare(atmost, allthen(bool, int), bool).
 
-% TODO: allow a list as a single argument, add list(T) opion.
-% isoneof(x, v1, v2, ...) is expanded to (x = v1 or x = v2 or ...)k
+% isoneof(x, v1, v2, ...) is expanded to (x = v1 or x = v2 or ...):
 :- declare(isoneof, T, all(T)).
 
 sub_type(int, real).
