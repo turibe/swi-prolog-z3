@@ -59,11 +59,13 @@ signature(',', A, B) :- signature(and, A, B).
 signature(; , A, B) :- signature(or, A, B).
 signature(-> , A, B) :- signature(implies, A, B).
 signature(<=> , A, B) :- signature(iff, A, B).
+signature(**, A, B) :- signature(power, A, B).
+signature(^, A, B) :- signature(power, A, B).
 
 % Notation: "all(T)" means there can be an arbitrary number of arguments, all of type T.
 
 :- declare(=, [T, T], bool).
-% for more flexible arithmetic, eventually, perhaps:
+% for more flexible arithmetic:
 % :- declare(=, [bool, real], bool). % not allowed by Z3
 % :- declare(=, [bool, int], bool). % not allowed by Z3
 :- declare(=, [real, int], bool). % works in Z3
@@ -75,6 +77,12 @@ signature(<=> , A, B) :- signature(iff, A, B).
 :- declare(<>, [real, bool], bool).
 :- declare(<>, [bool, real], bool).
 :- declare(<>, [bool, int], bool).
+
+:- declare(between, [T, T, T], bool).
+:- declare(between, [int, real, real], bool).
+:- declare(between, [int, int, real], bool).
+:- declare(between, [int, real, int], bool).
+:- declare(between, [int, real, real], bool).
 
 :- declare(distinct, all(_T), bool).
 
@@ -104,7 +112,8 @@ signature(<=> , A, B) :- signature(iff, A, B).
 
 :- declare(power, [int, int], int).
 :- declare(power, [real, int], real).
-:- declare(power, [_T, real], real).
+:- declare(power, [int, real], real).
+:- declare(power, [real, real], real).
 
 :- declare(real2int, [real], int).
 :- declare(int2real, [int], real).
@@ -141,6 +150,9 @@ signature(<=> , A, B) :- signature(iff, A, B).
 :- declare(atleast, allthen(bool, int), bool).
 :- declare(atmost, allthen(bool, int), bool).
 
+% isoneof(x, v1, v2, ...) is expanded to (x = v1 or x = v2 or ...):
+:- declare(isoneof, T, all(T)).
+
 sub_type(int, real).
 sub_type(bool, int).
 sub_type(bool, real).
@@ -167,6 +179,8 @@ typecheck(F, _, _, _) :- var(F), !, instantiation_error(F).
 typecheck(Term:Type, T, Envin, Envout) :- !, Type = T,
                                           typecheck(Term, Type, Envin, Envout).
 typecheck(X, int, E, E) :- integer(X), !.
+typecheck(true, bool, E, E) :- true, !.
+typecheck(false, bool, E, E) :- true, !.
 %% We could allow integer constants  to be real, but this leads to duplicate answers.
 %% Without this, we must use, e.g., 2.0 instead of 2 when warranted.
 %% typecheck(X, real, E, E) :- integer(X).

@@ -1,7 +1,10 @@
 %%% -*- Mode: Prolog; Module: type_inference_global_backtrackable; -*-
 
 :- module(type_inference_global_backtrackable, [
+              initialize_map/0,
               assert_type/2,
+              assert_formula_list_types/1,
+              set_map/1,
               get_map/1,               % -Assoc : gets map as an assoc
               get_map_list/1           % gets map as a list
           ]).
@@ -29,7 +32,6 @@ initialize_map(Map) :- nb_setval(global_typemap, Map).
 initialize_map :- empty_assoc(Empty),
 		  initialize_map(Empty).
 
-
 get_map(Map) :- b_getval(global_typemap, Map).
     
 set_map(Map) :- b_setval(global_typemap, Map).
@@ -45,16 +47,15 @@ assert_formula_list_types(L) :-
     set_map(Enew).
 
 
-
 assert_type(Term, Type) :- must_be(ground, Term),
                            get_map(E),
-                           typecheck(Term, Type, E, Enew),
+                           type_inference:typecheck(Term, Type, E, Enew),
                            set_map(Enew).
 
 
 %%%%%%%%%%%% unit tests %%%%%%%%%%%
 
-:- begin_tests(type_inference_global).
+:- begin_tests(type_inference_global, [setup(initialize_map)] ).
 
 test(init) :-
     get_map(E), empty_assoc(E).
