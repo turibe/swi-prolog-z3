@@ -304,6 +304,10 @@ test(nested_fail, [fail, setup(z3_make_solver(S)), cleanup(z3_free_solver(S))]) 
     z3_reset_declarations,
     z3_assert(S, f(a:int):int = 3).
 
+:- end_tests(z3_swi_foreign).
+
+:- begin_tests(basic_enums).
+
 test(enums, [setup((z3_reset_context, z3_make_solver(S))),
              cleanup((z3_free_solver(S), z3_reset_context))] ) :-
     z3_declare_enum(color, [black, white, red]),
@@ -312,4 +316,4 @@ test(enums, [setup((z3_reset_context, z3_make_solver(S))),
     z3_assert(S, a <> red),
     z3_solver_check(S, l_false).
 
-:- end_tests(z3_swi_foreign).
+:- end_tests(basic_enums).

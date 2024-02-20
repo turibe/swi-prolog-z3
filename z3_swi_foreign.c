@@ -15,14 +15,14 @@
 
      The main decision is how to handle state -- context, declarations and solvers.
 
-     It would be nice to embed the declarations in the context object, but this does not seem to be possible.
-     We then keep a map of signatures (name, arity, type) to declarations.
-     (We assume for now that functions are not overloaded by type or arity.)
+     It would be nice to embed all the function declarations in the context object; to get this, we define a "ContextStruct" object
+     that has the Z3 context, plus the function declarations.
 
-     For now, we go with one global, implicit context object.
-     everything else, including the declaration map, solvers, and models, is created and destroyed at the Prolog level.
-     
-     A more functional approach would get rid of the context too, and pass it as an argument.
+     This now includes enums and enum sorts. While normal declarations can be reset without having to create a new context,
+     Eums can't be reset without resetting the context too.
+
+     For now, we go with one global, implicit context+ object. Solvers and models are created and destroyed at the Prolog level.
+     (It is now trivial to support multiple "context+" objects if we needed to.)
      
 *****/
 
@@ -128,7 +128,7 @@ typedef struct ContextStruct *Context;
 
 functor_t pair_functor;
 
-Context global_context = NULL;
+// Context global_context = NULL;
 
 // struct EnumSortInfo global_enum_info;
 
@@ -148,22 +148,23 @@ void z3_swi_error_handler(Z3_context ctx, Z3_error_code e) {
   fprintf(stderr, "Z3 ERROR: code %ul %s\n", e, msg);
 }
 
+struct ContextStruct global_context;
 
 void z3_swi_initialize() {
   Z3_string version = Z3_get_full_version();
   fprintf(stderr, "Using Z3 version %s\n", version);
   fprintf(stderr, "Initializing global context\n");
 
-  if (global_context != NULL) {
-    z3_reset_context_foreign();
-  }
+  // if (global_context != NULL) {
+  //  z3_reset_context_foreign(); // GUILTY?
+  // }
+  // z3_reset_context_foreign();
   
-  global_context = malloc(sizeof(struct ContextStruct));
+  // global_context = malloc(sizeof(struct ContextStruct));
   
   Z3_config config = Z3_mk_config();
-
-  global_context->ctx = Z3_mk_context(config);
-  Z3_context ctx = global_context->ctx;
+  global_context.ctx = Z3_mk_context(config);
+  Z3_context ctx = global_context.ctx;
   INFO("Made context %p\n", ctx);
   
   Z3_set_error_handler(ctx, z3_swi_error_handler);
@@ -174,25 +175,27 @@ void z3_swi_initialize() {
   INT_SORT = Z3_mk_int_sort(ctx);
   REAL_SORT = Z3_mk_real_sort(ctx);
 
-  global_context->enum_sorts = Z3_mk_ast_map(ctx);
-  Z3_ast_map_inc_ref(ctx, global_context->enum_sorts);
-  global_context->enum_declarations = Z3_mk_ast_map(ctx);
-  Z3_ast_map_inc_ref(ctx, global_context->enum_declarations);
-  global_context->declarations = Z3_mk_ast_map(ctx);
-  Z3_ast_map_inc_ref(ctx, global_context->declarations);
+  global_context.enum_sorts = Z3_mk_ast_map(ctx);
+  Z3_ast_map_inc_ref(ctx, global_context.enum_sorts);
+  
+  global_context.enum_declarations = Z3_mk_ast_map(ctx);
+  Z3_ast_map_inc_ref(ctx, global_context.enum_declarations);
+  
+  global_context.declarations = Z3_mk_ast_map(ctx);
+  Z3_ast_map_inc_ref(ctx, global_context.declarations);
 
 }
 
 // todo: Z3_solver_get_statistics
 
-void print_map_stats(Context ctxstruct) {
-  Z3_context ctx = ctxstruct->ctx;
-  fprintf(stderr, "Declarations map has size %d\n", Z3_ast_map_size(ctx, global_context->declarations));
-  fprintf(stderr, "Enum sorts map has size %d\n", Z3_ast_map_size(ctx, global_context->enum_sorts));
-  fprintf(stderr, "Enum declarations map has size %d\n", Z3_ast_map_size(ctx, global_context->enum_declarations));
+void print_map_stats() {
+  Z3_context ctx = global_context.ctx;
+  fprintf(stderr, "Declarations map has size %d\n", Z3_ast_map_size(ctx, global_context.declarations));
+  fprintf(stderr, "Enum sorts map has size %d\n", Z3_ast_map_size(ctx, global_context.enum_sorts));
+  fprintf(stderr, "Enum declarations map has size %d\n", Z3_ast_map_size(ctx, global_context.enum_declarations));
 }
 
-Z3_context get_context() { return global_context->ctx; }
+Z3_context get_context() { return global_context.ctx; }
 
 
 foreign_t map_test_foreign() {
@@ -233,27 +236,31 @@ foreign_t map_test_foreign() {
 
 // resets declarations but not enums:
 foreign_t z3_reset_declarations_foreign() {
-  Z3_context ctx = global_context->ctx;
-  Z3_ast_map_reset(ctx, global_context->declarations);
+  Z3_context ctx = global_context.ctx;
+  Z3_ast_map_reset(ctx, global_context.declarations);
   return TRUE;
 }
 
 foreign_t z3_reset_context_foreign() {
-  Z3_context ctx = global_context->ctx;
+  Z3_context ctx = global_context.ctx;
   INFO("Calling reset_context for %p\n", ctx);
-  Z3_ast_map_reset(ctx, global_context->declarations);
-  Z3_ast_map_reset(ctx, global_context->enum_sorts);
-  Z3_ast_map_reset(ctx, global_context->enum_declarations);
-  // for good measure:
-  Z3_ast_map_dec_ref(ctx, global_context->enum_sorts);
-  Z3_ast_map_dec_ref(ctx, global_context->enum_declarations);
-  Z3_ast_map_dec_ref(ctx, global_context->declarations);
 
+  Z3_ast_map_reset(ctx, global_context.declarations);
+  Z3_ast_map_reset(ctx, global_context.enum_sorts);
+  Z3_ast_map_reset(ctx, global_context.enum_declarations);
+
+  // for good measure:
+  Z3_ast_map_dec_ref(ctx, global_context.declarations);
+  Z3_ast_map_dec_ref(ctx, global_context.enum_sorts);
+  Z3_ast_map_dec_ref(ctx, global_context.enum_declarations);
+  
   Z3_del_context(ctx);
-  free(global_context);
-  global_context = NULL;
+  // free(global_context);
+  // global_context = NULL;
   // Z3_finalize_memory(); // for good measure too? dangerous.
+
   z3_swi_initialize();
+
   return TRUE;
 }
 
@@ -336,7 +343,7 @@ void register_function_declaration(Z3_context ctx, decl_map declaration_map, Z3_
      // TODO: add enum declarations
 ***/
 foreign_t z3_declarations_string_foreign(term_t result) {
-  decl_map declaration_map = global_context->declarations;
+  decl_map declaration_map = global_context.declarations;
   Z3_context ctx = get_context();
   Z3_string rstring =  Z3_ast_map_to_string(ctx, declaration_map);
   return PL_unify_string_chars(result, rstring);
@@ -377,7 +384,7 @@ foreign_t z3_make_solver_foreign(term_t solver_term) {
   }
   Z3_context ctx = get_context();
   Z3_solver solver = Z3_mk_solver(ctx);
-  DEBUG( "made solver %p\n", (void *) solver );
+  INFO( "made solver %p\n", (void *) solver );
   Z3_solver_inc_ref(ctx, solver); // should be freed with z3_free_solver
   return PL_unify_pointer(solver_term, solver);
 }
@@ -438,7 +445,7 @@ foreign_t z3_model_eval_foreign(term_t model_term, term_t term_to_eval, term_t c
   int rval = PL_get_pointer_ex(model_term, (void **) &model);
   if (!rval) return rval;
   
-  decl_map declaration_map = global_context->declarations;
+  decl_map declaration_map = global_context.declarations;
 
   int completion = FALSE;
   rval = PL_get_bool_ex(completion_flag, &completion);
@@ -560,18 +567,18 @@ foreign_t z3_declaration_map_to_term(decl_map declaration_map, term_t result) {
 }
 
 foreign_t z3_get_enum_declarations_foreign(term_t result) {
-  return z3_declaration_map_to_term(global_context->enum_declarations, result);
+  return z3_declaration_map_to_term(global_context.enum_declarations, result);
 }
 
 foreign_t z3_get_declarations_foreign(term_t result) {
-  return z3_declaration_map_to_term(global_context->declarations, result);
+  return z3_declaration_map_to_term(global_context.declarations, result);
 }
 
 
 // Declare enumerations:
 // can only be called once for a given enum name, per context.
 // The resulting Z3_sort can be used by mk_var(ctx, varname, sort) or mk_func_decl.
-// enums are accumulated in global_context->enum_declarations.
+// enums are accumulated in global_context.enum_declarations.
 
 // +atom, +list
 foreign_t z3_declare_enum_foreign(term_t sort_name_term, term_t enum_names_list) {
@@ -587,7 +594,7 @@ foreign_t z3_declare_enum_foreign(term_t sort_name_term, term_t enum_names_list)
   
   Z3_ast key = mk_ast_key(ctx, sort_name_string, 0);
   // Check if already defined, prevent Z3 errors:
-  if (Z3_ast_map_contains(ctx, global_context->enum_sorts, key)) {
+  if (Z3_ast_map_contains(ctx, global_context.enum_sorts, key)) {
     INFO("enumeration sort %s already defined, can't re-define\n", sort_name_string);
     return FALSE;
   }
@@ -620,13 +627,13 @@ foreign_t z3_declare_enum_foreign(term_t sort_name_term, term_t enum_names_list)
 
   // enum_sorts should be in place before the function declarations!?
   DEBUG("Inserting key %s into enum_sorts\n", Z3_ast_to_string(ctx, key));
-  Z3_ast_map_insert(ctx, global_context->enum_sorts, key, (Z3_ast) s);  
+  Z3_ast_map_insert(ctx, global_context.enum_sorts, key, (Z3_ast) s);  
   
   for (i = 0; i < n; i++) {
     DEBUG("Registering %d/%ld enum_declaration %s\n", i, n, Z3_func_decl_to_string(ctx, enum_consts[i]));
-    register_function_declaration(ctx, global_context->enum_declarations, enum_names[i], 0, enum_consts[i]);
+    register_function_declaration(ctx, global_context.enum_declarations, enum_names[i], 0, enum_consts[i]);
   }
-  DEBUG("enum declarations has size %u\n", Z3_ast_map_size(ctx, global_context->enum_declarations));
+  DEBUG("enum declarations has size %u\n", Z3_ast_map_size(ctx, global_context.enum_declarations));
   // The type inference needs to know about this.
   // We reach down and get the declarations from the global, and let that be the initial map when typechecking.
 
@@ -778,7 +785,7 @@ foreign_t z3_ast_to_term_internal(const Z3_context ctx, Z3_ast ast, term_t term)
 
 
 foreign_t term_to_z3_ast_foreign(term_t formula, term_t result) {
-  decl_map declaration_map = global_context->declarations;
+  decl_map declaration_map = global_context.declarations;
   Z3_context ctx = get_context();
   Z3_ast z3_ast = term_to_ast(ctx, declaration_map, formula);
   if (z3_ast == NULL) {
@@ -854,7 +861,7 @@ foreign_t z3_assert_foreign(term_t solver_term, term_t formula) {
   int rval;
   const Z3_context ctx = get_context();
 
-  decl_map declaration_map = global_context->declarations;
+  decl_map declaration_map = global_context.declarations;
   
   Z3_solver solver;
   rval = PL_get_pointer_ex(solver_term, (void **) &solver);
@@ -1015,7 +1022,7 @@ Z3_func_decl mk_func_decl(Z3_context ctx, decl_map declaration_map, const term_t
    
    Z3_func_decl result = get_function_declaration(ctx, declaration_map, name_string, arity);
    if (result == NULL) {
-     result = get_function_declaration(ctx, global_context->enum_declarations, name_string, arity);
+     result = get_function_declaration(ctx, global_context.enum_declarations, name_string, arity);
      if (result != NULL) {
        DEBUG("Found existing enum declaration for %s/%ld\n", name_string, arity);
        enum_found = true;
@@ -1061,7 +1068,7 @@ Z3_func_decl mk_func_decl(Z3_context ctx, decl_map declaration_map, const term_t
 foreign_t z3_declare_function_foreign(const term_t formula, const term_t range, term_t result) {
   atom_t name;
 
-  decl_map declaration_map = global_context->declarations;
+  decl_map declaration_map = global_context.declarations;
 
   size_t arity;
   int res = PL_get_name_arity(formula, &name, &arity);
@@ -1328,12 +1335,12 @@ Z3_sort mk_sort(Z3_context ctx, term_t expression) {
     // Check if there's an enumeration sort for it:
     Z3_ast key = mk_ast_key(ctx, name_string, 0);
     DEBUG("Looking for enum sort declaration for %s, key %s\n", name_string, Z3_ast_to_string(ctx, key));
-    if (!Z3_ast_map_contains(ctx, global_context->enum_sorts, key)) {
+    if (!Z3_ast_map_contains(ctx, global_context.enum_sorts, key)) {
       DEBUG("Did not find sort %s in enum_sorts map\n", name_string);
       // will make uninterpreted
     }
     else {
-      Z3_sort sort = (Z3_sort) Z3_ast_map_find(ctx, global_context->enum_sorts, key);
+      Z3_sort sort = (Z3_sort) Z3_ast_map_find(ctx, global_context.enum_sorts, key);
       DEBUG("Found enum sort declaration for %s\n", name_string);
       return sort;
     }
@@ -1434,7 +1441,7 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
     Z3_func_decl declaration = get_function_declaration(ctx, declaration_map, atom_string, 0);
     if (declaration == NULL) {
       DEBUG("did not find declaration for %s in declaration_map, trying enums\n", atom_string);
-      declaration = get_function_declaration(ctx, global_context->enum_declarations, atom_string, 0);
+      declaration = get_function_declaration(ctx, global_context.enum_declarations, atom_string, 0);
       if (declaration != NULL) {
         DEBUG("Found declaration for %s in enum_declarations\n", atom_string);
       }
@@ -1791,7 +1798,7 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
 // +Term, -Term.
 foreign_t z3_simplify_term_foreign(term_t tin, term_t tout) {
   Z3_context ctx = get_context();
-  decl_map declaration_map = global_context->declarations;
+  decl_map declaration_map = global_context.declarations;
 
   Z3_ast ast_in = term_to_ast(ctx, declaration_map, tin);
   if (ast_in == NULL) {

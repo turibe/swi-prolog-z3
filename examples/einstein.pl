@@ -2,8 +2,8 @@
 
 
 :- module(einstein, [
-              doit/1,
-              doit_enums/1,
+              solve/1,
+              solve_enums/1,
               declare_enums/0
               ]).
               
@@ -157,8 +157,8 @@ print_model(M) :- print_term(M, [right_margin(10)] ).
 
 assert_puzzle(M) :- all_assertions(All), push_assertions(All), z3_model(M).
 
-doit(M) :- z3:reset_globals, assert_puzzle(M), print_model(M).
-doit_enums(M) :- z3:reset_globals, declare_enums, assert_puzzle(M), print_model(M).
+solve(M) :- must_be(var, M), z3:reset_globals, assert_puzzle(M), print_model(M).
+solve_enums(M) :- must_be(var, M), z3:reset_globals, declare_enums, assert_puzzle(M), print_model(M).
 
 implies_test1 :- all_assertions(A), push_assertions(A),
                  z3_is_implied(norwegian = 1 and dane = 2 and brit = 3 and german = 4 and swede = 5).

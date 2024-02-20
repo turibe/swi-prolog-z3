@@ -79,7 +79,7 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
                   z3_get_enum_declarations/1
               ]).
 
-:- initialization(reset_global_solver).
+:- initialization(new_global_solver).
 
 
 %% old maps and solvers are invalidated:
@@ -87,23 +87,18 @@ z3_reset :-
     %% assertion(b_getval(solver_depth, 0)), %% test cleanup violates this
     (get_global_solver(Old) ->
          (
-             %% z3_free_solver(Old), %% causes crashes! Interacts with z3_del_context in z3_reset_context?
+             z3_free_solver(Old),
              nb_delete(global_solver)
          )
     ;
     true), 
     z3_reset_context,
-    reset_global_solver.
+    new_global_solver.
 
-/*
-    z3_make_solver(S),
-    nb_setval(global_solver, S),
-    nb_setval(solver_depth, 0).
-*/
 
-%% have a global variable, backtrackable, with the depth level.
-%% before the assert, check that variable, and pop the solver as many times as needed.
-
+%% To automatically pop the Z3 server when backtracking:
+%% solver_depth is a backtrackable variable, with the depth level.
+%% Before an assert, we check that variable, and pop the solver as many times as needed.
 
 
 %% indent according to solver pushes:
@@ -118,7 +113,7 @@ reset_globals :-
     %% z3_reset, %% crash without this; would be nice if it was not needed.
     z3_reset_declarations,
     %% the only way to really reset the enums is to get a new context.
-    reset_global_solver,
+    new_global_solver,
     reset_var_counts,
     %% type_inference:initialize. %% annoying that X:initialize works for any X.
     type_inference_global_backtrackable:initialize_map.
@@ -169,8 +164,8 @@ attr_unify_hook(Attr, Formula) :-
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %% should only be called at the top-most level:
-reset_global_solver :-
-    %% by now, we could have a new context, so can't free the solver    
+new_global_solver :-
+    %% by now, we could have a new context, so can't free the old solver
     z3_make_solver(S),
     nb_setval(global_solver, S),
     nb_setval(solver_depth, 0).
@@ -684,7 +679,7 @@ test(nested_uninterpreted) :-
 
 :- end_tests(boolean).
 
-:- begin_tests(enum, [setup(z3_reset), cleanup(z3_reset) ]).
+:- begin_tests(enums, [setup(z3_reset), cleanup(z3_reset) ]).
 
 test(enums_basic) :-
     z3_declare_enum(fruit, [apple, banana, pear]),
@@ -694,6 +689,6 @@ test(enums_basic) :-
     z3_model(M),
     assertion(M.constants == [x-banana]).
 
-:- end_tests(enum).
+:- end_tests(enums).
 
 :- include(z3_unit_tests).
