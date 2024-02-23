@@ -288,7 +288,7 @@ test(combined_bool_int, [setup(z3_make_solver(S)), cleanup(z3_free_solver(S)) ])
     z3_assert(S, f(a:int) > 1),
     z3_assert(S, f(b:bool) > 2),
     z3_solver_check(S, l_true),
-    z3_model_map_for_solver(S,Model),
+    z3_model_map_for_solver(S, Model),
     assertion(Model.constants == [a-4, b-false]).
 
 test(arity_error, [fail, setup(z3_make_solver(S)), cleanup(z3_free_solver(S)) ]) :-
@@ -312,6 +312,18 @@ test(nested_fail, [fail, setup(z3_make_solver(S)), cleanup(z3_free_solver(S))]) 
     z3_assert(S, f(a:int):int = 3).
 
 :- end_tests(z3_swi_foreign).
+
+:- begin_tests(z3_swi_foreign_bit_vectors).
+
+test(create) :-
+    z3_reset_declarations,
+    z3_make_solver(S),
+    z3_assert(S, a:bv(32) = mk_bv_numeral(32, 12345)),
+    z3_solver_check(S, R), z3_model_map_for_solver(S, Model),
+    assertion(Model.constants==[a-12345]),
+    z3_free_solver(S).
+
+:- end_tests(z3_swi_foreign_bit_vectors).
 
 :- begin_tests(basic_enums).
 

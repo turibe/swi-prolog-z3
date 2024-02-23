@@ -1324,6 +1324,8 @@ foreign_t z3_model_constants_foreign(term_t model_term, term_t list) {
   return rval;
 }
 
+// Makes a Z3 sort from a Prolog expression:
+
 Z3_sort mk_sort(Z3_context ctx, term_t expression) {
   switch (PL_term_type(expression)) {
   case PL_ATOM: {
@@ -1380,8 +1382,25 @@ Z3_sort mk_sort(Z3_context ctx, term_t expression) {
     }
 
     const char *name_string = PL_atom_chars(name);
-    DEBUG("sort expression %s has arity %lu\n", name_string, arity);
+    INFO("sort expression %s has arity %lu\n", name_string, arity);
 
+
+    // z3_make_solver(S), z3_assert(S, a:bv(10) = a), z3_solver_check(S, R), z3_solver_get_model(S, M), z3_model_eval(M, a, true, Eval).
+    
+    if (strcmp(name_string, "bv")==0) {
+      CHECK_ARITY(name_string, 1, arity);
+      term_t a = PL_new_term_ref();
+      res = PL_get_arg(1, expression, a);
+      if (!res) return FALSE;
+      int width;
+      res = PL_get_integer_ex(a, &width);
+      INFO("Making bit vector sort of width %d\n", width);
+      return Z3_mk_bv_sort(ctx, width);
+    }
+
+    // NEXT: fix z3_push(a = mk_bv_numeral(32, 123)).
+
+  /*
     term_t a = PL_new_term_ref();
     Z3_sort *subterms = calloc(arity, sizeof(Z3_sort));
     for (int n=1; n<=arity; n++) {
@@ -1390,12 +1409,10 @@ Z3_sort mk_sort(Z3_context ctx, term_t expression) {
       if (!res) {
         return FALSE;
       }
-      /*
       char *formula_string;
       if (PL_get_chars(a, &formula_string, CVT_WRITE)) {
         INFO("Calling mk_sort for subterm %s\n", formula_string);
       }
-      */
       subterms[n-1] = mk_sort(ctx, a); // datatypes use constructors, not subsorts.
       if (subterms[n-1] == NULL) {
         return NULL;
@@ -1403,7 +1420,9 @@ Z3_sort mk_sort(Z3_context ctx, term_t expression) {
     }
     // for bitvectors, subarg is an int.
     ERROR("WARN - need to finish compound case for mk_sort\n");
-    return NULL;
+  */
+  
+    return NULL;    
     break;
   case PL_VARIABLE: {
     // We'll do this in Prolog, rather than here, so fail:
@@ -1597,13 +1616,48 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
       return result;
     } // end ":" case
 
+    // NEXT: add special case for bv_numeral; subterm must be a vector of booleans, or perhaps also an int.
+    // See also prolog's getbit/2.
+
+    // NEXT: create bit-vector constants from PL terms, using Z3_mk_bv_numeral().
+    // subterms are C bools...
+
+    if (strcmp(name_string, "mk_bv_numeral")==0) {
+      CHECK_ARITY(name_string, 2, arity);
+      term_t sub1 = PL_new_term_ref();
+      res = PL_get_arg(1, formula, sub1);
+      int width;
+      PL_get_integer_ex(sub1, &width);
+      INFO("Got width %d\n", width);
+      if (width > 64) {
+        ERROR("We only support widths 64 or smaller, got %d\n", width);
+        return NULL;
+      }
+      term_t sub2 = PL_new_term_ref();
+      res = PL_get_arg(2, formula, sub2);
+      uint64_t const_term;
+      res = PL_get_uint64(sub2, &const_term);
+      INFO("Got int %llu\n", const_term);
+      bool * bits = malloc(width * sizeof(bool));
+      for (int i = 0 ; i < width; ++i) {
+        bits[i] = (const_term >> i) & 1;
+      }
+      return Z3_mk_bv_numeral(ctx, width, bits);
+      
+    }
+
+    // *************************** End special cases ********************/
+
+    
+    // *************************** Recursive call on subterms ***********/
+    
     term_t a = PL_new_term_ref();
     Z3_ast *subterms = calloc(arity, sizeof(Z3_ast));
     for (int n=1; n<=arity; ++n) {
       res = PL_get_arg(n, formula, a);
       DEBUG("term_to_ast: Argument %d, res is %d\n", n, res);
       assert(res);
-      subterms[n-1] = term_to_ast(ctx, declaration_map, a);
+      subterms[n-1] = term_to_ast(ctx, declaration_map, a); // Recursive call
       if (subterms[n-1] == NULL) {
         // INFO("Making subterm %d failed\n", n);
         free(subterms);
@@ -1771,6 +1825,33 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
       else {
         result = Z3_mk_atmost(ctx, arity-1, subterms, k);
       }
+    }
+
+    // ********************************************* bit vectors ************************************/
+
+    else if (strcmp(name_string, "bvnot") == 0) { // bitwise negation
+      CHECK_ARITY(name_string, 1, arity);
+      result = Z3_mk_bvnot(ctx, subterms[0]);
+    }
+    else if (strcmp(name_string, "bvand") == 0) {
+      CHECK_ARITY(name_string, 2, arity);
+      result = Z3_mk_bvand(ctx, subterms[0], subterms[1]);
+    }
+    else if (strcmp(name_string, "badd") == 0) {
+      CHECK_ARITY(name_string, 2, arity);
+      result = Z3_mk_bvadd(ctx, subterms[0], subterms[1]);
+    }
+    else if (strcmp(name_string, "bvor") == 0) {
+      CHECK_ARITY(name_string, 2, arity);
+      result = Z3_mk_bvor(ctx, subterms[0], subterms[1]);
+    }
+    else if (strcmp(name_string, "bvredand") == 0) {
+      CHECK_ARITY(name_string, 1, arity);
+      result = Z3_mk_bvredand(ctx, subterms[0]);
+    }
+    else if (strcmp(name_string, "bvredor") == 0) {
+      CHECK_ARITY(name_string, 1, arity);
+      result = Z3_mk_bvredor(ctx, subterms[0]);
     }
 
     // ********************************************* uninterpreted compound term_to_ast  ****************************************/
