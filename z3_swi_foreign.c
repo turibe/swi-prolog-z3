@@ -530,6 +530,34 @@ Z3_symbol mk_symbol(Z3_context ctx, term_t pl_term) {
 }
 
 
+foreign_t z3_sort_to_term(Z3_sort sort, term_t result) {
+  Z3_context ctx = get_context();
+  Z3_symbol sname = Z3_get_sort_name(ctx, sort);
+  Z3_sort_kind kind = Z3_get_sort_kind(ctx, sort);
+  int size_int;
+  term_t cons_term = PL_new_term_ref();
+  switch (kind) {
+  case Z3_BV_SORT:    
+    size_int = Z3_get_bv_sort_size(ctx, sort);
+    term_t size_term = PL_new_term_ref();
+    int res = PL_put_int64(size_term, size_int);
+    functor_t f = PL_new_functor(PL_new_atom(Z3_get_symbol_string(ctx, sname)), 1);
+    if (!PL_cons_functor(cons_term, f, size_term)) {
+      return FALSE;
+    }
+    break;
+  default:
+    {
+      term_t value_term = PL_new_term_ref();
+      Z3_string sname_string = Z3_get_symbol_string(ctx, sname);
+      int res = PL_put_atom_chars(cons_term, sname_string);  
+    }
+
+  } // end switch
+  return PL_unify(cons_term, result);  
+}
+
+
 // works for the function declaration map, not the sort declarations one:
 foreign_t z3_declaration_map_to_term(decl_map declaration_map, term_t result) {
   Z3_context ctx = get_context();
@@ -553,10 +581,8 @@ foreign_t z3_declaration_map_to_term(decl_map declaration_map, term_t result) {
     
     Z3_sort sort = Z3_get_range(ctx, value);
     Z3_symbol sname = Z3_get_sort_name(ctx, sort);
-    {
-      Z3_string sname_string = Z3_get_symbol_string(ctx, sname);
-      PL_put_atom_chars(value_term, sname_string);
-    }
+
+    int res = z3_sort_to_term(sort, value_term);
 
     term_t pair = PL_new_term_ref();
     if (!PL_cons_functor(pair, pair_functor, key_term, value_term)) {
@@ -575,6 +601,7 @@ foreign_t z3_get_enum_declarations_foreign(term_t result) {
   return z3_declaration_map_to_term(global_context.enum_declarations, result);
 }
 
+// TODO: for BV, return the width.
 foreign_t z3_get_declarations_foreign(term_t result) {
   return z3_declaration_map_to_term(global_context.declarations, result);
 }
@@ -1383,8 +1410,7 @@ Z3_sort mk_sort(Z3_context ctx, term_t expression) {
     }
 
     const char *name_string = PL_atom_chars(name);
-    INFO("sort expression %s has arity %lu\n", name_string, arity);
-
+    // INFO("sort expression %s has arity %lu\n", name_string, arity);
 
     // z3_make_solver(S), z3_assert(S, a:bv(10) = a), z3_solver_check(S, R), z3_solver_get_model(S, M), z3_model_eval(M, a, true, Eval).
     
@@ -1658,7 +1684,38 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
       Z3_ast arg = term_to_ast(ctx, declaration_map, sub1);
       result = Z3_mk_bv2int(ctx, arg, is_signed);
       return result;
-    }      
+    }
+    if (strcmp(name_string, "bvadd_no_overflow")==0
+      || strcmp(name_string, "bvmul_no_overflow") == 0
+      || strcmp(name_string, "bvsub_no_underflow") == 0) {
+      CHECK_ARITY(name_string, 3, arity);
+      term_t sub1 = PL_new_term_ref();
+      term_t sub2 = PL_new_term_ref();
+      term_t sub3 = PL_new_term_ref();
+      res = PL_get_arg(1, formula, sub1);
+      res = PL_get_arg(2, formula, sub2);
+      res = PL_get_arg(3, formula, sub3);
+      int is_signed;
+      if (!PL_get_bool(sub3, &is_signed)) {
+        ERROR("Third argument to %s should be boolean", name_string);
+        return NULL;
+      }
+      Z3_ast arg1 = term_to_ast(ctx, declaration_map, sub1);
+      Z3_ast arg2 = term_to_ast(ctx, declaration_map, sub2);
+      
+      if (strcmp(name_string, "bvadd_no_overflow") == 0) {
+        return Z3_mk_bvadd_no_overflow(ctx, arg1, arg2, is_signed);
+      }
+      else if (strcmp(name_string, "bvmul_no_overflow") == 0) {
+        return Z3_mk_bvmul_no_overflow(ctx, arg1, arg2, is_signed);
+      }
+      else {
+        assert(strcmp(name_string, "bvsub_no_underflow") == 0);
+        return Z3_mk_bvsub_no_underflow(ctx, arg1, arg2, is_signed);
+      }
+      assert(false); // unreachable
+    }
+
 
 
     // *************************** End special cases ********************/
@@ -1851,24 +1908,18 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
       CHECK_ARITY(name_string, 2, arity);
       result = Z3_mk_bvadd(ctx, subterms[0], subterms[1]);
     }
-    /* special case because of the extra arg, consolidate with above, bv2int
-    else if (strcmp(name_string, "bvadd_no_overflow") == 0) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_bvadd_no_overflow(ctx, subterms[0], subterms[1]);
-    }
     else if (strcmp(name_string, "bvadd_no_underflow") == 0) {
       CHECK_ARITY(name_string, 2, arity);
       result = Z3_mk_bvadd_no_underflow(ctx, subterms[0], subterms[1]);
-    }    
-    else if (strcmp(name_string, "bvmul_no_overflow") == 0) {
-      CHECK_ARITY(name_string, 3, arity);
-      result = Z3_mk_bvmul(ctx, subterms[0], subterms[1]);
     }
-    else if (strcmp(name_string, "bvsub_no_underflow") == 0) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_bvsub_no_underflow(ctx, subterms[0], subterms[1]);
-    }
+
+    /***
+        special cases because of the extra arg:
+        (strcmp(name_string, "bvadd_no_overflow") == 0)
+        (strcmp(name_string, "bvmul_no_overflow") == 0)
+        (strcmp(name_string, "bvsub_no_underflow") == 0)
     ***/
+    
     else if (strcmp(name_string, "bvand") == 0) {
       CHECK_ARITY(name_string, 2, arity);
       result = Z3_mk_bvand(ctx, subterms[0], subterms[1]);

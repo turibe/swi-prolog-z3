@@ -148,6 +148,27 @@ signature(^, A, B) :- signature(power, A, B).
 %%%% Bit-vector declarations
 :- declare(bv2int, [bv(_N),bool], int).
 
+%%%% use "bool_const" instead of bool here?
+:- declare(bv2add_no_overflow, [bv(N),bv(N), bool], bool).
+:- declare(bv2mul_no_overflow, [bv(N),bv(N), bool], bool).
+:- declare(bv2sub_no_overflow, [bv(N),bv(N), bool], bool).
+
+:- declare(bvadd, [bv(N), bv(N)], bv(N)).
+:- declare(bvadd_no_underflow, [bv(N), bv(N)], bool).
+:- declare(bvand, [bv(N), bv(N)], bv(N)).
+:- declare(bvashr, [bv(N), bv(N)], bv(N)).
+:- declare(bvlshr, [bv(N), bv(N)], bv(N)).
+:- declare(bvmul, [bv(N), bv(N)], bv(N)).
+:- declare(bvmul_no_underflow, [bv(N), bv(N)], bool).
+:- declare(bvnand, [bv(N), bv(N)], bv(N)).
+:- declare(bvneg, [bv(N)], bv(N)).
+:- declare(bvneg_no_overflow, [bv(N)], bool).
+:- declare(bvnor, [bv(N), bv(N)], bv(N)).
+:- declare(bvnot, [bv(N)], bv(N)).
+:- declare(bvor, [bv(N), bv(N)], bv(N)).
+:- declare(bvredand, [bv(N)], bv(N)).
+:- declare(bvredor, [bv(N)], bv(N)).
+
 %% TODO: investigate crash with z3_push(a:int = bv2int(c,true)).
 
 %% the result type depends on the value of an arg, so can't quite do this:
