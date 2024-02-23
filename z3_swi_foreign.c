@@ -963,7 +963,7 @@ foreign_t z3_solver_check_and_print_foreign(term_t solver_term, term_t status_ar
 // This approach leaves open the possibility of sharing declarations from one query to the next, in a more stateful API.
 
 
-Z3_func_decl mk_func_decl(Z3_context ctx, decl_map declaration_map, const term_t formula, term_t range) {
+Z3_func_decl mk_func_decl(Z3_context ctx, decl_map declaration_map, const term_t formula, term_t range_term) {
    atom_t name;
    size_t arity;
    int res;
@@ -1018,14 +1018,14 @@ Z3_func_decl mk_func_decl(Z3_context ctx, decl_map declaration_map, const term_t
      DEBUG("Made domain %s\n", Z3_ast_to_string(ctx, (Z3_ast) domain[i-1]));
    }
 
-   Z3_sort range_sort = mk_sort(ctx, range);
+   Z3_sort range_sort = mk_sort(ctx, range_term);
    if (range_sort == NULL) {
      ERROR("Got null for range_sort\n");
      char *fchars, *rchars;
      int res = PL_get_chars(formula, &fchars, CVT_WRITE);
      if (!res) fchars = NULL;
      ERROR("Formula was %s\n", fchars);
-     res = PL_get_chars(range, &fchars, CVT_WRITE);
+     res = PL_get_chars(range_term, &fchars, CVT_WRITE);
      if (!res) fchars = NULL;
      ERROR("Range was %s\n", fchars);
      free(domain);
@@ -1100,10 +1100,11 @@ foreign_t z3_declare_function_foreign(const term_t formula, const term_t range, 
       return FALSE;
     }
   }
-  if (!PL_is_atom(range)) {
+  /* if (!PL_is_atom(range)) {
     ERROR("z3_declare_function range should be an atom\n");
     return FALSE;
   }
+  */
   if (!PL_is_ground(formula)) {
     ERROR("z3_declare_function should have ground arguments\n");
     return FALSE;
@@ -1616,13 +1617,9 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
       return result;
     } // end ":" case
 
-    // NEXT: add special case for bv_numeral; subterm must be a vector of booleans, or perhaps also an int.
     // See also prolog's getbit/2.
 
-    // NEXT: create bit-vector constants from PL terms, using Z3_mk_bv_numeral().
-    // subterms are C bools...
-
-    if (strcmp(name_string, "mk_bv_numeral")==0) {
+    if (strcmp(name_string, "bv_numeral")==0) {
       CHECK_ARITY(name_string, 2, arity);
       term_t sub1 = PL_new_term_ref();
       res = PL_get_arg(1, formula, sub1);
@@ -1829,21 +1826,11 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
 
     // ********************************************* bit vectors ************************************/
 
+    // TODO: add type inference rules for these:
+    
     else if (strcmp(name_string, "bvnot") == 0) { // bitwise negation
       CHECK_ARITY(name_string, 1, arity);
       result = Z3_mk_bvnot(ctx, subterms[0]);
-    }
-    else if (strcmp(name_string, "bvand") == 0) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_bvand(ctx, subterms[0], subterms[1]);
-    }
-    else if (strcmp(name_string, "badd") == 0) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_bvadd(ctx, subterms[0], subterms[1]);
-    }
-    else if (strcmp(name_string, "bvor") == 0) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_bvor(ctx, subterms[0], subterms[1]);
     }
     else if (strcmp(name_string, "bvredand") == 0) {
       CHECK_ARITY(name_string, 1, arity);
@@ -1853,6 +1840,84 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
       CHECK_ARITY(name_string, 1, arity);
       result = Z3_mk_bvredor(ctx, subterms[0]);
     }
+    else if (strcmp(name_string, "bvand") == 0) {
+      CHECK_ARITY(name_string, 2, arity);
+      result = Z3_mk_bvand(ctx, subterms[0], subterms[1]);
+    }
+    else if (strcmp(name_string, "bvor") == 0) {
+      CHECK_ARITY(name_string, 2, arity);
+      result = Z3_mk_bvor(ctx, subterms[0], subterms[1]);
+    }
+    else if (strcmp(name_string, "bvxor") == 0) {
+      CHECK_ARITY(name_string, 2, arity);
+      result = Z3_mk_bvxor(ctx, subterms[0], subterms[1]);
+    }
+    else if (strcmp(name_string, "bvnand") == 0) {
+      CHECK_ARITY(name_string, 2, arity);
+      result = Z3_mk_bvand(ctx, subterms[0], subterms[1]);
+    }
+    else if (strcmp(name_string, "bvnor") == 0) {
+      CHECK_ARITY(name_string, 2, arity);
+      result = Z3_mk_bvnor(ctx, subterms[0], subterms[1]);
+    }
+    else if (strcmp(name_string, "bvxnor") == 0) {
+      CHECK_ARITY(name_string, 2, arity);
+      result = Z3_mk_bvxnor(ctx, subterms[0], subterms[1]);
+    }
+    else if (strcmp(name_string, "bvneg") == 0) {
+      CHECK_ARITY(name_string, 1, arity);
+      result = Z3_mk_bvneg(ctx, subterms[0]);
+    }
+    else if (strcmp(name_string, "bvadd") == 0) {
+      CHECK_ARITY(name_string, 2, arity);
+      result = Z3_mk_bvadd(ctx, subterms[0], subterms[1]);
+    }
+    else if (strcmp(name_string, "bvsub") == 0) {
+      CHECK_ARITY(name_string, 2, arity);
+      result = Z3_mk_bvsub(ctx, subterms[0], subterms[1]);
+    }
+    else if (strcmp(name_string, "bvmul") == 0) {
+      CHECK_ARITY(name_string, 2, arity);
+      result = Z3_mk_bvmul(ctx, subterms[0], subterms[1]);
+    }
+    else if (strcmp(name_string, "bvudiv") == 0) {
+      CHECK_ARITY(name_string, 2, arity);
+      result = Z3_mk_bvudiv(ctx, subterms[0], subterms[1]);
+    }
+    else if (strcmp(name_string, "bvsdiv") == 0) {
+      CHECK_ARITY(name_string, 2, arity);
+      result = Z3_mk_bvsdiv(ctx, subterms[0], subterms[1]);
+    }
+    else if (strcmp(name_string, "bvurem") == 0) {
+      CHECK_ARITY(name_string, 2, arity);
+      result = Z3_mk_bvurem(ctx, subterms[0], subterms[1]);
+    }
+    else if (strcmp(name_string, "bvsrem") == 0) {
+      CHECK_ARITY(name_string, 2, arity);
+      result = Z3_mk_bvsrem(ctx, subterms[0], subterms[1]);
+    }
+    else if (strcmp(name_string, "bvsmod") == 0) {
+      CHECK_ARITY(name_string, 2, arity);
+      result = Z3_mk_bvsmod(ctx, subterms[0], subterms[1]);
+    }
+    else if (strcmp(name_string, "bvult") == 0) {
+      CHECK_ARITY(name_string, 2, arity);
+      result = Z3_mk_bvult(ctx, subterms[0], subterms[1]);
+    }
+    else if (strcmp(name_string, "bvslt") == 0) {
+      CHECK_ARITY(name_string, 2, arity);
+      result = Z3_mk_bvslt(ctx, subterms[0], subterms[1]);
+    }
+    else if (strcmp(name_string, "bvule") == 0) {
+      CHECK_ARITY(name_string, 2, arity);
+      result = Z3_mk_bvule(ctx, subterms[0], subterms[1]);
+    }
+    else if (strcmp(name_string, "bvsle") == 0) {
+      CHECK_ARITY(name_string, 2, arity);
+      result = Z3_mk_bvsle(ctx, subterms[0], subterms[1]);
+    }
+    // TODO: add rest
+
 
     // ********************************************* uninterpreted compound term_to_ast  ****************************************/
     else { // uninterpreted function

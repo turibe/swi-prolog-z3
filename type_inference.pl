@@ -186,7 +186,7 @@ typecheck(false, bool, E, E) :- true, !.
 %% typecheck(X, real, E, E) :- integer(X).
 typecheck(X, real, E, E) :- float(X), !.
 typecheck(X, string, E, E) :- string(X), !.
-typecheck(mk_bv_numeral(N, I), bv(N), E, E) :- !, integer(N), integer(I).
+typecheck(bv_numeral(N, I), bv(N), E, E) :- !, integer(N), integer(I).
 typecheck(X, T, Envin, Envout) :- atomic_mappable(X), !,
                                   (get_assoc(X, Envin, T1) ->
                                        T = T1, %% unify_or_error(T, T1), % print error if this fails

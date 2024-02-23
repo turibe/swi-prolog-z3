@@ -416,6 +416,9 @@ z3_declare(F, int) :- integer(F), !, true.
 z3_declare(F, real) :- float(F), !, true.
 z3_declare(F, T) :- atom(T), !,
                     z3_declare_function(F, T).
+z3_declare(F, T) :- compound(T), functor(T, bv, 1), !,
+                    ground(T),
+                    z3_declare_function(F, T).
 z3_declare(F, T) :- var(T), !,
                     T = uninterpreted,
                     z3_declare_function(F, T).
@@ -717,6 +720,16 @@ test(nested_uninterpreted) :-
     z3_model(_M).
 
 :- end_tests(boolean).
+
+:- begin_tests(z3pl_bitvectors).
+
+test(basicor, [true((Ror == 9, Rand == 0))]) :-
+    z3_push(a = bv_numeral(32, 1)),
+    z3_push(b = bv_numeral(32, 8)),
+    z3_eval(bvor(a,b), Ror),
+    z3_eval(bvand(a,b), Rand).
+
+:- end_tests(z3pl_bitvectors).
 
 :- begin_tests(enums).
 
