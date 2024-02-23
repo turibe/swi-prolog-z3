@@ -145,6 +145,14 @@ signature(^, A, B) :- signature(power, A, B).
 :- declare(false, [], bool).
 :- declare(ite, [bool, T, T], T).
 
+%%%% Bit-vector declarations
+:- declare(bv2int, [bv(_N),bool], int).
+
+%% TODO: investigate crash with z3_push(a:int = bv2int(c,true)).
+
+%% the result type depends on the value of an arg, so can't quite do this:
+%% :- declare(bv_numeral, [int, int], bv(_N)).
+
 % atleast and atmost take any number of bools followed by an int:
 
 :- declare(atleast, allthen(bool, int), bool).
@@ -186,7 +194,17 @@ typecheck(false, bool, E, E) :- true, !.
 %% typecheck(X, real, E, E) :- integer(X).
 typecheck(X, real, E, E) :- float(X), !.
 typecheck(X, string, E, E) :- string(X), !.
-typecheck(bv_numeral(N, I), bv(N), E, E) :- !, integer(N), integer(I).
+typecheck(T, bv(N), E, E) :- functor(T, bv_numeral, _), !,
+                             T = bv_numeral(N, I),
+                             integer(N),
+                             integer(I).
+/*
+typecheck(T, int, Envin, Envout) :- functor(T, bv2int, _),
+                                    T = bv2int(A,B),
+                                    ground(B),
+                                    member(B, [true, false]), !,
+                                    typecheck(A, bv(_N), Envin, Envout).
+*/
 typecheck(X, T, Envin, Envout) :- atomic_mappable(X), !,
                                   (get_assoc(X, Envin, T1) ->
                                        T = T1, %% unify_or_error(T, T1), % print error if this fails

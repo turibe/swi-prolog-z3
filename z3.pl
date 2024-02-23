@@ -416,8 +416,9 @@ z3_declare(F, int) :- integer(F), !, true.
 z3_declare(F, real) :- float(F), !, true.
 z3_declare(F, T) :- atom(T), !,
                     z3_declare_function(F, T).
-z3_declare(F, T) :- compound(T), functor(T, bv, 1), !,
-                    ground(T),
+z3_declare(F, T) :- compound(T),
+                    functor(T, bv, 1), !,
+                    must_be(ground, T),
                     z3_declare_function(F, T).
 z3_declare(F, T) :- var(T), !,
                     T = uninterpreted,

@@ -319,9 +319,20 @@ test(create) :-
     z3_reset_declarations,
     z3_make_solver(S),
     z3_assert(S, a:bv(32) = bv_numeral(32, 12345)),
-    z3_solver_check(S, R), z3_model_map_for_solver(S, Model),
+    z3_solver_check(S, R),
+    z3_model_map_for_solver(S, Model),
     assertion(Model.constants==[a-12345]),
     z3_free_solver(S).
+
+test(bv2int) :-
+    z3_reset_declarations,
+    z3_make_solver(S),
+    z3_assert(S, a:bv(32) = bv_numeral(32, -12345)),
+    z3_assert(S, b:int = bv2int(a, true)), % signed
+    z3_assert(S, c:int = bv2int(a, false)), % unsigned
+    z3_solver_check(S, R),
+    z3_model_map_for_solver(S, Model).
+
 
 %% add: z3_push(bvmul(a:bv(32),b:bv(32)) = mk_bv_numeral(32, 1)), z3_model(M).
 
