@@ -111,7 +111,9 @@ z3_reset :-
 
 
 %% indent according to solver pushes:
-report(T) :- indent, print(T), nl, flush_output.
+%% TODO: improve this reporting.
+%% report(type_error(T)) :- print(T), nl, flush_output.
+report(T) :- indent, writef(T), nl, flush_output.
 
 indent :- assert_depth(N),
           forall(between(1, N, _X), (print(---), print(N))).
@@ -334,9 +336,9 @@ z3_push(Foriginal, Status) :-
          )
     ;  (
         Status = l_type_error,
-        report(type_error(FG)),
         get_type_inference_map_list(L),
-        report(map(L))
+        swritef(Error, "Type error in term: %w\nMap was %w", [FG, L]),
+        report(Error)
     )
     ).
 
@@ -729,6 +731,12 @@ test(basicor, [true((Ror == 9, Rand == 0))]) :-
     z3_push(b = bv_numeral(32, 8)),
     z3_eval(bvor(a,b), Ror),
     z3_eval(bvand(a,b), Rand).
+
+test(neg_no_overflow, [true(C == [b-127])] )  :-
+    z3_push(false = bvneg_no_overflow(bvnot(b:bv(8))), R),
+    assertion(R = l_true),
+    z3_model(M),
+    M.constants = C.
 
 :- end_tests(z3pl_bitvectors).
 
