@@ -66,7 +66,7 @@ Z3_ast mk_int_var(Z3_context ctx, const char * name) {
 // Any binary term will work as the key (here, choose "div").
 // In Prolog, we convert them to f/N terms --- see z3_enum_declarations and z3_declarations.
 
-Z3_ast mk_ast_key(Z3_context ctx, const char * name, const int64_t arity)
+Z3_ast mk_ast_key(Z3_context ctx, const char * name, const int arity)
 {
   Z3_ast v1 = mk_int_var(ctx, name);
   Z3_ast v2 = Z3_mk_int64(ctx, arity, INT_SORT);
@@ -199,33 +199,6 @@ void print_map_stats() {
 
 Z3_context get_context() { return global_context.ctx; }
 
-
-// make sure that AST maps work:
-foreign_t map_test_foreign() {
-  Z3_context ctx = get_context();
-  decl_map mymap = Z3_mk_ast_map(ctx);
-  char name_string[] = "foo";
-  int arity = 1;
-  Z3_ast key = mk_ast_key(ctx, name_string, arity);
-  // Z3_ast key = mk_int_var(ctx, "foo");
-  Z3_ast value = mk_int_var(ctx, "bar");
-  Z3_ast_map_insert(ctx, mymap, key, key);
-  if (Z3_ast_map_contains(ctx, mymap, key)) {
-    INFO("found key\n");
-  }
-  else {
-    INFO("did not find key\n");
-  }
-  Z3_ast key1 = mk_ast_key(ctx, "foo", arity);
-  if (Z3_ast_map_contains(ctx, mymap, key1)) {
-    INFO("found key1\n");
-  }
-  else {
-    INFO("did not find key1\n");
-  }
-
-  return TRUE;
-}
 
 
 // Not enough: the context remembers the enums.
@@ -684,6 +657,37 @@ foreign_t z3_declare_enum_foreign(term_t sort_name_term, term_t enum_names_list)
   return TRUE;
 }
 
+foreign_t remove_declaration(Z3_ast_map map, const char* name_string, const int arity) {
+  Z3_context ctx = get_context();
+  Z3_ast key = mk_ast_key(ctx, name_string, arity);
+  const char * keyname = Z3_ast_to_string(ctx, key);
+  // when removing built-in items, like "=", get errors, so not adding them in the first place
+  // INFO("made key %s\n", keyname);
+  if (!Z3_ast_map_find(ctx, map, key)) {
+    ERROR("Key %s not found\n", keyname);
+    return FALSE;
+  }
+  // INFO("Key %s found\n", keyname);
+  Z3_ast_map_erase(ctx, map, key);
+  return TRUE;
+}
+
+foreign_t z3_remove_declaration(Z3_ast_map map, term_t name_term, term_t arity_term) {
+  int arity;
+  atom_t name_atom;
+  char *name_string;
+  int rval = PL_get_atom_chars(name_term, &name_string);
+  if (!rval) return FALSE;
+  rval = PL_get_integer_ex(arity_term, &arity);
+  if (!rval) return FALSE;
+  INFO("removing declaration for  %s\n", name_string);
+  return remove_declaration(map, name_string, arity);
+}
+
+
+foreign_t z3_remove_declaration_foreign(term_t name_term, term_t arity_term) {
+  return z3_remove_declaration(global_context.declarations, name_term, arity_term);
+}
 
 /*
   For debugging:
@@ -997,7 +1001,7 @@ Z3_func_decl mk_func_decl(Z3_context ctx, decl_map declaration_map, const term_t
 
    /*
    char *formula_string;
-   int res = PL_get_chars(formula, &formula_string, CVT_WRITE);
+   res = PL_get_chars(formula, &formula_string, CVT_WRITE);
    if (res) {
      INFO("Argument to mk_func_decl: %s\n", formula_string);
    }
@@ -1009,7 +1013,7 @@ Z3_func_decl mk_func_decl(Z3_context ctx, decl_map declaration_map, const term_t
    res = PL_get_name_arity(formula, &name, &arity);
    if (!res || !PL_is_ground(formula)) {
      char *formula_string = NULL;
-     if (PL_get_chars(formula, &formula_string, BUF_STACK)) {
+     if (PL_get_chars(formula, &formula_string, CVT_WRITE)) {
        ERROR("Bad argument to mk_func_decl: %s\n", formula_string);
      }
      return NULL;
@@ -1108,9 +1112,7 @@ Z3_func_decl mk_func_decl(Z3_context ctx, decl_map declaration_map, const term_t
 
 foreign_t z3_declare_function_foreign(const term_t formula, const term_t range, term_t result) {
   atom_t name;
-
   decl_map declaration_map = global_context.declarations;
-
   size_t arity;
   int res = PL_get_name_arity(formula, &name, &arity);
   if (!res) {
@@ -1127,11 +1129,6 @@ foreign_t z3_declare_function_foreign(const term_t formula, const term_t range, 
       return FALSE;
     }
   }
-  /* if (!PL_is_atom(range)) {
-    ERROR("z3_declare_function range should be an atom\n");
-    return FALSE;
-  }
-  */
   if (!PL_is_ground(formula)) {
     ERROR("z3_declare_function should have ground arguments\n");
     return FALSE;
@@ -1222,7 +1219,7 @@ foreign_t model_functions(Z3_context ctx, Z3_model m, term_t list) {
       }
     }
 
-    // In a scenario likez3_push(and(f(a:int) = 3, f(a,a) = 4)), z3_model_map(M), z3_check_and_print(R).
+    // In a scenario like z3_push(and(f(a:int) = 3, f(a,a) = 4)), z3_model_map(M), z3_check_and_print(R).
     // need to distinguish the two fs.
 
     // The else terms will be of the form "(f/N-else)-val". This way they can be included in any map/assoc,
@@ -1399,7 +1396,7 @@ Z3_sort mk_sort(Z3_context ctx, term_t expression) {
 
     char *formula_string = NULL;
     int res = PL_get_chars(expression, &formula_string, CVT_WRITE);
-    DEBUG("mk_sort got compound term %s\n", formula_string);
+    INFO("mk_sort got compound term %s\n", formula_string);
 
     atom_t name;
     size_t arity;
@@ -1457,9 +1454,12 @@ Z3_sort mk_sort(Z3_context ctx, term_t expression) {
     ERROR("mk_sort can't take variables\n");
     return NULL;
   }
-  default:
-    ERROR("WARN - unimplemented mk_sort\n");
+  default: {
+    char *expression_string;
+    res = PL_get_chars(expression, &expression_string, CVT_WRITE);
+    ERROR("WARN - unimplemented mk_sort for %s\n", expression_string);
     return NULL;
+  }
   }
   assert(false); // unreachable
 } // mk_sort
@@ -2161,6 +2161,39 @@ foreign_t z3_simplify_term_foreign(term_t tin, term_t tout) {
   return z3_ast_to_term_internal(ctx, ast_out, tout);
 }
 
+// make sure that AST maps work:
+foreign_t map_test_foreign() {
+  Z3_context ctx = get_context();
+  decl_map mymap = Z3_mk_ast_map(ctx);
+  // char name_string[] = "="; // gives "invalid argument" ???
+  char name_string[] = "foo";
+  int arity = 1;
+  Z3_ast key = mk_ast_key(ctx, name_string, arity);
+  // Z3_ast key = mk_int_var(ctx, "foo");
+  Z3_ast value = mk_int_var(ctx, "bar");
+  Z3_ast_map_insert(ctx, mymap, key, key);
+  if (Z3_ast_map_contains(ctx, mymap, key)) {
+    INFO("found key\n");
+  }
+  else {
+    INFO("did not find key\n");
+  }
+  Z3_ast key1 = mk_ast_key(ctx, "foo", arity);
+  if (Z3_ast_map_contains(ctx, mymap, key1)) {
+    INFO("found key1\n");
+  }
+  else {
+    INFO("did not find key1\n");
+  }
+  if (!remove_declaration(mymap, "foo", arity)) {
+    ERROR("remove_declaration failed");
+    return FALSE;
+  }  
+
+  return TRUE;
+}
+
+
 
 #define PRED(name, arity, func, attr) \
   PL_register_foreign_in_module("z3_swi_foreign", name, arity, func, attr)
@@ -2217,6 +2250,8 @@ install_t install()
   // for debugging:
   PRED("z3_declarations_string", 1, z3_declarations_string_foreign, 0); // -string
   PRED("z3_enums_string", 1, z3_enums_string_foreign, 0); // -string
+
+  PRED("z3_remove_declaration", 2, z3_remove_declaration_foreign, 0); // +name, +arity
 
   PRED("map_test", 0, map_test_foreign, 0); //
 

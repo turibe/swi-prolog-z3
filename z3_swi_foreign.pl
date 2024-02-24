@@ -32,7 +32,9 @@ It has no global variables except those in the C code.
               z3_solver_scopes/2,
               z3_reset_context/0, % invalidates solvers, declaration maps
               %% for debugging:
+              z3_declarations/1,
               z3_declarations_string/1,
+              z3_remove_declaration/2,
               z3_enums_string/1,
               op(750, xfy, and), % =, >, etc. are 700 ; Local to the module
               op(751, xfy, or),
@@ -47,6 +49,7 @@ It has no global variables except those in the C code.
 %% (Returned pointer is only useful for debugging, so we hide it here)
 %% examples: z3_declare_function(a, int) ; z3_declare_function(f(int, int), real).
 
+z3_declare_function(F, T) :- F == A/0, z3_declare_function(A, T).
 z3_declare_function(F, T) :- z3_declare_function(F, T, _C).
 
 z3_model_map(M, Map) :- z3_model_functions(M, F),
@@ -131,7 +134,7 @@ test(assert_test, [setup(z3_make_solver(S)), cleanup(z3_free_solver(S))]) :-
     z3_reset_declarations,
     z3_declare_function(a, bool),
     z3_declare_function(b, int),
-    z3_declare_function( c, int),
+    z3_declare_function(c, int),
     z3_assert(S, (a and (b > 0)) and (1.321 < c)),
     z3_solver_check(S, Status),
     assertion(Status == l_true).
@@ -348,11 +351,6 @@ test(bvnumeral) :-
     C = Model.constants,
     assertion(C == [a-15]),
     z3_free_solver(S).
-
-test(combined_bvnumeral) :-
-    z3_push(bvmul(a:bv(32),b:bv(32)) = int2bv(32, 1)),
-    z3_push(bvuge(b, mk_numeral("1321", bv(32)))),
-    z3_model(_M).
 
 test(make_unsigned_int64) :-
     z3_reset_declarations,

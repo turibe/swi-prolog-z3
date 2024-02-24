@@ -6,7 +6,18 @@
               reset/0,
               declarations/1,
               model/1,
-              scopes/1
+              scopes/1,
+              decl/1,
+              implies/1,
+              is_implied/1,
+
+              % can this repetition be avoided?
+              op(750, xfy, and), % =, >, etc. are 700
+              op(751, xfy, or),
+              op(740, xfy, <>),  % different-than
+              op(739, xfy, <=>), % iff
+              op(199, xfy, :)
+
               ]).
 
 :- use_module(z3_swi_foreign, [
@@ -18,7 +29,9 @@
                   z3_solver_check/2,
                   z3_model_map_for_solver/2,
                   z3_solver_pop/3,
-                  z3_solver_scopes/2
+                  z3_solver_scopes/2,
+                  z3_declarations/1,
+                  z3_remove_declaration/2
               ]).
 
 :- use_module(z3, [
@@ -50,8 +63,6 @@ set_type_map(M) :- nb_setval(typecheck_map, M).
 get_recorded_formulas(L) :- nb_current(recorded_formulas, L).
 set_recorded_formulas(L) :- nb_setval(recorded_formulas, L).
 
-
-
 record_formula(F) :- get_recorded_formulas(L),
                      append([[F], L], New),
                      set_recorded_formulas(New).
@@ -67,7 +78,8 @@ reset_globals :- (get_global_solver(S) -> z3_free_solver(S) ; true),
                  true.
 
 
-add_formula(Formula) :-
+%% FIXME: does a pop if check fails, removing the new symbols too.
+push_formula(Formula, NewMap, NewSymbols, Status) :-
     %% must_be(ground, Formula),
     get_type_map(OldAssoc),
     ground_version(Formula, FG, Symbols),
@@ -78,16 +90,33 @@ add_formula(Formula) :-
     z3_solver_push(Solver,_),
     remove_type_annotations(FG, FG_notypes),
     z3_assert(Solver, FG_notypes),
-    z3_solver_check(Solver, Status), %% FIXME: do a pop if check fails
-    (Status == l_false -> (z3_solver_pop(Solver, 1, _) , fail)
-    ;
-    (
-        member(Status, [l_true, l_undef]), !,
-        set_type_map(NewMap),
-        record_formula(Formula)
-    )
-    ).
+    z3_solver_check(Solver, Status).
 
+
+
+remove_one(F/N) :- z3_remove_declaration(F, N).
+%% remove_declarations(L) :- maplist(remove_one,L).
+remove_declarations([]) :- true.
+remove_declarations([X|Rest]) :-
+    (remove_one(X) -> true ; true), !, remove_declarations(Rest).
+
+add_formula(F) :- push_formula(F, NewMap, NewSymbols, Status),
+                  (member(Status, [l_false, l_type_error])  -> (
+                                           get_global_solver(Solver),
+                                           z3_solver_pop(Solver, 1, _),
+                                           remove_declarations(NewSymbols),
+                                           fail
+                                        )
+                  ; (
+                      set_type_map(NewMap),
+                      record_formula(F)
+                  )).
+                  
+decl(M) :-
+    z3_declarations(Z),
+    declarations(D),
+    M = {z3:Z, pl:D}.
+    
 %% user-visible:
 
 add(F) :- add_formula(F).
@@ -103,20 +132,15 @@ model(Model) :- get_global_solver(S),
 scopes(N) :- get_global_solver(S),
              z3_solver_scopes(S, N).
 
-/** TODO: need a local "push" operation that doesn't change global variables.
-is_implied(F) :- get_global_solver(S),
-                 z3_solver_push(S, not(F)),
-                 z3_solver_check(S, Status),
-                 (Status == l_true -> (z3_solver_pop(S), fail)
-                 ;
-                 (Status == l_undef -> (z3_solver_pop(S), fail)
-                 ;
-                 (Status == l_type_error -> fail
-                 ;
-                 (
-                     popn(1)
-                 ))));
-*/
+
+is_implied(F) :-
+    push_formula(not(F), _NewMap, NewSymbols, Status),
+    get_global_solver(Solver),
+    z3_solver_pop(Solver, 1, _),
+    remove_declarations(NewSymbols),
+    Status == l_false.
+
+implies(X) :- is_implied(X).
     
 /****
 %% give option to pop last asserted thing? But types remain...

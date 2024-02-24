@@ -59,7 +59,8 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
               ]).
 
 :- use_module(type_inference, [
-                  typecheck/4
+                  typecheck/4,
+                  mappable_symbol/1
                   ]).
 
 :- use_module(library(assoc)).
@@ -258,11 +259,12 @@ z3_model_assoc(Model) :-
 
 % We now allow overloading by arity.
 
-% Grounds any variables in X, and also returns the symbols it finds, using f/N for arities bigger than 1:
+% Grounds any variables in X, and also returns the symbols it finds, using f/N for all arities, including 0:
 
-ground_version(X, Attr, [Attr]) :- var(X), !, add_attribute(X, Attr).
+ground_version(X, Attr, [Attr/0]) :- var(X), !, add_attribute(X, Attr).
 ground_version(X, X, S) :- number(X), !, ord_empty(S).
-ground_version(X, X, [X]) :- atomic(X), !, true.
+ground_version(X, X, [X/0]) :- atom(X), mappable_symbol(X), !, true.
+ground_version(X, X, S) :- atomic(X), !, ord_empty(S).
 ground_version(C, XG:T, Result) :- compound(C), C = X:T, !,
                                    (ground(T) -> true ; type_error(ground, T)),
                                    ground_version(X, XG, Result).
@@ -271,7 +273,10 @@ ground_version(X, G, Result) :- compound(X),
                                 X =.. [F|Rest],
                                 ground_list(Rest, Grest, R),
                                 G =.. [F|Grest],
-                                ord_add_element(R, F/Arity, Result).
+                                (mappable_symbol(F) -> 
+                                    ord_add_element(R, F/Arity, Result)
+                                ;
+                                Result = R).
 ground_version([], [], []).
 
 remove_type_annotations(X, X) :- atomic(X), !.
@@ -414,6 +419,7 @@ get_term_for_var(X, T) :- var(X),
 %% z3_declare updates the internal (C) Z3 decl map:
 
 z3_declare(F:T) :- z3_declare(F, T). %% take care of explicit types
+z3_declare(F/0, T) :- !, z3_declare(F, T).
 z3_declare(F, T) :- var(F), !,
                     add_attribute(F, Attr),
                     z3_declare(Attr, T).
@@ -477,6 +483,20 @@ z3_is_implied(F) :- z3_push(not(F), Status),
 
 %%%%%%%%%%%%%%%%%%%%%%%%%% unit tests %%%%%%%%%%%%%%%%%
 
+:- begin_tests(test_utils).
+
+test(ground_version, true(Symbols == [a/0, b/0, c/0, f/1, g/0]) ) :-
+    F = and(a:int, b = c, or(f(a) = g)),
+    ground_version(F, FG, Symbols),
+    assertion(F == FG),
+    true.
+
+test(remove_annotations, FN=and(a, b = c)) :-
+    F = and(a:int, b = c:real),
+    remove_type_annotations(F, FN).
+
+:- end_tests(test_utils).
+
 
 :- begin_tests(push_assert, [setup(reset_globals)]).
 
@@ -503,7 +523,7 @@ test(typetest, [true(A-F == int-lambda([foobarsort], int)) , nondet ] ) :-
     test_formulas(Formulas),
     assert_formula_list_types(Formulas),
     get_type_inference_map(Map),
-    get_assoc(a, Map, A),
+    get_assoc(a/0, Map, A),
     get_assoc(f/1, Map, F).
 
 test(nonsat, [true(R1 == l_true), true(R2 == l_false)] ) :-
@@ -766,6 +786,12 @@ test(push_numeral) :-
     z3_push(signed = bv2int(a, true)),
     z3_push(unsigned = bv2int(a, false)),
     z3_model(_M).
+
+test(combined_bvnumeral) :-
+    z3_push(bvmul(a:bv(32),b:bv(32)) = int2bv(32, 1)),
+    z3_push(bvuge(b, mk_numeral("1321", bv(32)))),
+    z3_model(_M).
+
 
 :- end_tests(z3pl_bitvectors).
 
