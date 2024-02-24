@@ -1399,7 +1399,7 @@ Z3_sort mk_sort(Z3_context ctx, term_t expression) {
 
     char *formula_string = NULL;
     int res = PL_get_chars(expression, &formula_string, CVT_WRITE);
-    INFO("mk_sort got compound term %s\n", formula_string);
+    DEBUG("mk_sort got compound term %s\n", formula_string);
 
     atom_t name;
     size_t arity;
@@ -1683,7 +1683,7 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
     if (strcmp(name_string, MK_NUMERAL)==0 ||
         strcmp(name_string, "mk_unsigned_int64")==0) { // confusing name, makes something of the specified sort.
       // get sort from second argument:
-      INFO("numeral/unsigned_int64 case\n");
+      DEBUG("numeral/unsigned_int64 case\n");
       term_t sort_term = PL_new_term_ref();
       res = PL_get_arg(2, formula, sort_term);
       if (!res) return NULL;
