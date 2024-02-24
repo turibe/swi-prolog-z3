@@ -1,4 +1,4 @@
-%%% -*- Mode: Prolog; Module: z3; -*-
+%%% -*- Mode: Prolog; Module: z3; -*-.
 
 /** <module> Prolog documentation processor
 
@@ -326,10 +326,10 @@ z3_push(Foriginal, Status) :-
     %% updates the type inference map:
     (assert_type(FG, bool) ->
          (
-             get_type_inference_map(Assoc),
              %% Only need to declare new symbols:
              exclude(>>({OldAssoc}/[X], get_assoc(X, OldAssoc, _Y)), Symbols, NewSymbols),
              %% writeln(compare(Symbols, NewSymbols)),
+             get_type_inference_map(Assoc),
              declare_z3_types_for_symbols(NewSymbols, Assoc),
              push_solver(Solver),
              %% We now remove ":" terms from FG. Unfortunately, this can't be done by "ground_version", because
