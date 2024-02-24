@@ -51,7 +51,7 @@
 
 Z3_sort BOOL_SORT, INT_SORT, REAL_SORT;
 
-int numeric_sort(Z3_context ctx, Z3_sort s) {
+bool numeric_sort(Z3_context ctx, Z3_sort s) {
   // return(s == BOOL_SORT || s == INT_SORT || s == REAL_SORT);
   Z3_sort_kind k = Z3_get_sort_kind(ctx, s);
   return (k == Z3_BOOL_SORT || k == Z3_INT_SORT || k == Z3_REAL_SORT);
@@ -66,7 +66,7 @@ Z3_ast mk_int_var(Z3_context ctx, const char * name) {
 // Any binary term will work as the key (here, choose "div").
 // In Prolog, we convert them to f/N terms --- see z3_enum_declarations and z3_declarations.
 
-Z3_ast mk_ast_key(Z3_context ctx, const char * name, const size_t arity)
+Z3_ast mk_ast_key(Z3_context ctx, const char * name, const int64_t arity)
 {
   Z3_ast v1 = mk_int_var(ctx, name);
   Z3_ast v2 = Z3_mk_int64(ctx, arity, INT_SORT);
