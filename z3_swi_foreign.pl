@@ -113,7 +113,7 @@ test(model_eval,  [setup(z3_make_solver(S)), cleanup(z3_free_solver(S))])  :-
     z3_declare_function(a, int),
     z3_declare_function(b, int),
     z3_assert(S, a=3),
-    z3_assert(S, b=2),    
+    z3_assert(S, b=2),
     z3_solver_check(S, Status),
     assertion(Status == l_true),
     z3_solver_get_model(S, Model),
@@ -288,7 +288,7 @@ test(combined_bool_int, [setup(z3_make_solver(S)), cleanup(z3_free_solver(S)) ])
     z3_assert(S, f(a:int) > 1),
     z3_assert(S, f(b:bool) > 2),
     z3_solver_check(S, l_true),
-    z3_model_map_for_solver(S,Model),
+    z3_model_map_for_solver(S, Model),
     assertion(Model.constants == [a-4, b-false]).
 
 test(arity_error, [fail, setup(z3_make_solver(S)), cleanup(z3_free_solver(S)) ]) :-
@@ -312,6 +312,70 @@ test(nested_fail, [fail, setup(z3_make_solver(S)), cleanup(z3_free_solver(S))]) 
     z3_assert(S, f(a:int):int = 3).
 
 :- end_tests(z3_swi_foreign).
+
+:- begin_tests(z3_swi_foreign_bit_vectors).
+
+test(create) :-
+    z3_reset_declarations,
+    z3_make_solver(S),
+    z3_assert(S, a:bv(32) = int2bv(32, 12345)),
+    z3_solver_check(S, R),
+    assertion(R == l_true),
+    z3_model_map_for_solver(S, Model),
+    assertion(Model.constants==[a-12345]),
+    z3_free_solver(S).
+
+test(bv2int) :-
+    z3_reset_declarations,
+    z3_make_solver(S),
+    z3_assert(S, a:bv(32) = int2bv(32, -12345)),
+    z3_assert(S, b:int = bv2int(a, true)), % signed
+    z3_assert(S, c:int = bv2int(a, false)), % unsigned
+    z3_solver_check(S, l_true),
+    z3_model_map_for_solver(S, Model),
+    C = Model.constants,
+    C == [a-4294954951, b- -12345, c-4294954951],
+    z3_free_solver(S).
+
+%% add: z3_push(bvmul(a:bv(32),b:bv(32)) = int2bv(32, 1)), z3_model(M).
+
+test(bvnumeral) :-
+    z3_reset_declarations,
+    z3_make_solver(S),
+    z3_assert(S, a:bv(4) = bv_numeral([1,1,1,1])),
+    z3_solver_check(S, l_true),
+    z3_model_map_for_solver(S, Model),
+    C = Model.constants,
+    assertion(C == [a-15]),
+    z3_free_solver(S).
+
+test(combined_bvnumeral) :-
+    z3_push(bvmul(a:bv(32),b:bv(32)) = int2bv(32, 1)),
+    z3_push(bvuge(b, mk_numeral("1321", bv(32)))),
+    z3_model(_M).
+
+test(make_unsigned_int64) :-
+    z3_reset_declarations,
+    z3_make_solver(S),
+    % z3_assert(S, a:int = mk_unsigned_int64(123,int)),
+    z3_assert(S, a:bv(16) = mk_unsigned_int64(123, bv(16))),
+    z3_solver_check(S, l_true),
+    z3_model_map_for_solver(S, Model),
+    C = Model.constants,
+    assertion(C == [a-123]),
+    z3_free_solver(S).
+
+test(make_numerals) :-
+    z3_reset_declarations,
+    z3_make_solver(S),
+    z3_assert(S, a:bv(16) = mk_numeral("123", bv(16))),
+    z3_solver_check(S, l_true),
+    z3_model_map_for_solver(S, Model),
+    C = Model.constants,
+    assertion(C == [a-123]),
+    z3_free_solver(S).
+
+:- end_tests(z3_swi_foreign_bit_vectors).
 
 :- begin_tests(basic_enums).
 

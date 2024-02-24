@@ -163,10 +163,10 @@ solve_enums(M) :- must_be(var, M), z3:reset_globals, declare_enums, assert_puzzl
 implies_test1 :- all_assertions(A), push_assertions(A),
                  z3_is_implied(norwegian = 1 and dane = 2 and brit = 3 and german = 4 and swede = 5).
 
-implies_formula(F) :- all_assertions(A), push_assertions(A), z3_is_implied(F).
+puzzle_implies_formula(F) :- all_assertions(A), push_assertions(A), z3_is_implied(F).
 
 house_order(F) :- F = (yellowhouse = 1 and bluehouse = 2 and redhouse = 3 and greenhouse = 4 and whitehouse = 5).
-implies_house_order :- house_order(F), implies_formula(F).
+puzzle_implies_house_order :- house_order(F), puzzle_implies_formula(F).
 
 %% fails, so house order is implied:
 counterexample(F, M) :- all_assertions(A), push_assertions(A), z3_push(not(F)), z3_model(M), print_model(M).
@@ -175,21 +175,19 @@ alternate_house_order(M) :- house_order(Order), counterexample(Order, M).
 %% pet(3) is getting fish, pet(4) birds,
 %% pet order not implied?
 pet_order(F) :- F = (pet(1) = cats and pet(2) = horses and pet(3) = birds and pet(4) = fish and pet(5) = dogs).
-implies_pet_order :- pet_order(F), implies_formula(F).
+puzzle_implies_pet_order :- pet_order(F), puzzle_implies_formula(F).
 alternate_pet_order(M) :- pet_order(Order), counterexample(Order, M).
 
 %% smokes order checks out:
 smokes_order(F) :- F = (smokes(1) = dunhill and smokes(2) = blends and smokes(3) = pallmall and smokes(4) = prince and smokes(5) = bluemaster).
-implies_smokes_order :- smokes_order(F), implies_formula(F).
+puzzle_implies_smokes_order :- smokes_order(F), puzzle_implies_formula(F).
 alternate_smokes_order(M) :- smokes_order(Order), counterexample(Order, M).
 
 %% drinks order also checks out:
 drinks_order(F) :- F = (drinks(1) = water and drinks(2) = tea and drinks(3) = milk and drinks(4) = coffee and drinks(5) = beer).
-implies_drinks_order :- drinks_order(F), implies_formula(F).
+puzzle_implies_drinks_order :- drinks_order(F), puzzle_implies_formula(F).
 alternate_drinks_order(M) :- drinks_order(Order), counterexample(Order, M).
 
-
-%% note that doit(M), doit(M). will fail
 
 :- begin_tests(einstein).
 
@@ -197,13 +195,21 @@ test(no_enums) :-
     z3:reset_globals,
     assert_puzzle(M),
     assertion(member(bluehouse - 2, M.constants)),
-    assertion(member(german - 4, M.constants)).
+    assertion(member(german - 4, M.constants)),
+    puzzle_implies_pet_order,
+    puzzle_implies_smokes_order,
+    puzzle_implies_drinks_order,
+    \+ alternate_pet_order(_),
+    \+ alternate_smokes_order(_),
+    \+ alternate_drinks_order(_).
 
 test(enums, [
          setup(z3:z3_reset), cleanup(z3:z3_reset)
      ]) :-
     declare_enums,
     assert_puzzle(M),
-    assertion(member(pet(4) - fish, M.functions)).
+    assertion(member(pet(4) - fish, M.functions)),
+    puzzle_implies_pet_order,
+    puzzle_implies_smokes_order.
 
 :- end_tests(einstein).

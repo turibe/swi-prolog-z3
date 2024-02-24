@@ -40,7 +40,7 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
               z3_declarations/1,
 
               z3_reset/0,      % resets everything, use sparingly
-              
+
               op(750, xfy, and), % =, >, etc. are 700
               op(751, xfy, or),
               op(740, xfy, <>),  % different-than
@@ -100,7 +100,7 @@ z3_reset :-
              nb_delete(global_solver)
          )
     ;
-    true), 
+    true),
     z3_reset_context,
     new_global_solver.
 
@@ -111,7 +111,12 @@ z3_reset :-
 
 
 %% indent according to solver pushes:
-report(T) :- indent, print(T), nl, flush_output.
+%% TODO: improve this reporting.
+%% report(type_error(T)) :- print(T), nl, flush_output.
+report(T) :- indent, writef(T), nl, flush_output.
+report(F,Vars) :-
+    swritef(String, F,Vars),
+    report(String).
 
 indent :- assert_depth(N),
           forall(between(1, N, _X), (print(---), print(N))).
@@ -160,7 +165,7 @@ attribute_goals(V) :- get_attr(V, z3, Attr),
 
 %% Worth keeping an inverse map of "fake Z3 constants" to Prolog vars? Might need it for eval...
 attr_unify_hook(Attr, Var) :- get_attr(Var, z3, Other), !,
-                              report(status("Running hook for", Other)),
+                              report("Running hook for %w", [Other]),
                               z3_push(==(Attr, Other), R),
                               \+ R = l_false.
 attr_unify_hook(Attr, Var) :- var(Var), !,
@@ -234,7 +239,7 @@ z3_check_and_print(Status) :-
     check_status_arg(Status),
     get_global_solver(Solver),
     z3_solver_check_and_print(Solver, Status).
-    
+
 
 % returns a model for the current solver, if check succeeds:
 z3_model(Model) :-
@@ -253,11 +258,11 @@ z3_model_assoc(Model) :-
 
 % We now allow overloading by arity.
 
-% Grounds any variables in X, and returns the symbols it finds, using f/N for arities bigger than 1:
+% Grounds any variables in X, and also returns the symbols it finds, using f/N for arities bigger than 1:
 
 ground_version(X, Attr, [Attr]) :- var(X), !, add_attribute(X, Attr).
 ground_version(X, X, S) :- number(X), !, ord_empty(S).
-ground_version(X, X, [X]) :- atom(X), !, true.
+ground_version(X, X, [X]) :- atomic(X), !, true.
 ground_version(C, XG:T, Result) :- compound(C), C = X:T, !,
                                    (ground(T) -> true ; type_error(ground, T)),
                                    ground_version(X, XG, Result).
@@ -267,6 +272,7 @@ ground_version(X, G, Result) :- compound(X),
                                 ground_list(Rest, Grest, R),
                                 G =.. [F|Grest],
                                 ord_add_element(R, F/Arity, Result).
+ground_version([], [], []).
 
 remove_type_annotations(X, X) :- atomic(X), !.
 remove_type_annotations(X:_T, X1) :- mapargs(remove_type_annotations, X, X1), !.
@@ -299,7 +305,7 @@ expand_macros(F, R) :- functor(F, alldifferent, _N), !,
                        F =.. [alldifferent | Rest],
                        R =.. [distinct | Rest].
 expand_macros(X, X).
-                       
+
 %% We now use backtrackable types in Prolog, resetting declarations at the first push.
 %% Note that type declarations in Z3 can't be pushed and popped.
 %% We could allow different types on different branches if new declarations overwrite old ones without error.
@@ -334,9 +340,8 @@ z3_push(Foriginal, Status) :-
          )
     ;  (
         Status = l_type_error,
-        report(type_error(FG)),
         get_type_inference_map_list(L),
-        report(map(L))
+        report("Type error in term: %w\nMap was %w", [FG, L])
     )
     ).
 
@@ -390,7 +395,7 @@ z3_eval_list(L, Completion, Result) :- must_be(list, L),
                                            maplist({Model, Completion}/[X]>>z3_model_eval(Model, X, Completion), L1, Result),
                                            z3_free_model(Model)
                                        ).
-                       
+
 
 %% A little inefficient for big terms, might be better to do in the C code eval:
 replace_var_attributes(X, A) :- var(X), get_attr(X, z3, A), !, true.
@@ -415,6 +420,10 @@ z3_declare(F, T) :- var(F), !,
 z3_declare(F, int) :- integer(F), !, true.
 z3_declare(F, real) :- float(F), !, true.
 z3_declare(F, T) :- atom(T), !,
+                    z3_declare_function(F, T).
+z3_declare(F, T) :- compound(T),
+                    functor(T, bv, 1), !,
+                    must_be(ground, T),
                     z3_declare_function(F, T).
 z3_declare(F, T) :- var(T), !,
                     T = uninterpreted,
@@ -639,7 +648,7 @@ test(bool_times) :-
     assertion(M.constants == [a-16/5, b-false]).
 
 test(more_arith) :-
-    z3_push(a:bool + b:real = 1.0), z3_model(M1), z3_push(b < 1), z3_model(M2),    
+    z3_push(a:bool + b:real = 1.0), z3_model(M1), z3_push(b < 1), z3_model(M2),
     assertion(M1.constants == [a-false, b-1]),
     assertion(M2.constants == [a-true, b-0]).
 
@@ -717,6 +726,48 @@ test(nested_uninterpreted) :-
     z3_model(_M).
 
 :- end_tests(boolean).
+
+:- begin_tests(z3pl_bitvectors).
+
+test(basicor, [true((Ror == 9, Rand == 0))]) :-
+    z3_push(a = int2bv(32, 1)),
+    z3_push(b = int2bv(32, 8)),
+    z3_eval(bvor(a,b), Ror),
+    z3_eval(bvand(a,b), Rand).
+
+test(neg_no_overflow, [true(C == [b-127])] )  :-
+    z3_push(false = bvneg_no_overflow(bvnot(b:bv(8))), R),
+    assertion(R = l_true),
+    z3_model(M),
+    M.constants = C.
+
+test(mul_roundtrip) :-
+    z3_push(bvmul(a:bv(32),b:bv(32)) = int2bv(32, 1)),
+    z3_model(M),
+    %% z3_eval(bvmul(int2bv(32,M.constants...)))
+    M.constants = [a-A, b-B],
+    z3_eval(bvmul(int2bv(32, A), int2bv(32, B)), R),
+    assertion(R = 1).
+
+%% fails for A=4, B=2
+test(random_bv_xor) :-
+    random_between(0, 63, Width), % z3_ast_to_term fails for 64
+    High is (1<<Width) - 1,
+    random_between(0, High, A), % inclusive
+    random_between(0, High, B),
+    C is A xor B,
+    z3_eval(bvxor(int2bv(Width, A), int2bv(Width, B)), R),
+    assertion(R == C).
+
+test(push_numeral) :-
+    Width = 63, %% TODO: fix Z3_ast_to_term for larger widths.
+    findall(1, between(1,Width,_), L),
+    z3_push(a = bv_numeral(L)),
+    z3_push(signed = bv2int(a, true)),
+    z3_push(unsigned = bv2int(a, false)),
+    z3_model(_M).
+
+:- end_tests(z3pl_bitvectors).
 
 :- begin_tests(enums).
 
