@@ -113,7 +113,7 @@ test(model_eval,  [setup(z3_make_solver(S)), cleanup(z3_free_solver(S))])  :-
     z3_declare_function(a, int),
     z3_declare_function(b, int),
     z3_assert(S, a=3),
-    z3_assert(S, b=2),    
+    z3_assert(S, b=2),
     z3_solver_check(S, Status),
     assertion(Status == l_true),
     z3_solver_get_model(S, Model),
@@ -320,6 +320,7 @@ test(create) :-
     z3_make_solver(S),
     z3_assert(S, a:bv(32) = bv_numeral(32, 12345)),
     z3_solver_check(S, R),
+    assertion(R == l_true),
     z3_model_map_for_solver(S, Model),
     assertion(Model.constants==[a-12345]),
     z3_free_solver(S).
@@ -332,7 +333,6 @@ test(bv2int) :-
     z3_assert(S, c:int = bv2int(a, false)), % unsigned
     z3_solver_check(S, R),
     z3_model_map_for_solver(S, Model).
-
 
 %% add: z3_push(bvmul(a:bv(32),b:bv(32)) = mk_bv_numeral(32, 1)), z3_model(M).
 
