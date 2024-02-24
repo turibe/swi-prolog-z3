@@ -318,7 +318,7 @@ test(nested_fail, [fail, setup(z3_make_solver(S)), cleanup(z3_free_solver(S))]) 
 test(create) :-
     z3_reset_declarations,
     z3_make_solver(S),
-    z3_assert(S, a:bv(32) = bv_numeral(32, 12345)),
+    z3_assert(S, a:bv(32) = int2bv(32, 12345)),
     z3_solver_check(S, R),
     assertion(R == l_true),
     z3_model_map_for_solver(S, Model),
@@ -328,13 +328,47 @@ test(create) :-
 test(bv2int) :-
     z3_reset_declarations,
     z3_make_solver(S),
-    z3_assert(S, a:bv(32) = bv_numeral(32, -12345)),
+    z3_assert(S, a:bv(32) = int2bv(32, -12345)),
     z3_assert(S, b:int = bv2int(a, true)), % signed
     z3_assert(S, c:int = bv2int(a, false)), % unsigned
-    z3_solver_check(S, R),
-    z3_model_map_for_solver(S, Model).
+    z3_solver_check(S, l_true),
+    z3_model_map_for_solver(S, Model),
+    C = Model.constants,
+    C == [a-4294954951, b- -12345, c-4294954951],
+    z3_free_solver(S).
 
-%% add: z3_push(bvmul(a:bv(32),b:bv(32)) = mk_bv_numeral(32, 1)), z3_model(M).
+%% add: z3_push(bvmul(a:bv(32),b:bv(32)) = int2bv(32, 1)), z3_model(M).
+
+test(bvnumeral) :-
+    z3_reset_declarations,
+    z3_make_solver(S),
+    z3_assert(S, a:bv(4) = bv_numeral([1,1,1,1])),
+    z3_solver_check(S, l_true),
+    z3_model_map_for_solver(S, Model),
+    C = Model.constants,
+              assertion(C == [a-15]),
+    z3_free_solver(S).
+
+test(make_unsigned_int64) :-
+    z3_reset_declarations,
+    z3_make_solver(S),
+    % z3_assert(S, a:int = mk_unsigned_int64(123,int)),
+    z3_assert(S, a:bv(16) = mk_unsigned_int64(123, bv(16))),
+    z3_solver_check(S, l_true),
+    z3_model_map_for_solver(S, Model),
+    C = Model.constants,
+    assertion(C == [a-123]),
+    z3_free_solver(S).
+
+test(make_numerals) :-
+    z3_reset_declarations,
+    z3_make_solver(S),
+    z3_assert(S, a:bv(16) = mk_numeral("123", bv(16))),
+    z3_solver_check(S, l_true),
+    z3_model_map_for_solver(S, Model),
+    C = Model.constants,
+    assertion(C == [a-123]),
+    z3_free_solver(S).
 
 :- end_tests(z3_swi_foreign_bit_vectors).
 

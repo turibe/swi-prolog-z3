@@ -272,6 +272,7 @@ ground_version(X, G, Result) :- compound(X),
                                 ground_list(Rest, Grest, R),
                                 G =.. [F|Grest],
                                 ord_add_element(R, F/Arity, Result).
+ground_version([], [], []).
 
 remove_type_annotations(X, X) :- atomic(X), !.
 remove_type_annotations(X:_T, X1) :- mapargs(remove_type_annotations, X, X1), !.
@@ -729,8 +730,8 @@ test(nested_uninterpreted) :-
 :- begin_tests(z3pl_bitvectors).
 
 test(basicor, [true((Ror == 9, Rand == 0))]) :-
-    z3_push(a = bv_numeral(32, 1)),
-    z3_push(b = bv_numeral(32, 8)),
+    z3_push(a = int2bv(32, 1)),
+    z3_push(b = int2bv(32, 8)),
     z3_eval(bvor(a,b), Ror),
     z3_eval(bvand(a,b), Rand).
 
@@ -741,11 +742,11 @@ test(neg_no_overflow, [true(C == [b-127])] )  :-
     M.constants = C.
 
 test(mul_roundtrip) :-
-    z3_push(bvmul(a:bv(32),b:bv(32)) = bv_numeral(32, 1)),
+    z3_push(bvmul(a:bv(32),b:bv(32)) = int2bv(32, 1)),
     z3_model(M),
-    %% z3_eval(bvmul(bv_numeral(32,M.constants...)))
+    %% z3_eval(bvmul(int2bv(32,M.constants...)))
     M.constants = [a-A, b-B],
-    z3_eval(bvmul(bv_numeral(32, A), bv_numeral(32, B)), R),
+    z3_eval(bvmul(int2bv(32, A), int2bv(32, B)), R),
     assertion(R = 1).
 
 %% fails for A=4, B=2
@@ -755,8 +756,16 @@ test(random_bv_xor) :-
     random_between(0, High, A), % inclusive
     random_between(0, High, B),
     C is A xor B,
-    z3_eval(bvxor(bv_numeral(Width, A), bv_numeral(Width, B)), R),
+    z3_eval(bvxor(int2bv(Width, A), int2bv(Width, B)), R),
     assertion(R == C).
+
+test(push_numeral) :-
+    Width = 63, %% TODO: fix Z3_ast_to_term for larger widths.
+    findall(1, between(1,Width,_), L),
+    z3_push(a = bv_numeral(L)),
+    z3_push(signed = bv2int(a, true)),
+    z3_push(unsigned = bv2int(a, false)),
+    z3_model(_M).
 
 :- end_tests(z3pl_bitvectors).
 

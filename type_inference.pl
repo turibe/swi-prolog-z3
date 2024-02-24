@@ -147,6 +147,7 @@ signature(^, A, B) :- signature(power, A, B).
 
 %%%% Bit-vector declarations
 :- declare(bv2int, [bv(_N),bool], int).
+%% Note that bv2int and int2bv are not supported by the decision procedures.
 
 %%%% use "bool_const" instead of bool in the no_overflow defs that have a bool arg?
 
@@ -161,7 +162,7 @@ signature(^, A, B) :- signature(power, A, B).
 :- declare(bvmul_no_underflow, [bv(N), bv(N)], bool).
 :- declare(bvnand, [bv(N), bv(N)], bv(N)).
 :- declare(bvneg, [bv(N)], bv(N)).
-:- declare(bvneg_no_overflow, [bv(N)], bool).
+:- declare(bvneg_no_overflow, [bv(_N)], bool).
 :- declare(bvnor, [bv(N), bv(N)], bv(N)).
 :- declare(bvnot, [bv(N)], bv(N)).
 :- declare(bvor, [bv(N), bv(N)], bv(N)).
@@ -191,7 +192,7 @@ signature(^, A, B) :- signature(power, A, B).
 %% TODO: investigate crash with z3_push(a:int = bv2int(c,true)).
 
 %% the result type depends on the value of an arg, so can't quite do this:
-%% :- declare(bv_numeral, [int, int], bv(_N)).
+%% :- declare(int2bv, [int, int], bv(_N)).
 
 % atleast and atmost take any number of bools followed by an int:
 
@@ -234,17 +235,27 @@ typecheck(false, bool, E, E) :- true, !.
 %% typecheck(X, real, E, E) :- integer(X).
 typecheck(X, real, E, E) :- float(X), !.
 typecheck(X, string, E, E) :- string(X), !.
-typecheck(T, bv(N), E, E) :- functor(T, bv_numeral, _), !,
-                             T = bv_numeral(N, I),
+typecheck(T, bv(N), E, E) :- functor(T, int2bv, _), !,
+                             T = int2bv(N, I),
                              integer(N),
                              integer(I).
-/*
-typecheck(T, int, Envin, Envout) :- functor(T, bv2int, _),
-                                    T = bv2int(A,B),
-                                    ground(B),
-                                    member(B, [true, false]), !,
-                                    typecheck(A, bv(_N), Envin, Envout).
-*/
+typecheck(T, Type, Envin, Envout) :- functor(T, mk_numeral, N), !,
+                                     N = 2,
+                                     T = mk_numeral(String, Type),
+                                     typecheck(String, string, Envin, Envout).
+typecheck(T, Type, Envin, Envout) :- functor(T, mk_unsigned_int64, N), !,
+                                     N = 2,
+                                     T = mk_unsigned_int64(Integer, Type),
+                                     typecheck(Integer, int, Envin, Envout).
+%% for bv_numeral, need an integer, and a list of bools.
+%% Q: how to refer to or constrain a single bit in a BV?
+typecheck(T, Type, E, E) :- functor(T, bv_numeral, 1),
+                            T = bv_numeral(L),                          
+                            ground(L),
+                            %% todo: add check that they're all boolean
+                            is_list(L),
+                            length(L, N),
+                            Type = bv(N).
 typecheck(X, T, Envin, Envout) :- atomic_mappable(X), !,
                                   (get_assoc(X, Envin, T1) ->
                                        T = T1, %% unify_or_error(T, T1), % print error if this fails

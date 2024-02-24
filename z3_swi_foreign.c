@@ -42,6 +42,8 @@
 
 #define CHECK_ARITY(symbol, expected, arity) do {if (arity != expected) {ERROR("%s should have arity %d but has arity %lu\n", symbol, expected, arity); return NULL; }} while (false)
 
+#define MK_NUMERAL "mk_numeral"
+
 
 // To raise Prolog errors, we could use PL_raise_exception, but the _ex functions are recommended instead.
 
@@ -648,9 +650,8 @@ foreign_t z3_declare_enum_foreign(term_t sort_name_term, term_t enum_names_list)
   // here we go through the names list and put them in enum_names; see https://www.swi-prolog.org/pldoc/man?section=foreign-read-list
   term_t head = PL_new_term_ref();   // the elements
   term_t tail = PL_copy_term_ref(enum_names_list); // copy (we modify tail)
-  int rc = TRUE;
   int i = 0;
-  while( rc && PL_get_list_ex(tail, head, tail) )
+  while( PL_get_list_ex(tail, head, tail) )
     {
       Z3_symbol a = mk_symbol(ctx, head);
       enum_names[i] = a;
@@ -1014,7 +1015,7 @@ Z3_func_decl mk_func_decl(Z3_context ctx, decl_map declaration_map, const term_t
      return NULL;
    }
 
-   const char *name_string = PL_atom_chars(name);
+   const char *name_string = PL_atom_nchars(name, NULL);
    DEBUG("Making function declaration based on %s/%lu\n", name_string, arity);
    const Z3_symbol symbol = Z3_mk_string_symbol(ctx, name_string);
    Z3_sort *domain = malloc(sizeof(Z3_sort) * arity);
@@ -1408,7 +1409,7 @@ Z3_sort mk_sort(Z3_context ctx, term_t expression) {
       return FALSE;
     }
 
-    const char *name_string = PL_atom_chars(name);
+    const char *name_string = PL_atom_nchars(name, NULL);
     // INFO("sort expression %s has arity %lu\n", name_string, arity);
 
     // z3_make_solver(S), z3_assert(S, a:bv(10) = a), z3_solver_check(S, R),
@@ -1422,7 +1423,7 @@ Z3_sort mk_sort(Z3_context ctx, term_t expression) {
       int width;
       res = PL_get_integer_ex(a, &width);
       if (!res) return NULL;
-      INFO("Making bit vector sort of width %d\n", width);
+      DEBUG("Making bit vector sort of width %d\n", width);
       return Z3_mk_bv_sort(ctx, width);
     }
 
@@ -1583,7 +1584,7 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
     }
     DEBUG("arity is %lu\n", arity);
 
-    const char *name_string = PL_atom_chars(name);
+    const char *name_string = PL_atom_nchars(name, NULL); // PL_atom_chars(name) is deprecated.
     DEBUG("functor name: %s\n", name_string);
 
     if (strcmp(name_string, ":")==0) { // Path where : is not handled at the Prolog level but given directly to Z3
@@ -1644,33 +1645,67 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
     } // end ":" case
 
     // See also prolog's getbit/2.
-
     // replace by int2bv, have bv_numeral take a list of bools?
 
     if (strcmp(name_string, "bv_numeral")==0) {
-      CHECK_ARITY(name_string, 2, arity);
-      term_t sub1 = PL_new_term_ref();
-      res = PL_get_arg(1, formula, sub1);
-      int width;
-      PL_get_integer_ex(sub1, &width);
-      DEBUG("Got width %d\n", width);
-      if (width > 64) {
-        ERROR("bv_numeral only supports widths 64 or smaller, got %d\n", width);
+      CHECK_ARITY(name_string, 1, arity); // a list of booleans
+      term_t list_term = PL_new_term_ref();
+      res = PL_get_arg(1, formula, list_term);
+      if (!PL_is_list(list_term)) {
+        ERROR("Argument to bv_numeral should be a list of booleans");
         return NULL;
       }
-      term_t sub2 = PL_new_term_ref();
-      res = PL_get_arg(2, formula, sub2);
-      uint64_t const_term;
-      res = PL_get_uint64(sub2, &const_term);
-      DEBUG("Got int %llu\n", const_term);
+      size_t width;
+      PL_skip_list(list_term, 0, &width); // gets list length
       bool * bits = malloc(width * sizeof(bool));
-      for (int i = 0 ; i < width; ++i) {
-        bits[i] = (const_term >> i) & 1;
-      }
-      return Z3_mk_bv_numeral(ctx, width, bits);
-
+      term_t head = PL_new_term_ref();   // the elements
+      term_t tail = PL_copy_term_ref(list_term); // copy (we modify tail)
+      int rc = TRUE;
+      int i = 0;
+      while( rc && PL_get_list_ex(tail, head, tail) )
+        {
+          int b;
+          rc = PL_get_bool_ex(head, &b);
+          if (rc) {
+            bits[i] = b;
+            i++;
+          }
+        }
+      
+      result = Z3_mk_bv_numeral(ctx, width, bits);
+      free(bits);
+      return result;
     }
 
+    // TODO: special cases for mk_numeral and mk_unsigned_int64. Both use an int and a sort as an argument.
+    // we don't do unsigned_int because PL does not have it, could be confusing.
+
+    if (strcmp(name_string, MK_NUMERAL)==0 ||
+        strcmp(name_string, "mk_unsigned_int64")==0) { // confusing name, makes something of the specified sort.
+      // get sort from second argument:
+      INFO("numeral/unsigned_int64 case\n");
+      term_t sort_term = PL_new_term_ref();
+      res = PL_get_arg(2, formula, sort_term);
+      if (!res) return NULL;
+      Z3_sort sort = mk_sort(ctx, sort_term);
+      term_t arg_term = PL_new_term_ref();
+      res = PL_get_arg(1, formula, arg_term);
+      if (!res) return NULL;
+      if (strcmp(name_string, MK_NUMERAL)==0) {
+        char *numeral_string;
+        size_t len;
+        res = PL_get_string_chars(arg_term, &numeral_string, &len);
+        if (!res) return NULL;
+        result = Z3_mk_numeral(ctx, numeral_string, sort);
+        return result;
+      }
+      else { // unsigned_int case:
+          uint64_t uint;
+          res = PL_get_uint64(arg_term, &uint);
+          return Z3_mk_unsigned_int(ctx, uint, sort);
+        }
+    }
+    
     // special case because of the bool arg:
     if (strcmp(name_string, "bv2int")==0) {
       CHECK_ARITY(name_string, 2, arity);
@@ -1688,6 +1723,21 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
       return result;
     }
 
+    if (strcmp(name_string, "int2bv")==0) {
+      CHECK_ARITY(name_string, 2, arity);
+      term_t sub1 = PL_new_term_ref();
+      term_t sub2 = PL_new_term_ref();
+      res = PL_get_arg(1, formula, sub1);
+      res = PL_get_arg(2, formula, sub2);
+      int width;
+      if (!PL_get_integer(sub1, &width)) {
+        ERROR("First argument to int2bv should be an integer");
+        return NULL;
+      }
+      Z3_ast arg = term_to_ast(ctx, declaration_map, sub2);
+      result = Z3_mk_int2bv(ctx, width, arg);
+      return result;
+    }
 
     if (strcmp(name_string, "bvadd_no_overflow")==0
       || strcmp(name_string, "bvmul_no_overflow") == 0
@@ -1743,8 +1793,13 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
     }
 
     // ********************************************* built-in compound term_to_ast  ****************************************/
-    if ( strcmp(name_string, "+") == 0 ) {result = Z3_mk_add(ctx, arity, subterms);}
-    else if (strcmp(name_string, "*") == 0 ) {result = Z3_mk_mul(ctx, arity, subterms);}
+
+    if (strcmp(name_string, "+") == 0 ) {
+      result = Z3_mk_add(ctx, arity, subterms);
+    }
+    else if (strcmp(name_string, "*") == 0 ) {
+      result = Z3_mk_mul(ctx, arity, subterms);
+    }
     else if (strcmp(name_string, "-") == 0 || strcmp(name_string, "minus") == 0 ) {
       if (arity == 1) {
         result = Z3_mk_unary_minus(ctx, subterms[0]);
@@ -1902,6 +1957,8 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
         result = Z3_mk_atmost(ctx, arity-1, subterms, k);
       }
     }
+
+
 
     // ********************************************* bit vectors ************************************/
     // in order of appearance in https://z3prover.github.io/api/html/z3__api_8h.html
