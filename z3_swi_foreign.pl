@@ -346,8 +346,13 @@ test(bvnumeral) :-
     z3_solver_check(S, l_true),
     z3_model_map_for_solver(S, Model),
     C = Model.constants,
-              assertion(C == [a-15]),
+    assertion(C == [a-15]),
     z3_free_solver(S).
+
+test(combined_bvnumeral) :-
+    z3_push(bvmul(a:bv(32),b:bv(32)) = int2bv(32, 1)),
+    z3_push(bvuge(b, mk_numeral("1321", bv(32)))),
+    z3_model(_M).
 
 test(make_unsigned_int64) :-
     z3_reset_declarations,

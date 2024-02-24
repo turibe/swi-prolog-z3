@@ -258,11 +258,11 @@ z3_model_assoc(Model) :-
 
 % We now allow overloading by arity.
 
-% Grounds any variables in X, and returns the symbols it finds, using f/N for arities bigger than 1:
+% Grounds any variables in X, and also returns the symbols it finds, using f/N for arities bigger than 1:
 
 ground_version(X, Attr, [Attr]) :- var(X), !, add_attribute(X, Attr).
 ground_version(X, X, S) :- number(X), !, ord_empty(S).
-ground_version(X, X, [X]) :- atom(X), !, true.
+ground_version(X, X, [X]) :- atomic(X), !, true.
 ground_version(C, XG:T, Result) :- compound(C), C = X:T, !,
                                    (ground(T) -> true ; type_error(ground, T)),
                                    ground_version(X, XG, Result).
