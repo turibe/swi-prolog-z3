@@ -1,24 +1,7 @@
 %%% -*- Mode: Prolog; Module: z3; -*-.
 
-/** <module> Prolog documentation processor
+% The user-visible functions rely on an implicit solver, pushed and popped automatically, and a backtrackable type map:
 
-This module builds on the basic functionality of z3_swi_foreign.pl to provide:
-
-- Typechecking and declaring Z3 variables and functions
-- Attributed variables
-- pushing and popping assertions on the solver as we assert and backtrack
-
-For incrementality, this module maintains a global_solver, where the push and pops happen.
-So even though it is a single Z3 C object, kept in a non-backtrackable Prolog variable, it is meant to works as a backtrackable one.
-
-type_inference_global_backtrackable does keep a --- backtrackable --- type map.
-
-@author Tomas Uribe
-@license MIT
-*/
-
-
-% All of the user-visible functions rely on an implicit solver, pushed accordingly, and a backtrackable type map:
 :- module(z3, [
               solver_scopes/1,         % +Num_scopes, starting at 0
               z3_check/1,              % +Status Returns status of global solver: l_true, l_false, l_undet
@@ -37,6 +20,7 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
               print_declarations/0,    % print declarations so far, or those used in the previous query (reset on a new push).
               z3_enum_declarations/1,
               z3_declarations/1,
+              z3_help/0,
 
               z3_reset/0,      % resets everything, use sparingly
 
@@ -47,6 +31,25 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
               op(199, xfy, :)
               % {}/1, % clashes with other CLP libraries
               ]).
+
+/** <module> Prolog documentation processor
+
+This module builds on the basic functionality of z3_swi_foreign.pl to provide:
+
+- Typechecking and declaring Z3 variables and functions
+- Attributed variables
+- pushing and popping assertions on the solver as we assert and backtrack
+
+For incrementality, this module maintains a global_solver, where the push and pops happen.
+So even though it is a single Z3 C object, kept in a non-backtrackable Prolog variable, it is meant to works as a backtrackable one.
+
+type_inference_global_backtrackable does keep a --- backtrackable --- type map.
+
+@author Tomas Uribe
+@license MIT
+*/
+
+:- multifile z3_help/0.
 
 :- use_module(type_inference_global_backtrackable, [
                   initialize_map/0 as initialize_type_inference_map,
@@ -97,7 +100,8 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
 
 :- initialization(new_global_solver).
 
-
+z3_help :- writeln("Z3 help\n").
+           
 %% old maps and solvers are invalidated:
 z3_reset :-
     %% assertion(b_getval(solver_depth, 0)), %% test cleanup violates this

@@ -1,13 +1,5 @@
 %%% -*- Mode: Prolog; Module: z3_swi_foreign; -*-
 
-/** <module> Low-level Z3-SWI integration
-
-This is the lowest-level Prolog wrapper.
-It has no global variables except those in the C code.
-
-@author Tomas Uribe
-@license MIT
-*/
 
 :- module(z3_swi_foreign, [
               z3_assert/2,
@@ -41,16 +33,27 @@ It has no global variables except those in the C code.
               op(740, xfy, <>)
             ]).
 
+
+/** <module> Low-level Z3-SWI integration
+
+This is the lowest-level Prolog wrapper.
+It has no global variables except for those in the C code.
+
+@author Tomas Uribe
+@license MIT
+*/
+
 :- load_foreign_library(z3_swi_foreign).
 
 
-%% Declares term F to have sort T, adding the declaration to the map.
-%% New declarations don't override old ones --- fails if there is a conflict.
-%% (Returned pointer is only useful for debugging, so we hide it here)
-%% examples: z3_declare_function(a, int) ; z3_declare_function(f(int, int), real).
+%! z3_declare_function(+Formula, +Type)
+%  Declares term Formula to have sort Type, adding the declaration to the map.
+%  New declarations don't override old ones --- fails if there is a conflict.
+%  examples: z3_declare_function(a, int) ; z3_declare_function(f(int, int), real).
 
 z3_declare_function(F, T) :- F == A/0, z3_declare_function(A, T).
 z3_declare_function(F, T) :- z3_declare_function(F, T, _C).
+% (Returned pointer is only useful for debugging, so we hide it here)
 
 z3_model_map(M, Map) :- z3_model_functions(M, F),
                         z3_model_constants(M, C),
@@ -340,7 +343,7 @@ test(bv2int) :-
     C == [a-4294954951, b- -12345, c-4294954951],
     z3_free_solver(S).
 
-%% add: z3_push(bvmul(a:bv(32),b:bv(32)) = int2bv(32, 1)), z3_model(M).
+% add: z3_push(bvmul(a:bv(32),b:bv(32)) = int2bv(32, 1)), z3_model(M).
 
 test(bvnumeral) :-
     z3_reset_declarations,

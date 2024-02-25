@@ -1,5 +1,11 @@
 %%% -*- Mode: Prolog; Module: stateful_repl; --*
 
+/** <module> Stateful REPL for Z3
+
+Remembers asserted formulas and declarations from one query to the next.
+
+*/
+
 :- module(stateful_repl, [
               add/1,
               asserted/1, formulas/1,
@@ -14,6 +20,8 @@
 
               save_state/1,
               read_state/1,
+
+              z3_help/0,
 
               % can this repetition be avoided?
               op(750, xfy, and), % =, >, etc. are 700
@@ -49,6 +57,13 @@
               ]).
 
 :- use_module(library(assoc)).
+
+:- multifile z3_help/0.
+
+z3_help :- writeln("Z3 repl help\n"),
+           writeln("add(F)\t\tAdd formula F"),
+           writeln("reset\t\tReset all declarations"),
+           true.
 
 % z3.pl shares no state between queries, except for enum declarations.
 
@@ -103,11 +118,13 @@ push_formula(Formula, NewMap, NewSymbols, Status) :-
 
 
 remove_one(F/N) :- z3_remove_declaration(F, N).
-%% remove_declarations(L) :- maplist(remove_one,L).
+% remove_declarations(L) :- maplist(remove_one,L). %% FIXME
 remove_declarations([]) :- true.
 remove_declarations([X|Rest]) :-
     (remove_one(X) -> true ; true), !, remove_declarations(Rest).
 
+%! add_formula(+F)
+%  Adds Z3 formula F. Typechecks and adds resulting declarations as well.
 add_formula(F) :- push_formula(F, NewMap, NewSymbols, Status),
                   (member(Status, [l_false, l_type_error])  -> (
                                            get_global_solver(Solver),
@@ -119,7 +136,9 @@ add_formula(F) :- push_formula(F, NewMap, NewSymbols, Status),
                       set_type_map(NewMap),
                       record_formula(F)
                   )).
-                  
+
+%! decl(-M)
+%  Get all declarations
 decl(M) :-
     z3_declarations(Z),
     declarations(D),
@@ -127,13 +146,26 @@ decl(M) :-
     
 %% user-visible:
 
+%! add(+F)
+%  Shortcut for add_formula
 add(F) :- add_formula(F).
+
+%! asserted(-List)
+%  Get list of asserted formulas.
 asserted(L) :- get_recorded_formulas(L).
 formulas(L) :- get_recorded_formulas(L).
+
+%! reset
+%  Clear all formulas and declarations.
 reset :- reset_globals.
+
+%! declarations(-L)
+%  Get declarations, both at the Prolog and Z3 levels.
 declarations(L) :- get_type_map(M),
                    assoc_to_list(M, L).
 
+%! model(-Model)
+%  Get a Z3 model of formulas asserted so far.
 model(Model) :- get_global_solver(S),
                 z3_model_map_for_solver(S, Model).
 

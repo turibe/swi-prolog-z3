@@ -8,7 +8,7 @@
               mappable_symbol/1 % true if arg is not a pre-declared atom or function symbol
           ]).
 
-/** <module> Type inference
+/** <module> Type inference for Z3 expressions.
 
 This is a module for typechecking formulas that will be then asserted in Z3,
 without having to declare all of the atom and function types separately.
@@ -208,8 +208,8 @@ sub_type(bool, int).
 sub_type(bool, real).
 sub_type(T,T).
 
-%% unify_or_error(T1, T2) :- T1 = T2, !, true.
-%% unify_or_error(T1, T2) :- write(user_error, "Could not unify "), writeln(user_error, types(T1,T2)), fail.
+% unify_or_error(T1, T2) :- T1 = T2, !, true.
+% unify_or_error(T1, T2) :- write(user_error, "Could not unify "), writeln(user_error, types(T1,T2)), fail.
 
 % "mappable" are non-declared atoms or functions whose type signature needs to be inferred; that is, not pre-defined.
 atomic_mappable(X) :- atom(X).

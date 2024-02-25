@@ -128,8 +128,8 @@ will only succeed for `X = a` and `X = d`.
 
 ### High-level, stateful: stateful_repl.pl
 
-`stateful_repl` offers a more stateful alternative to `z3.pl`, where assertions and declarations are accumulated from one query
-to the next.
+Using `z3.pl`, all assertions and type declarations (except for enums) are reset from one query to the next.
+`stateful_repl` offers an alternative to `z3.pl`, where assertions and declarations are accumulated.
 
 The main commands are:
 - add(+Formula)
@@ -144,7 +144,7 @@ The main commands are:
 
 The lower-level module has no Prolog globals.
 It could be used to write an alternative to `z3.pl` that keeps state between queries,
-similarly to the Python integration or the Z3 promp.
+similarly to the Python integration or the Z3 prompt.
 
 ### Lowest level: z3_swi_foreign.c
 
@@ -157,6 +157,15 @@ The `z3_swi_foreign.c` file has the C code that glues things together, to be com
 
 `type_inference_global_backtrackable.pl` uses this to implement a global backtrackable type inference map.
 
+### Enumerated types
+
+Finite-domain enumerated types are "sticky", and are declared with
+```
+z3_declare_enum(+enum_name, +values_list)
+```
+For example, `z3_declare_enum(fruit, [apple, banana, pear])`.
+The associated declarations can be listed with `z3_enum_declarations`. To reset them, we have to reset the entire Z3 context,
+with `z3_reset_context` (low-level), `z3_reset` (for `z3.pl`), or `reset` (for `stateful_repl.pl`).
 
 ### Explanations and Relaxation
 
@@ -165,6 +174,14 @@ for explanation (finding minimal unsatisfiable subsets) and relaxation (maximal 
 See [https://cdn.aaai.org/AAAI/2004/AAAI04-027.pdf](https://cdn.aaai.org/AAAI/2004/AAAI04-027.pdf).
 This code can be used on stand-alone basis, plugging in any monotonic `check` or `assert` predicate.
 See [quickexplain.pl](https://github.com/turibe/swi-prolog-z3/blob/main/quickexplain.pl).
+
+## Documentation
+
+Run
+```prolog
+doc_server(8080)
+```
+and navigate to [http://localhost:8080/pldoc/](http://localhost:8080/pldoc/) to see docs.
 
 ## Future Work
 

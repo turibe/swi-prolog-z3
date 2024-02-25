@@ -1,6 +1,5 @@
 %%% -*- Mode: Prolog; Module: z3_utils; --*
 
-
 :- module(z3_utils, [
               declare_z3_types_for_symbols/2,
               reset_var_counts/0,
@@ -12,6 +11,11 @@
               add_attribute/2
           ]).
 
+/** <module> z3_utils
+
+Utilities shared by z3.pl and sateful_repl.pl
+
+*/
 
 :- use_module(z3_swi_foreign).
 
@@ -44,9 +48,12 @@ add_attribute(V, Attr) :- var(V),
 declare_z3_types_for_symbols(L, M) :-
     maplist({M}/[X]>>(get_assoc(X, M, Def) -> z3_declare(X,Def) ; true), L).
 
+%! z3_declare(+F:T)
+%  calls z3_declare(F, T)
 
-%% z3_declare updates the internal (C) Z3 decl map:
-
+%! z3_declare(+F, +T)
+%  updates the internal (C code) Z3 declaration map.
+%  Unknown types are considered to be uninterpreted.
 z3_declare(F:T) :- z3_declare(F, T). %% take care of explicit types
 z3_declare(F/0, T) :- !, z3_declare(F, T).
 z3_declare(F, T) :- var(F), !,
