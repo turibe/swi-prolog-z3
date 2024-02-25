@@ -73,7 +73,7 @@ swipl -f z3.pl -g run_tests -g halt
 
 ## Code and Functionality Overview
 
-### High-level: z3.pl
+### High-level, backtrackable: z3.pl
 
 The z3.pl module offers a high-level, user-friendly API, with:
     
@@ -126,6 +126,19 @@ z3_push(X > b), z3_push(b > c), member(X, [a,b,c,d])
 ```
 will only succeed for `X = a` and `X = d`.
 
+### High-level, stateful: stateful_repl.pl
+
+`stateful_repl` offers a more stateful alternative to `z3.pl`, where assertions and declarations are accumulated from one query
+to the next.
+
+The main commands are:
+- add(+Formula)
+- asserted(-FormulaList)
+- reset
+- is_implied(+Formula)
+- is_consistent(+Formula)
+- model(-Model)
+- declarations(-Declarations)
 
 ### Lower-level: z3_swi_foreign.pl
 

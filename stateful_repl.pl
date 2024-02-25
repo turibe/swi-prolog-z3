@@ -10,6 +10,7 @@
               decl/1,
               implies/1,
               is_implied/1,
+              is_consistent/1,
 
               save_state/1,
               read_state/1,
@@ -139,13 +140,19 @@ model(Model) :- get_global_solver(S),
 scopes(N) :- get_global_solver(S),
              z3_solver_scopes(S, N).
 
-
-is_implied(F) :-
-    push_formula(not(F), _NewMap, NewSymbols, Status),
+push_check_and_pop(F, Status) :-
+    push_formula(F, _NewMap, NewSymbols, Status),
     get_global_solver(Solver),
     z3_solver_pop(Solver, 1, _),
-    remove_declarations(NewSymbols),
-    Status == l_false.
+    remove_declarations(NewSymbols).
+
+is_implied(F) :- push_check_and_pop(not(F), Status),
+                 Status == l_false.
+
+%% todo: handle l_undef
+is_consistent(F) :- push_check_and_pop(F, Status),
+                    Status == l_true.
+    
 
 implies(X) :- is_implied(X).
     
@@ -187,6 +194,13 @@ test(clear_types) :-
     add(x:int = y:int),
     (add((b:real = c:real) and (1 = 2)) -> true ;
      add(b:int = c:int)).
+
+test(implied_and_consistent) :-
+    reset,
+    add(a > 10),
+    is_implied(a > 1),
+    \+ is_consistent(a < 5),
+    \+ is_implied(a > 20).
 
 :- end_tests(repl_tests).
 
