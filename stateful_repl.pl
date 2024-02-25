@@ -83,7 +83,11 @@ push_formula(Formula, NewMap, NewSymbols, Status) :-
     %% must_be(ground, Formula),
     get_type_map(OldAssoc),
     ground_version(Formula, FG, Symbols),
-    typecheck(FG, bool, OldAssoc, NewMap), !, %% commit to first solution
+    (typecheck(FG, bool, OldAssoc, NewMap) -> true ;
+     writef("Type error for %w", [FG]),
+     fail
+     ),
+    !, %% commit to first solution
     exclude(>>({OldAssoc}/[X], get_assoc(X, OldAssoc, _Y)), Symbols, NewSymbols),
     declare_z3_types_for_symbols(NewSymbols, NewMap),
     get_global_solver(Solver),
@@ -150,3 +154,20 @@ z3_pop(Formula) :-
     get_global_solver(S),
     z3_solver_pop(S).               
 ****/
+
+:- begin_tests(repl_tests).
+
+test(instantiate_type) :-
+    reset,
+    add(a:bv(32) = b:bv(X)),
+    assertion(X == 32).
+
+test(clear_types) :-
+    reset,
+    add(x:int = y:int),
+    (add((b:real = c:real) and (1 = 2)) -> true ;
+     add(b:int = c:int)).
+
+:- end_tests(repl_tests).
+
+

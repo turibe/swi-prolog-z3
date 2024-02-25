@@ -1396,7 +1396,7 @@ Z3_sort mk_sort(Z3_context ctx, term_t expression) {
 
     char *formula_string = NULL;
     int res = PL_get_chars(expression, &formula_string, CVT_WRITE);
-    INFO("mk_sort got compound term %s\n", formula_string);
+    DEBUG("mk_sort got compound term %s\n", formula_string);
 
     atom_t name;
     size_t arity;
@@ -2162,15 +2162,17 @@ foreign_t z3_simplify_term_foreign(term_t tin, term_t tout) {
 }
 
 // make sure that AST maps work:
-foreign_t map_test_foreign() {
+foreign_t map_test_foreign(term_t string_atom) {
+  if (!PL_is_atom(string_atom)) return FALSE;
+  char *name_string;
+  int res = PL_get_atom_chars(string_atom, &name_string);
+  if (!res) return FALSE;
   Z3_context ctx = get_context();
   decl_map mymap = Z3_mk_ast_map(ctx);
-  // char name_string[] = "="; // gives "invalid argument" ???
-  char name_string[] = "foo";
+
   int arity = 1;
   Z3_ast key = mk_ast_key(ctx, name_string, arity);
-  // Z3_ast key = mk_int_var(ctx, "foo");
-  Z3_ast value = mk_int_var(ctx, "bar");
+
   Z3_ast_map_insert(ctx, mymap, key, key);
   if (Z3_ast_map_contains(ctx, mymap, key)) {
     INFO("found key\n");
@@ -2178,17 +2180,21 @@ foreign_t map_test_foreign() {
   else {
     INFO("did not find key\n");
   }
-  Z3_ast key1 = mk_ast_key(ctx, "foo", arity);
+  Z3_ast key1 = mk_ast_key(ctx, "bar", arity);
   if (Z3_ast_map_contains(ctx, mymap, key1)) {
     INFO("found key1\n");
   }
   else {
     INFO("did not find key1\n");
   }
-  if (!remove_declaration(mymap, "foo", arity)) {
-    ERROR("remove_declaration failed");
+  // "invalid argument" is reported if we try to remove something that's not there.
+  if (!remove_declaration(mymap, name_string, arity)) {
+    ERROR("remove_declaration failed\n");
     return FALSE;
-  }  
+  }
+  else {
+    INFO("remove worked for %s\n", name_string);
+  }
 
   return TRUE;
 }
@@ -2253,6 +2259,6 @@ install_t install()
 
   PRED("z3_remove_declaration", 2, z3_remove_declaration_foreign, 0); // +name, +arity
 
-  PRED("map_test", 0, map_test_foreign, 0); //
+  PRED("map_test", 1, map_test_foreign, 0); //
 
 }

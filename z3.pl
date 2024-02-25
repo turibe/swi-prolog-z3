@@ -115,8 +115,8 @@ z3_reset :-
 %% TODO: improve this reporting.
 %% report(type_error(T)) :- print(T), nl, flush_output.
 report(T) :- indent, writef(T), nl, flush_output.
-report(F,Vars) :-
-    swritef(String, F,Vars),
+report(F, Vars) :-
+    swritef(String, F, Vars),
     report(String).
 
 indent :- assert_depth(N),
@@ -259,14 +259,16 @@ z3_model_assoc(Model) :-
 
 % We now allow overloading by arity.
 
-% Grounds any variables in X, and also returns the symbols it finds, using f/N for all arities, including 0:
+% Grounds any variables in X by making them into attribute variables,
+% and also returns the non-built-in symbols that it finds, using f/N for all arities, including 0:
 
 ground_version(X, Attr, [Attr/0]) :- var(X), !, add_attribute(X, Attr).
 ground_version(X, X, S) :- number(X), !, ord_empty(S).
 ground_version(X, X, [X/0]) :- atom(X), mappable_symbol(X), !, true.
 ground_version(X, X, S) :- atomic(X), !, ord_empty(S).
 ground_version(C, XG:T, Result) :- compound(C), C = X:T, !,
-                                   (ground(T) -> true ; type_error(ground, T)),
+                                   %% type checking can instantiate the types, so we don't require them to be ground at this point.
+                                   %% (ground(T) -> true ; type_error(ground, T)),
                                    ground_version(X, XG, Result).
 ground_version(X, G, Result) :- compound(X),
                                 functor(X, F, Arity),
@@ -611,6 +613,12 @@ test(scopes, [true(((N1 == 1), (N2==2))) ] ) :-
 
 test(between) :-
     z3_push(between(x:int, 1, 4)), z3_push(between(x, 2, 3)), z3_is_implied(x = 3 or x = 2).
+
+test(instantiate_types, [true(X == 32)]) :-
+    z3_push(a:bv(32) = b:bv(X), R),
+    assertion(R == l_true),
+    z3_push(c:T = d:int),
+    assertion(T == int).
 
 :- end_tests(push_assert).
 

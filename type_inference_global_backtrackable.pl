@@ -47,8 +47,7 @@ assert_formula_list_types(L) :-
     set_map(Enew).
 
 
-assert_type(Term, Type) :- must_be(ground, Term),
-                           get_map(E),
+assert_type(Term, Type) :- get_map(E),
                            type_inference:typecheck(Term, Type, E, Enew),
                            set_map(Enew).
 
