@@ -11,6 +11,9 @@
               implies/1,
               is_implied/1,
 
+              save_state/1,
+              read_state/1,
+
               % can this repetition be avoided?
               op(750, xfy, and), % =, >, etc. are 700
               op(751, xfy, or),
@@ -34,7 +37,7 @@
                   z3_remove_declaration/2
               ]).
 
-:- use_module(z3, [
+:- use_module(z3_utils, [
                   declare_z3_types_for_symbols/2,
                   ground_version/3,
                   remove_type_annotations/2
@@ -148,6 +151,7 @@ implies(X) :- is_implied(X).
     
 /****
 %% give option to pop last asserted thing? But types remain...
+%% Could include in the stack the new tupes introduced at each step, erase them on pop.
 z3_pop(Formula) :-
     must_be(var, Formula),
     pop_recorded_formulas(Formula),
@@ -155,7 +159,23 @@ z3_pop(Formula) :-
     z3_solver_pop(S).               
 ****/
 
-:- begin_tests(repl_tests).
+save_state(Filename) :-
+    open(Filename, write, Output, [create([all])] ),
+    formulas(L),
+    write_canonical(Output, L), %% fast_write fails?
+    writeln(Output, "."),
+    close(Output).
+
+read_state(Filename) :-
+    open(Filename, read, Input),
+    read(Input, L),
+    close(Input),
+    maplist(add, L).
+    
+
+:- begin_tests(repl_tests,
+               [setup(reset), cleanup(reset)]
+              ).
 
 test(instantiate_type) :-
     reset,

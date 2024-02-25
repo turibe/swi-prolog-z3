@@ -23,7 +23,6 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
               solver_scopes/1,         % +Num_scopes, starting at 0
               z3_check/1,              % +Status Returns status of global solver: l_true, l_false, l_undet
               z3_check_and_print/1,    % +Status Returns status, prints model if possible
-              z3_declare/2,            % +Formula,+Type    Declares Formula to have Type.
               z3_eval/2,               % +Expression,-Result  Evaluates Expression in a current model, if the current solver is SAT.
               z3_eval/3,               % z3_eval, with boolean completion flag
               z3_is_consistent/1,      % +Formula  Succeeds if Formula is consistent with current solver/context. Fails if l_undet.
@@ -61,7 +60,14 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
 :- use_module(type_inference, [
                   typecheck/4,
                   mappable_symbol/1
-                  ]).
+              ]).
+
+:- use_module(z3_utils, [
+                  reset_var_counts/0,
+                  declare_z3_types_for_symbols/2,
+                  z3_declare/2            % +Formula,+Type    Declares Formula to have Type.
+                  ]
+              ).
 
 :- use_module(library(assoc)).
 :- use_module(library(ordsets)).
@@ -144,21 +150,6 @@ enum_declarations_map(M) :-
     z3_enum_declarations(L),
     add_enums(L, t, M).
 
-reset_var_counts :- nb_setval(varcount, 0).
-
-inc_var_count(X) :- nb_getval(varcount, X),
-                    New is X + 1,
-                    nb_setval(varcount, New).
-
-%%%%% Attribute (Prolog) variables %%%%%%%%%%
-
-add_attribute(V, Attr) :- var(V),
-                          get_attr(V, z3, Attr), !, %  equality should already be asserted
-                          true.
-add_attribute(V, Attr) :- var(V),
-                          inc_var_count(Count),
-                          atom_concat(v_, Count, Attr),
-                          put_attr(V, z3, Attr).
 
 attribute_goals(V) :- get_attr(V, z3, Attr),
                       z3_push(==(V, Attr), R),
@@ -257,39 +248,6 @@ z3_model_assoc(Model) :-
     Model = model{constants:CA, functions:FA}.
 
 
-% We now allow overloading by arity.
-
-% Grounds any variables in X by making them into attribute variables,
-% and also returns the non-built-in symbols that it finds, using f/N for all arities, including 0:
-
-ground_version(X, Attr, [Attr/0]) :- var(X), !, add_attribute(X, Attr).
-ground_version(X, X, S) :- number(X), !, ord_empty(S).
-ground_version(X, X, [X/0]) :- atom(X), mappable_symbol(X), !, true.
-ground_version(X, X, S) :- atomic(X), !, ord_empty(S).
-ground_version(C, XG:T, Result) :- compound(C), C = X:T, !,
-                                   %% type checking can instantiate the types, so we don't require them to be ground at this point.
-                                   %% (ground(T) -> true ; type_error(ground, T)),
-                                   ground_version(X, XG, Result).
-ground_version(X, G, Result) :- compound(X),
-                                functor(X, F, Arity),
-                                X =.. [F|Rest],
-                                ground_list(Rest, Grest, R),
-                                G =.. [F|Grest],
-                                (mappable_symbol(F) -> 
-                                    ord_add_element(R, F/Arity, Result)
-                                ;
-                                Result = R).
-ground_version([], [], []).
-
-remove_type_annotations(X, X) :- atomic(X), !.
-remove_type_annotations(X:_T, X1) :- mapargs(remove_type_annotations, X, X1), !.
-remove_type_annotations(F, F1) :- compound(F), !, mapargs(remove_type_annotations, F, F1).
-
-ground_list([], [], S) :- ord_empty(S).
-ground_list([F|Rest], [FG|Grest], Result) :- ground_version(F, FG, GFG), ground_list(Rest, Grest, Arest), ord_union(GFG, Arest, Result).
-
-valid_status_list([l_true, l_false, l_undef, l_type_error]).
-valid_status(X) :- valid_status_list(L), member(X, L).
 
 
 /*
@@ -358,15 +316,6 @@ z3_push(Foriginal, Status) :-
 
 z3_push(F) :- z3_push(F, R), (R == l_true ; R == l_undef), !.
 
-%% goes through a list of symbols and declares them in Z3, using z3_declare
-declare_z3_types_for_symbols([], _M).
-declare_z3_types_for_symbols([X|Rest], M) :-
-    (get_assoc(X, M, Def) -> (
-                                  %% write("Declaring "), writeln(Def),
-                                  z3_declare(X, Def)
-                              )
-    ; true),
-    declare_z3_types_for_symbols(Rest, M).
 
 
 print_declarations :-
@@ -417,36 +366,6 @@ replace_var_attributes(X, R) :- compound(X),
 get_term_for_var(X, T) :- var(X),
                           add_attribute(X, T).
 
-
-%% z3_declare updates the internal (C) Z3 decl map:
-
-z3_declare(F:T) :- z3_declare(F, T). %% take care of explicit types
-z3_declare(F/0, T) :- !, z3_declare(F, T).
-z3_declare(F, T) :- var(F), !,
-                    add_attribute(F, Attr),
-                    z3_declare(Attr, T).
-z3_declare(F, int) :- integer(F), !, true.
-z3_declare(F, real) :- float(F), !, true.
-z3_declare(F, T) :- atom(T), !,
-                    z3_declare_function(F, T).
-z3_declare(F, T) :- compound(T),
-                    functor(T, bv, 1), !,
-                    must_be(ground, T),
-                    z3_declare_function(F, T).
-z3_declare(F, T) :- var(T), !,
-                    T = uninterpreted,
-                    z3_declare_function(F, T).
-z3_declare(F, lambda(Arglist, Range)) :- (var(F) -> type_error(nonvar, F) ; true), !,
-                                         F = F1/N,
-                                         length(Arglist, Len),
-                                         assertion(N == Len),
-                                         ground_arglist(Arglist),
-                                         Fapp =.. [F1|Arglist],
-                                         (var(Range) -> Range = uninterpreted ; true), !,
-                                         z3_declare_function(Fapp, Range).
-
-mk_uninterpreted(X) :- (var(X) -> X = uninterpreted ; true ).
-ground_arglist(L) :- maplist(mk_uninterpreted, L).
 
 
 /*
@@ -815,13 +734,14 @@ test(enums_basic, [setup(z3_reset), cleanup(z3_reset),
     z3_model(M),
     Z = M.constants.
 
-tests(enum_declarations, [setup(z3_reset), cleanup(z3_reset),
-                          true(Declarations == [black/0-color, white/0-color])
+test(enum_declarations, [setup(z3_reset), cleanup(z3_reset),
+                          true(DeclSorted == [black/0-color, white/0-color])
                          ]) :-
     z3_declare_enum(color, [black, white]),
     z3_enum_declarations(Declarations),
+    sort(Declarations, DeclSorted),
     enum_declarations_map(Map),
-    assertion(get_assoc(Map, black, color)),
+    assertion(get_assoc(black/0, Map, color)),
     true.
 
 :- end_tests(enums).
