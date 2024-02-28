@@ -1,10 +1,5 @@
-%%% -*- Mode: Prolog; Module: stateful_repl; --*
+%%% -*- Mode: Prolog; Module: stateful_repl; -*-.
 
-/** <module> Stateful REPL for Z3
-
-Remembers asserted formulas and declarations from one query to the next.
-
-*/
 
 :- module(stateful_repl, [
               add/1,
@@ -30,7 +25,13 @@ Remembers asserted formulas and declarations from one query to the next.
               op(739, xfy, <=>), % iff
               op(199, xfy, :)
 
-              ]).
+          ]).
+    
+/** <module> Stateful REPL for Z3
+
+Remembers asserted formulas and declarations from one query to the next.
+
+*/
 
 :- use_module(z3_swi_foreign, [
                   z3_make_solver/1,
@@ -43,7 +44,8 @@ Remembers asserted formulas and declarations from one query to the next.
                   z3_solver_pop/3,
                   z3_solver_scopes/2,
                   z3_declarations/1,
-                  z3_remove_declaration/2
+                  z3_remove_declaration/2,
+                  z3_current_context/1
               ]).
 
 :- use_module(z3_utils, [
@@ -58,7 +60,8 @@ Remembers asserted formulas and declarations from one query to the next.
 
 :- use_module(library(assoc)).
 
-:- multifile z3_help/0.
+% TODO: allow adding inconsistencies, add explain/relax?
+
 
 z3_help :- writeln("Z3 repl help\n"),
            writeln("add(F)\t\tAdd formula F"),
@@ -74,8 +77,8 @@ z3_help :- writeln("Z3 repl help\n"),
 
 :- initialization(reset_globals).
 
-get_global_solver(S) :- nb_current(global_solver, S).
-
+% fails if the variable does not exist:
+get_repl_solver(S) :- nb_current(repl_solver, (_, S)).
 get_type_map(M) :- nb_current(typecheck_map, M).
 set_type_map(M) :- nb_setval(typecheck_map, M).
 
@@ -88,16 +91,35 @@ record_formula(F) :- get_recorded_formulas(L),
 
 get_asserted(M) :- nb_current(asserted_formulas, M).
 
-reset_globals :- (get_global_solver(S) -> z3_free_solver(S) ; true),
-                 z3_reset_context, % to reset enums
+% we should call reset_globals if there is a chance for the context to be invalidated
+% before we do a reset. Otherwise, we'll have an old invalid pointer as the solver.
+
+clear_solver :- nb_current(repl_solver, (Context, S)), !,
+                z3_current_context(CurrentContext),
+                (CurrentContext = Context
+                ->
+                    (
+                        z3_solver_scopes(S, N),
+                        z3_solver_pop(S, N, X),
+                        writef("Scopes was %w", [N]),
+                        assertion(X == 0),
+                        z3_free_solver(S)
+                    )
+                ; writef("There's a new context, previous solver is invalidated.")
+                ),
+                nb_delete(repl_solver).
+clear_solver :- true.
+
+
+reset_globals :- clear_solver,
+                 z3_reset_context, % resets everything, including enums
+                 z3_current_context(Context),
                  z3_make_solver(NewSolver),
-                 nb_setval(global_solver, NewSolver),
+                 nb_setval(repl_solver, (Context, NewSolver)),
                  set_type_map(t),
                  set_recorded_formulas([]),
                  true.
 
-
-%% FIXME: does a pop if check fails, removing the new symbols too.
 push_formula(Formula, NewMap, NewSymbols, Status) :-
     %% must_be(ground, Formula),
     get_type_map(OldAssoc),
@@ -109,8 +131,8 @@ push_formula(Formula, NewMap, NewSymbols, Status) :-
     !, %% commit to first solution
     exclude(>>({OldAssoc}/[X], get_assoc(X, OldAssoc, _Y)), Symbols, NewSymbols),
     declare_z3_types_for_symbols(NewSymbols, NewMap),
-    get_global_solver(Solver),
-    z3_solver_push(Solver,_),
+    get_repl_solver(Solver),
+    z3_solver_push(Solver, _),
     remove_type_annotations(FG, FG_notypes),
     z3_assert(Solver, FG_notypes),
     z3_solver_check(Solver, Status).
@@ -118,16 +140,13 @@ push_formula(Formula, NewMap, NewSymbols, Status) :-
 
 
 remove_one(F/N) :- z3_remove_declaration(F, N).
-% remove_declarations(L) :- maplist(remove_one,L). %% FIXME
-remove_declarations([]) :- true.
-remove_declarations([X|Rest]) :-
-    (remove_one(X) -> true ; true), !, remove_declarations(Rest).
+remove_declarations(L) :- maplist(remove_one, L). % all declarations should have the form F/N
 
 %! add_formula(+F)
 %  Adds Z3 formula F. Typechecks and adds resulting declarations as well.
 add_formula(F) :- push_formula(F, NewMap, NewSymbols, Status),
                   (member(Status, [l_false, l_type_error])  -> (
-                                           get_global_solver(Solver),
+                                           get_repl_solver(Solver),
                                            z3_solver_pop(Solver, 1, _),
                                            remove_declarations(NewSymbols),
                                            fail
@@ -166,15 +185,15 @@ declarations(L) :- get_type_map(M),
 
 %! model(-Model)
 %  Get a Z3 model of formulas asserted so far.
-model(Model) :- get_global_solver(S),
+model(Model) :- get_repl_solver(S),
                 z3_model_map_for_solver(S, Model).
 
-scopes(N) :- get_global_solver(S),
+scopes(N) :- get_repl_solver(S),
              z3_solver_scopes(S, N).
 
 push_check_and_pop(F, Status) :-
     push_formula(F, _NewMap, NewSymbols, Status),
-    get_global_solver(Solver),
+    get_repl_solver(Solver),
     z3_solver_pop(Solver, 1, _),
     remove_declarations(NewSymbols).
 
@@ -194,7 +213,7 @@ implies(X) :- is_implied(X).
 z3_pop(Formula) :-
     must_be(var, Formula),
     pop_recorded_formulas(Formula),
-    get_global_solver(S),
+    get_repl_solver(S),
     z3_solver_pop(S).               
 ****/
 
@@ -210,7 +229,6 @@ read_state(Filename) :-
     read(Input, L),
     close(Input),
     maplist(add, L).
-    
 
 :- begin_tests(repl_tests,
                [setup(reset), cleanup(reset)]
@@ -235,5 +253,3 @@ test(implied_and_consistent) :-
     \+ is_implied(a > 20).
 
 :- end_tests(repl_tests).
-
-

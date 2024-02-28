@@ -190,8 +190,6 @@ signature(^, A, B) :- signature(power, A, B).
 :- declare(bvxnor, [bv(N), bv(N)], bv(N)).
 :- declare(bvxor, [bv(N), bv(N)], bv(N)).
 
-%% TODO: investigate crash with z3_push(a:int = bv2int(c,true)).
-
 %% the result type depends on the value of an arg, so can't quite do this:
 %% :- declare(int2bv, [int, int], bv(_N)).
 
@@ -374,7 +372,9 @@ test(nodottest) :-
     typecheck(f(a):int, int, M),
     \+ get_assoc(:, M, _).
 
-% test(badarity) :-
+test(badarity) :-
+    \+ typecheck(not(_X,_Y), bool, _R).
+
 %    catch(typecheck(not(X,Y), bool, _Map), error(E, _), true),
 %    E =@= syntax_error(arity_error(not(X,Y), 2)) .
 

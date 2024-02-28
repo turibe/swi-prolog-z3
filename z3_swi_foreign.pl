@@ -3,7 +3,6 @@
 
 :- module(z3_swi_foreign, [
               z3_assert/2,
-              z3_context/1,
               z3_declarations/1,
               z3_enum_declarations/1,
               z3_make_solver/1,
@@ -28,6 +27,8 @@
               z3_declarations_string/1,
               z3_remove_declaration/2,
               z3_enums_string/1,
+              z3_current_context/1,
+              
               op(750, xfy, and), % =, >, etc. are 700 ; Local to the module
               op(751, xfy, or),
               op(740, xfy, <>)
@@ -44,6 +45,8 @@ It has no global variables except for those in the C code.
 */
 
 :- load_foreign_library(z3_swi_foreign).
+
+:- set_prolog_flag(string_stack_tripwire, 20).
 
 
 %! z3_declare_function(+Formula, +Type)
@@ -84,11 +87,6 @@ test(reset_declarations) :-
 
 is_pointer(X) :- integer(X).
 
-test(context) :-
-    z3_context(context(C)),
-    is_pointer(C).
-
-
 test(solver) :-
     z3_make_solver(S),
     is_pointer(S),
@@ -101,6 +99,7 @@ test(check_solver) :-
     assertion(Status == l_true),
     z3_solver_get_model(S, M),
     is_pointer(M),
+    z3_free_model(M),
     z3_free_solver(S).
 
 test(symbol_pointers) :-
@@ -122,15 +121,20 @@ test(model_eval,  [setup(z3_make_solver(S)), cleanup(z3_free_solver(S))])  :-
     z3_assert(S, b=2),
     z3_solver_check(S, Status),
     assertion(Status == l_true),
-    z3_solver_get_model(S, Model),
-    % TODO: use blobs or some other method to distinguish models and solvers.
-    assertion(z3_model_eval(Model, a+a, false, 6)),
-    assertion(z3_model_eval(Model, a+b, false, 5)),
-    assertion(z3_model_eval(Model, a*b, false, 6)),
-    assertion(z3_model_eval(Model, a**b, false, 9)),
-    assertion(z3_model_eval(Model, z, false, z)), %% no completion
-    assertion(z3_model_eval(Model, z, true, 0)), %% completion
-    z3_free_model(Model).
+    setup_call_cleanup(
+        z3_solver_get_model(S, Model),
+        (
+            % TODO: use blobs or some other method to distinguish models and solvers.
+            assertion(z3_model_eval(Model, a+a, false, 6)),
+            assertion(z3_model_eval(Model, a+b, false, 5)),
+            assertion(z3_model_eval(Model, a*b, false, 6)),
+            assertion(z3_model_eval(Model, a**b, false, 9)),
+            assertion(z3_model_eval(Model, z, false, z)), %% no completion
+            assertion(z3_model_eval(Model, z, true, 0)), %% completion
+            true
+        ),
+        z3_free_model(Model)
+    ).
 
 
 test(assert_test, [setup(z3_make_solver(S)), cleanup(z3_free_solver(S))]) :-
@@ -151,13 +155,14 @@ test(get_model_no_check, [fail, setup(z3_make_solver(S)), cleanup(z3_free_solver
     z3_reset_declarations,
     z3_declare_function(a, int),
     z3_assert(S, a = 3),
-    z3_solver_get_model(S, _Model).
+    %% get_model expected to fail:
+    (z3_solver_get_model(S, Model) -> z3_free_model(Model) ; fail).
 
 test(incompatible_types1, [fail, setup(z3_make_solver(S)), cleanup(z3_free_solver(S)) ]) :-
     z3_reset_declarations,
     z3_declare_function(a, foo),
     z3_assert(S, a = 3),
-    z3_solver_get_model(S, _Model).
+    (z3_solver_get_model(S, Model) -> z3_free_model(Model) ; fail).
 
 test(incompatible_types2, [
          setup(z3_make_solver(S)), cleanup(z3_free_solver(S)),
@@ -167,7 +172,7 @@ test(incompatible_types2, [
     z3_declare_function(a, foo),
     z3_declare_function(b, bar),
     z3_assert(S, a = b),
-    z3_solver_get_model(S, _Model).
+    (z3_solver_get_model(S, Model) -> z3_free_model(Model) ; fail).
 
 test(at_least_fail, [fail, setup(z3_make_solver(S)), cleanup(z3_free_solver(S))]) :-
     z3_reset_declarations,

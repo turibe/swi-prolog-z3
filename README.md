@@ -7,6 +7,7 @@ including propositional logic, equality, arithmetic, and uninterpreted function 
 With the high-level API in `z3.pl`,
 Z3 asserts are incremental and backtrackable, and the Z3 solver context is pushed and popped automatically.
 
+Alternatively, `stateful-repl` accumulates state from one query to the next.
 
 ### Contact
 
@@ -17,8 +18,9 @@ Github: [https://github.com/turibe/swi-prolog-z3](https://github.com/turibe/swi-
 
 ## Installation:
 
-Tested on MacOS Sonoma.
-
+Tested on MacOS Sonoma,
+ with Z3 version 4.12.6.0 and SWI-Prolog version 9.1.21 for arm64-darwin.
+ 
 1. Install swi-prolog. This can be done via brew, macports, or download. See [https://www.swi-prolog.org/](https://www.swi-prolog.org/).
 
    After this, you should have `swipl` and `swipl-ld` executables.
@@ -26,7 +28,7 @@ Tested on MacOS Sonoma.
 2. Install and build Z3, including `libz3.dylib` . This can also be done via brew, macports, or download.
 See [https://github.com/Z3Prover/z3](https://github.com/Z3Prover/z3).
 
-Tested with Z3 version 4.12.6.0 and SWI-Prolog version 9.1.21 for arm64-darwin.
+
 
 3. Add a symbolic link to the `libz3.dylib` file in this directory (or copy it over).
 
@@ -41,7 +43,7 @@ swipl-ld -I/<path-to-z3>/z3/src/api/ -L. -o z3_swi_foreign -shared z3_swi_foreig
 This creates a `z3_swi_foreign.so` binary that is loaded into SWI Prolog when `use_module(z3)` is executed.
 
 
-5. Start `swipl`, import the `z3.pl` module, and you're done!
+5. Start `swipl`, import the `z3.pl` module with `use_module(z3)`, and you're done!
 
 ```bash
 swipl
@@ -65,10 +67,19 @@ true.
 M1 = model{constants:[a-2, b-1], functions:[f/1-else-2, f(4)-5, f(2)-4]}.
 ```
 
+6. If you prefer, run `use_module(stateful_repl)` and add assertions interactively:
+```bash
+?- add(a:int > 1).
+?- add(a > b).
+?- model(M).
+```
+
+## Testing
+
 Unit tests can be run with `?- run_tests.` , or running
 
 ```bash
-swipl -f z3.pl -g run_tests -g halt
+swipl -g run_tests -t halt z3.pl stateful_repl.pl z3_swi_foreign.pl
 ```
 
 ## Code and Functionality Overview

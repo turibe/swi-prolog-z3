@@ -49,8 +49,6 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
 @license MIT
 */
 
-:- multifile z3_help/0.
-
 :- use_module(type_inference_global_backtrackable, [
                   initialize_map/0 as initialize_type_inference_map,
                   assert_type/2,
@@ -237,7 +235,9 @@ z3_check_and_print(Status) :-
     z3_solver_check_and_print(Solver, Status).
 
 
-% returns a model for the current solver, if check succeeds:
+%! z3_model(-Model)
+%  Returns a model for the solver at the current depth, if z3_check succeeds.
+%  Note that Z3 can return "uncertain" models if the status is l_undef.
 z3_model(Model) :-
     resolve_solver_depth(_),
     z3_check(Status),
@@ -251,21 +251,9 @@ z3_model_assoc(Model) :-
     list_to_assoc(ModelLists.functions, FA),
     Model = model{constants:CA, functions:FA}.
 
-
-
-
-/*
-check_status_arg(Status) :- var(Status), !, true.
-check_status_arg(Status) :- nonvar(Status),
-                            (valid_status(Status) -> true ; (
-                                valid_status_list(L),
-                                domain_error(L, Status)
-                            )), !.
-*/
 check_status_arg(Status) :- valid_status_list(L),
                             must_be((var; oneof(L)), Status).
 
-%% TODO: map "alldifferent" to "distinct".
 expand_macros(F, R) :- functor(F, isoneof, _N), !,
                        F =.. [isoneof | [X | Rest]],
                        maplist({X}/[V,X=V]>>true, Rest, L),
@@ -319,8 +307,6 @@ z3_push(Foriginal, Status) :-
 %% l_type_error is the only one that does not push onto the solver.
 
 z3_push(F) :- z3_push(F, R), (R == l_true ; R == l_undef), !.
-
-
 
 print_declarations :-
     current_output(Out),
