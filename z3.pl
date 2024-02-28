@@ -630,7 +630,8 @@ test(real2int) :-
 
 test(isint) :-
     z3_push(is_int(3.0)),
-    \+ z3_push(is_int(2)).
+    \+ z3_push(is_int(2)), %% should give type error
+    z3_push(is_int(2), l_type_error).
 
 test(ite_implies) :-
     z3_push(ite(x,y=1,y=2)),

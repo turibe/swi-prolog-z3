@@ -6,6 +6,8 @@
 #include <ctype.h>
 #include <assert.h>
 
+// #include <gmp.h>
+
 #include <z3.h>
 
 /****
@@ -780,9 +782,9 @@ foreign_t z3_ast_to_term_internal(const Z3_context ctx, Z3_ast ast, term_t term)
     int64_t num, den;
     if (Z3_get_numeral_rational_int64(ctx, ast, &num, &den)) {
       functor_t div = PL_new_functor(PL_new_atom("/"), 2); // how to construct a Prolog rational in C?
-      term_t t = PL_new_term_ref();
-      term_t t1 = PL_new_term_refs(2);
-      term_t t2 = t1+1;
+      term_t t = PL_new_term_refs(3);
+      term_t t1 = t + 1;
+      term_t t2 = t + 2;
       int res = PL_put_int64(t1, num);
       if (!res) return res;
       res = PL_put_int64(t2, den);
@@ -1234,11 +1236,12 @@ foreign_t model_functions(Z3_context ctx, Z3_model m, term_t list) {
     }
 
     const functor_t slash_functor = PL_new_functor(PL_new_atom("/"), 2);
-    term_t top_pair_term = PL_new_term_ref();
-    term_t else_term = PL_new_term_ref();
-    term_t fname_term = PL_new_term_ref();
-    term_t arity_term = PL_new_term_ref();
-    term_t fname_arity_term = PL_new_term_ref();
+    term_t top_pair_term = PL_new_term_refs(6);
+    term_t else_term = top_pair_term + 1;
+    term_t fname_term = top_pair_term + 2;
+    term_t arity_term = top_pair_term + 3;
+    term_t fname_arity_term = top_pair_term + 4;
+    term_t else_singleton = top_pair_term + 5;
     {
       const Z3_string function_name = Z3_get_symbol_string(ctx, symbol);
       int res = PL_put_atom_chars(fname_term, function_name);
@@ -1253,7 +1256,6 @@ foreign_t model_functions(Z3_context ctx, Z3_model m, term_t list) {
     }
 
     // else_term is a pair " F/N-else ":
-    term_t else_singleton = PL_new_term_ref();
     int res = PL_put_atom_chars(else_singleton, "else");
     if (!res) return res;
     if (!PL_cons_functor(else_term, pair_functor, fname_arity_term, else_singleton)) {
@@ -1293,7 +1295,10 @@ foreign_t model_constants(const Z3_context ctx, const Z3_model m, term_t list) {
       continue;
     }
 
-    term_t lhs = PL_new_term_ref();
+    term_t lhs = PL_new_term_refs(3);
+    term_t rhs = lhs + 1;
+    term_t pair = lhs + 2;
+    
     int res = PL_put_atom_chars(lhs, constant_name);
     if (!res) {
       ERROR("PL_put_atom_chars failed\n");
@@ -1301,14 +1306,12 @@ foreign_t model_constants(const Z3_context ctx, const Z3_model m, term_t list) {
     }
 
     DEBUG("making rhs\n");
-    term_t rhs = PL_new_term_ref();
     if (!z3_ast_to_term_internal(ctx, value, rhs)) {
       return FALSE;
     }
 
-    term_t pair = PL_new_term_ref();
     if (!PL_cons_functor(pair, pair_functor, lhs, rhs)) {
-      DEBUG("error consing functor\n");
+      ERROR("error consing functor\n");
       return FALSE;
     }
 
@@ -1557,12 +1560,13 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
     break;
   case PL_RATIONAL:
     ERROR("TODO: PL_RATIONAL\n");
+    // look at PL_get_mpq
     break;
   case PL_FLOAT: {
     // double myf;
     // We don't use PL_get_float because Z3 does not make reals from floats.
     // Z3_sort sort = Z3_mk_fpa_sort_double(ctx);
-    DEBUG("making float\n");
+    INFO("making float\n");
     Z3_sort sort = REAL_SORT;
     char *formula_string;
     if (PL_get_chars(formula, &formula_string, CVT_FLOAT) ) {
@@ -1717,8 +1721,8 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
     // special case because of the bool arg:
     if (strcmp(name_string, "bv2int")==0) {
       CHECK_ARITY(name_string, 2, arity);
-      term_t sub1 = PL_new_term_ref();
-      term_t sub2 = PL_new_term_ref();
+      term_t sub1 = PL_new_term_refs(2);
+      term_t sub2 = sub1 + 1;
       res = PL_get_arg(1, formula, sub1);
       res = PL_get_arg(2, formula, sub2);
       int is_signed;
@@ -1733,8 +1737,8 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
 
     if (strcmp(name_string, "int2bv")==0) {
       CHECK_ARITY(name_string, 2, arity);
-      term_t sub1 = PL_new_term_ref();
-      term_t sub2 = PL_new_term_ref();
+      term_t sub1 = PL_new_term_refs(2);
+      term_t sub2 = sub1 + 1;
       res = PL_get_arg(1, formula, sub1);
       res = PL_get_arg(2, formula, sub2);
       int width;
@@ -1751,9 +1755,9 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
       || strcmp(name_string, "bvmul_no_overflow") == 0
       || strcmp(name_string, "bvsub_no_underflow") == 0) {
       CHECK_ARITY(name_string, 3, arity);
-      term_t sub1 = PL_new_term_ref();
-      term_t sub2 = PL_new_term_ref();
-      term_t sub3 = PL_new_term_ref();
+      term_t sub1 = PL_new_term_refs(3);
+      term_t sub2 = sub1 + 1;
+      term_t sub3 = sub1 + 2;
       res = PL_get_arg(1, formula, sub1);
       res = PL_get_arg(2, formula, sub2);
       res = PL_get_arg(3, formula, sub3);

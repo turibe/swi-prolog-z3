@@ -235,6 +235,8 @@ typecheck(false, bool, E, E) :- true, !.
 %% Without this, we must use, e.g., 2.0 instead of 2 when warranted.
 %% typecheck(X, real, E, E) :- integer(X).
 typecheck(X, real, E, E) :- float(X), !.
+%% introduce a rational type?
+typecheck(X, real, E, E) :- rational(X), \+ integer(X), !.
 typecheck(X, string, E, E) :- string(X), !.
 typecheck(T, bv(N), E, E) :- functor(T, int2bv, _), !,
                              T = int2bv(N, I),
