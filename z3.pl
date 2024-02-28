@@ -32,13 +32,13 @@
               % {}/1, % clashes with other CLP libraries
               ]).
 
-/** <module> Prolog documentation processor
+/** <module> Z3 high-level integration (backtrackable version)
 
 This module builds on the basic functionality of z3_swi_foreign.pl to provide:
 
-- Typechecking and declaring Z3 variables and functions
-- Attributed variables
-- pushing and popping assertions on the solver as we assert and backtrack
+- Typechecking and declaring Z3 variables and functions.
+- Attributed variables.
+- Pushing and popping assertions on the solver as we assert and backtrack.
 
 For incrementality, this module maintains a global_solver, where the push and pops happen.
 So even though it is a single Z3 C object, kept in a non-backtrackable Prolog variable, it is meant to works as a backtrackable one.
@@ -148,7 +148,7 @@ add_enums([Pair | Rest], Min, Mout) :-
     add_enums(Rest, Mnew, Mout).
 
 %% Map for initializing type inference:
-enum_declarations_map(M) :-
+z3_enum_declarations_assoc_map(M) :-
     z3_enum_declarations(L),
     add_enums(L, t, M).
 
@@ -274,7 +274,7 @@ z3_push(Foriginal, Status) :-
     expand_macros(Foriginal, F),
     (b_getval(solver_depth, 0) ->
          z3_reset_declarations, %% does not clear enums
-         enum_declarations_map(EnumMap),
+         z3_enum_declarations_assoc_map(EnumMap),
          set_type_inference_map(EnumMap)
     ; true),
     get_type_inference_map(OldAssoc),
@@ -393,20 +393,6 @@ z3_is_implied(F) :- z3_push(not(F), Status),
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%% unit tests %%%%%%%%%%%%%%%%%
-
-:- begin_tests(test_utils).
-
-test(ground_version, true(Symbols == [a/0, b/0, c/0, f/1, g/0]) ) :-
-    F = and(a:int, b = c, or(f(a) = g)),
-    ground_version(F, FG, Symbols),
-    assertion(F == FG),
-    true.
-
-test(remove_annotations, FN=and(a, b = c)) :-
-    F = and(a:int, b = c:real),
-    remove_type_annotations(F, FN).
-
-:- end_tests(test_utils).
 
 
 :- begin_tests(push_assert, [setup(reset_globals)]).
@@ -656,8 +642,6 @@ test(nary_minus) :-
     z3_push(x:int = -(0,1,2,3,4)),
     z3_is_implied( x = -10 ).
 
-test(declare_lambda, [true(X==uninterpreted)]) :-
-    z3_declare(f/1, lambda([X], real)).
 
 test(nested_uninterpreted) :-
     z3_push(f(g(a,b)) = c),
@@ -731,7 +715,7 @@ test(enum_declarations, [setup(z3_reset), cleanup(z3_reset),
     z3_declare_enum(color, [black, white]),
     z3_enum_declarations(Declarations),
     sort(Declarations, DeclSorted),
-    enum_declarations_map(Map),
+    z3_enum_declarations_assoc_map(Map),
     assertion(get_assoc(black/0, Map, color)),
     true.
 

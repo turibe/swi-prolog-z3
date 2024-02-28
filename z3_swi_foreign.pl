@@ -58,14 +58,17 @@ z3_declare_function(F, T) :- F == A/0, z3_declare_function(A, T).
 z3_declare_function(F, T) :- z3_declare_function(F, T, _C).
 % (Returned pointer is only useful for debugging, so we hide it here)
 
+%! z3_model_map(+ModelPointer, -Map)
+%  Constructs a Model term for the given model pointer.
+
 z3_model_map(M, Map) :- z3_model_functions(M, F),
                         z3_model_constants(M, C),
                         sort(F, FS),
                         sort(C, CS),
                         Map = model{functions:FS, constants:CS}.
 
-
-% gets a Prolog term representing a model for the given solver S:
+%! z3_model_map_for_solver(+SolverPointer, -Model)
+%  Gets a Prolog term representing a model for the given solver S.
 z3_model_map_for_solver(S, Model) :-
     setup_call_cleanup(z3_solver_get_model(S, M),
                        z3_model_map(M, Model),

@@ -1,4 +1,4 @@
-%%% -*- Mode: Prolog; Module: z3_utils; --*
+%%% -*- mode: Prolog; Module: z3_utils; --*
 
 :- module(z3_utils, [
               declare_z3_types_for_symbols/2,
@@ -19,7 +19,9 @@ Utilities shared by z3.pl and sateful_repl.pl
 
 :- use_module(z3_swi_foreign).
 
-:- use_module(type_inference).
+:- use_module(type_inference, [
+                  mappable_symbol/1
+                  ]).
 
 :- initialization(reset_var_counts).
 
@@ -49,7 +51,7 @@ declare_z3_types_for_symbols(L, M) :-
     maplist({M}/[X]>>(get_assoc(X, M, Def) -> z3_declare(X,Def) ; true), L).
 
 %! z3_declare(+F:T)
-%  calls z3_declare(F, T)
+%  calls z3_declare(F, T). "F:T" is used to require the type of F to be T.
 
 %! z3_declare(+F, +T)
 %  updates the internal (C code) Z3 declaration map.
@@ -79,10 +81,11 @@ z3_declare(F, lambda(Arglist, Range)) :- (var(F) -> type_error(nonvar, F) ; true
                                          (var(Range) -> Range = uninterpreted ; true), !,
                                          z3_declare_function(Fapp, Range).
 
-% We now allow overloading by arity.
 
-% Grounds any variables in X by making them into attribute variables,
-% and also returns the non-built-in symbols that it finds, using f/N for all arities, including 0:
+%! ground_version(+Term, -GroundTerm, -SymbolList)
+%  Grounds any variables in X by making them into attribute variables,
+%  and also returns the non-built-in symbols that it finds, using f/N for all arities, including 0.
+%  Using F/N allows overloading by arity.
 
 ground_version(X, Attr, [Attr/0]) :- var(X), !, add_attribute(X, Attr).
 ground_version(X, X, S) :- number(X), !, ord_empty(S).
@@ -97,11 +100,15 @@ ground_version(X, G, Result) :- compound(X),
                                 X =.. [F|Rest],
                                 ground_list(Rest, Grest, R),
                                 G =.. [F|Grest],
-                                (mappable_symbol(F) -> 
+                                (mappable_symbol(F) ->
                                     ord_add_element(R, F/Arity, Result)
                                 ;
                                 Result = R).
 ground_version([], [], []).
+
+
+%! remove_type_annotations(+Term, -TermOut)
+%  Removes all F:T type annotations from Term.
 
 remove_type_annotations(X, X) :- atomic(X), !.
 remove_type_annotations(X:_T, X1) :- mapargs(remove_type_annotations, X, X1), !.
@@ -112,3 +119,22 @@ ground_list([F|Rest], [FG|Grest], Result) :- ground_version(F, FG, GFG), ground_
 
 valid_status_list([l_true, l_false, l_undef, l_type_error]).
 valid_status(X) :- valid_status_list(L), member(X, L).
+
+
+:- begin_tests(z3_utils_tests).
+
+test(ground_version, true(Symbols == [a/0, b/0, c/0, f/1, g/0]) ) :-
+    F = and(a:int, b = c, or(f(a) = g)),
+    ground_version(F, FG, Symbols),
+    assertion(F == FG),
+    true.
+
+test(remove_type_annotations, true(FN=and(a, b = c))) :-
+    F = and(a:int, b = c:real),
+    remove_type_annotations(F, FN).
+
+
+test(declare_lambda, [true(X==uninterpreted)]) :-
+    z3_declare(f/1, lambda([X], real)).
+
+:- end_tests(z3_utils_tests).

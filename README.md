@@ -2,7 +2,7 @@
 
 Code to use Z3 as a constraint solver inside SWI Prolog, for a basic CLP(CC) implementation.
 Currently supports a basic subset of Z3's capabilities,
-including propositional logic, equality, arithmetic, and uninterpreted function symbols.
+including propositional logic, equality, arithmetic, bit-vectors, and uninterpreted function symbols.
 
 With the high-level API in `z3.pl`,
 Z3 asserts are incremental and backtrackable, and the Z3 solver context is pushed and popped automatically.
@@ -93,7 +93,8 @@ The z3.pl module offers a high-level, user-friendly API, with:
 - Prolog goals that push assertions onto the Z3 solver, that are automatically popped when Prolog backtracks.
 
 The type inference at this level also uses a backtrackable type map, so
-both types and assertions start afresh from one query to the next. 
+both types and assertions start afresh from one query to the next.
+(If you don't want this, see `stateful_repl.pl`.)
 
 The basic operations are:
 
@@ -103,7 +104,8 @@ The basic operations are:
 z3_push(f(a:int) = b and b = 3, Status). %% Status = l_true
 ```
 
-Status will be one of `{l_true, l_false, l_undef}`. One can also use `push/1`, which will fails if status is `l_false`.
+Status will be one of `{l_true, l_false, l_undef, l_type_error}`.
+One can also use `push/1`, which will fails if status is `l_false` or `l_type_error`.
 
 - `z3_is_consistent(+Formula)`: Tests whether `Formula` is consistent with what has been pushed so far.
 
