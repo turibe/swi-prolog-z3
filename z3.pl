@@ -20,7 +20,6 @@
               print_declarations/0,    % print declarations so far, or those used in the previous query (reset on a new push).
               z3_enum_declarations/1,
               z3_declarations/1,
-              z3_help/0,
 
               z3_reset/0,      % resets everything, use sparingly
 
@@ -28,7 +27,7 @@
               op(751, xfy, or),
               op(740, xfy, <>),  % different-than
               op(739, xfy, <=>), % iff
-              op(199, xfy, :)
+              op(299, xfy, :)
               % {}/1, % clashes with other CLP libraries
               ]).
 
@@ -93,53 +92,71 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
                   z3_solver_scopes/2,
                   z3_reset_context/0, %% should not be called directly, use this module's z3_reset instead
                   z3_declarations/1,
-                  z3_enum_declarations/1
+                  z3_enum_declarations/1,
+                  z3_current_context/1
               ]).
+
+
+%% we now use "print_message" for error messages.
+
+:- multifile prolog:(message/1).
+prolog:message(z3_message(S)) --> {}, [S].
+
+test_message :- print_message(informational, z3_message("foo informational")),
+                print_message(error, z3_message("foo error")),
+                print_message(warning, z3_message("foo warning")).
+
+
+safe_free_solver :-
+    get_global_solver(OldSolver) ->
+        (
+            z3_current_context(CurrentContext),
+            get_global_context(OldContext),
+            ((CurrentContext == OldContext) ->
+                 z3_free_solver(OldSolver),
+                 print_message(informational, z3_message("Safely freed old solver"))
+            ;
+            print_message(warning, z3_message("Could not free old solver because context has changed"))
+            ),
+            nb_delete(global_solver)
+        )
+    ; true.
+
 
 :- initialization(new_global_solver).
 
-z3_help :- writeln("Z3 help\n").
-           
-%% old maps and solvers are invalidated:
+%! Resets the entire Z3 context. All declarations, including enums, are cleared.
+%  Old models and solvers are invalidated.
 z3_reset :-
     %% assertion(b_getval(solver_depth, 0)), %% test cleanup violates this
-    (get_global_solver(Old) ->
-         (
-             z3_free_solver(Old),
-             nb_delete(global_solver)
-         )
-    ;
-    true),
+    safe_free_solver,
     z3_reset_context,
     new_global_solver.
 
 
 %% To automatically pop the Z3 server when backtracking:
 %% solver_depth is a backtrackable variable, with the depth level.
-%% Before an assert, we check that variable, and pop the solver as many times as needed.
-
+%% Before an assert, we check that variable, and pop the solver as many times as needed to match it.
 
 %% indent according to solver pushes:
 %% TODO: improve this reporting.
 %% report(type_error(T)) :- print(T), nl, flush_output.
-report(T) :- indent, writef(T), nl, flush_output.
+report(T) :- indent, write(T), nl, flush_output.
 report(F, Vars) :-
     swritef(String, F, Vars),
     report(String).
 
 indent :- assert_depth(N),
-          forall(between(1, N, _X), (print(---), print(N))).
+          forall(between(1, N, _X), (write("--"), write(N), write(": "))).
 
-%% Makes sure that the solver goes with latest context.
-%% does not reset the context, so does not reset enums.
+%! Resets declarations and solver, but not enums.
+%  Can be used to ensure that the solver goes with the latest context.
 reset_globals :-
-    %% z3_reset, %% crash without this; would be nice if it was not needed.
     z3_reset_declarations,
     %% the only way to really reset the enums is to get a new context.
     new_global_solver,
     reset_var_counts,
     initialize_type_inference_map.
-
 
 add_enums([], M, M).
 add_enums([Pair | Rest], Min, Mout) :-
@@ -147,11 +164,13 @@ add_enums([Pair | Rest], Min, Mout) :-
     typecheck(F, Type, Min, Mnew),
     add_enums(Rest, Mnew, Mout).
 
-%% Map for initializing type inference:
+%! Creates a typechecking (assoc) map with the current enum declarations.
+%  Used to initialize the typechecking map in the presence of enums.
 z3_enum_declarations_assoc_map(M) :-
     z3_enum_declarations(L),
     add_enums(L, t, M).
 
+%%%%%%%%%%%%%%%%%%%%% Attribute variables %%%%%%%%%%%%%%%%%%%%%%%
 
 attribute_goals(V) :- get_attr(V, z3, Attr),
                       z3_push(==(V, Attr), R),
@@ -168,16 +187,22 @@ attr_unify_hook(Attr, Formula) :-
     %% report(status("Hook got", Attr, Formula)),
     z3_push(==(Attr, Formula), R), \+ (R = l_false).
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %% should only be called at the top-most level:
+
+
 new_global_solver :-
-    %% by now, we could have a new context, so can't free the old solver
+    safe_free_solver,
+    z3_current_context(CurrentContext),
+    %% by now, we could have a new context, so can't free the old solver unless they're the same
     z3_make_solver(S),
+    nb_setval(global_context, CurrentContext),
     nb_setval(global_solver, S),
     nb_setval(solver_depth, 0).
 
 get_global_solver(S) :- nb_current(global_solver, S).
+get_global_context(C) :- nb_current(global_context, C).
 
 assert_depth(N) :- b_getval(solver_depth, N).
 

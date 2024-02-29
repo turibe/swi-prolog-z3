@@ -152,7 +152,7 @@ void z3_swi_error_handler(Z3_context ctx, Z3_error_code e) {
   fprintf(stderr, "Z3 ERROR: code %ul %s\n", e, msg);
 }
 
-struct ContextStruct global_context;
+static struct ContextStruct global_context;
 
 void z3_swi_initialize() {
   Z3_string version = Z3_get_full_version();
