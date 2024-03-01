@@ -23,8 +23,7 @@
               op(751, xfy, or),
               op(740, xfy, <>),  % different-than
               op(739, xfy, <=>), % iff
-              op(199, xfy, :)
-
+              op(299, xfy, :)
           ]).
     
 /** <module> Stateful REPL for Z3
@@ -61,7 +60,6 @@ Remembers asserted formulas and declarations from one query to the next.
 :- use_module(library(assoc)).
 
 % TODO: allow adding inconsistencies, add explain/relax?
-
 
 z3_help :- writeln("Z3 repl help\n"),
            writeln("add(F)\t\tAdd formula F"),
@@ -101,11 +99,13 @@ clear_solver :- nb_current(repl_solver, (Context, S)), !,
                     (
                         z3_solver_scopes(S, N),
                         z3_solver_pop(S, N, X),
-                        writef("Scopes was %w", [N]),
+                        print_message(informational, z3_message("Scopes was %w", [N])),
                         assertion(X == 0),
+                        print_message(informational, z3_message("Freeing old repl solver")),
                         z3_free_solver(S)
                     )
-                ; writef("There's a new context, previous solver is invalidated.")
+                ;
+                print_message(warning, z3_message("There's a new repl context, previous solver is invalidated."))
                 ),
                 nb_delete(repl_solver).
 clear_solver :- true.
@@ -125,7 +125,7 @@ push_formula(Formula, NewMap, NewSymbols, Status) :-
     get_type_map(OldAssoc),
     ground_version(Formula, FG, Symbols),
     (typecheck(FG, bool, OldAssoc, NewMap) -> true ;
-     writef("Type error for %w", [FG]),
+     print_message(error, z3_message("Type error for %w", [FG])),
      fail
      ),
     !, %% commit to first solution

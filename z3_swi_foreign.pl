@@ -52,6 +52,7 @@ It has no global variables except for those in the C code.
 
 :- multifile prolog:(message/1).
 prolog:message(z3_message(S)) --> {}, [S].
+prolog:message(z3_message(F,L)) --> {swritef(S, F, L)}, [S].
 
 
 %! z3_declare_function(+Formula, +Type)
@@ -87,6 +88,12 @@ z3_declarations(L) :- z3_get_declarations(LG), maplist(translate_entry, LG, L).
 z3_enum_declarations(L) :- z3_get_enum_declarations(LG), maplist(translate_entry, LG, L).
 
 :- begin_tests(z3_swi_foreign).
+
+test(test_messages) :-
+    print_message(informational, z3_message("testing informational message")),
+    print_message(error, z3_message("testing error message %w", [1])),
+    print_message(warning, z3_message("testing warning message")).
+
 
 test(reset_declarations) :-
     z3_reset_declarations,

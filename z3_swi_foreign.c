@@ -127,7 +127,7 @@ struct ContextStruct {
   sort_map enum_sorts;  // map from names to Z3 enumeration sorts, used for building terms
   decl_map enum_declarations; // declarations that typechecker will need
   decl_map declarations; // standard declarations
-  long context_id;
+  long context_id; // used as a unique ID for the context
 };
 
 typedef struct ContextStruct *Context;
@@ -229,7 +229,8 @@ foreign_t z3_reset_context_foreign() {
   Z3_del_context(ctx);
 
   initialize_count += 1;
-  global_context.context_id = initialize_count;
+
+  global_context.context_id = initialize_count; // a random ID would do too.
 
   // Z3_finalize_memory(); // for good measure too? dangerous.
 
@@ -1063,10 +1064,10 @@ Z3_func_decl mk_func_decl(Z3_context ctx, decl_map declaration_map, const term_t
      char *fchars;
      int res = PL_get_chars(formula, &fchars, CVT_WRITE);
      if (!res) fchars = NULL;
-     ERROR("Formula was %s\n", fchars);
+     ERROR("Formula: %s\n", fchars);
      res = PL_get_chars(range_term, &fchars, CVT_WRITE);
      if (!res) fchars = NULL;
-     ERROR("Range was %s\n", fchars);
+     ERROR("Range: %s\n", fchars);
      free(domain);
      return NULL;
    }
@@ -1573,7 +1574,7 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
     // double myf;
     // We don't use PL_get_float because Z3 does not make reals from floats.
     // Z3_sort sort = Z3_mk_fpa_sort_double(ctx);
-    INFO("making float\n");
+    DEBUG("making float\n");
     Z3_sort sort = REAL_SORT;
     char *formula_string;
     if (PL_get_chars(formula, &formula_string, CVT_FLOAT) ) {

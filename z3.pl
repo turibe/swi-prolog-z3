@@ -98,21 +98,13 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
                   z3_current_context_id/1
               ]).
 
-
-test_message :- print_message(informational, z3_message("foo informational")),
-                print_message(error, z3_message("foo error")),
-                print_message(warning, z3_message("foo warning")).
-
-
 safe_free_solver :-
-    get_global_solver(OldSolver) ->
+    nb_current(global_solver, (OldContext, OldSolver)) ->
         (
             z3_current_context_id(CurrentContext),
-            get_global_context(OldContext),
             ((CurrentContext == OldContext) ->
-                 print_message(informational, z3_message("About to free old solver")),
-                 z3_free_solver(OldSolver),
-                 print_message(informational, z3_message("Safely freed old solver"))
+                 print_message(informational, z3_message("Freeing old z3.pl solver")),
+                 z3_free_solver(OldSolver)
             ;
             print_message(warning, z3_message("Could not free old solver because context has changed"))
             ),
@@ -130,8 +122,6 @@ z3_reset :-
     safe_free_solver,
     assertion(\+ get_global_solver(_)),
     z3_reset_context,
-    z3_current_context_id(Context),
-    nb_setval(global_context, Context),
     new_global_solver.
 
 
@@ -149,7 +139,7 @@ report(K, F, Vars) :- swritef(String, F, Vars),
 indent(Message, R) :- assert_depth(N),
                       repeat_string("----", N, S),
                       atomics_to_string([S,Message], R).
-             
+
 
 %! Resets declarations and solver, but not enums.
 %  Can be used to ensure that the solver goes with the latest context.
@@ -195,17 +185,16 @@ attr_unify_hook(Attr, Formula) :-
 
 new_global_solver :-
     print_message(informational, z3_message("Making new z3.pl solver")),
-    safe_free_solver, % still crashes???
+    %% by now, we could have a new context, so can't free the old solver unless it goes with it.
+    safe_free_solver,
     z3_current_context_id(Current),
-    %% by now, we could have a new context, so can't free the old solver unless they're the same
     z3_make_solver(Solver),
-    nb_setval(global_context, Current),
-    nb_setval(global_solver, Solver),
+    nb_setval(global_solver, (Current, Solver)),
     nb_setval(solver_depth, 0),
     print_message(informational, z3_message("Made new z3.pl solver")).
 
-get_global_solver(S) :- nb_current(global_solver, S).
-get_global_context(C) :- nb_current(global_context, C).
+get_global_solver(Solver) :- nb_current(global_solver, (_Context, Solver)).
+%% get_global_context(Context) :- nb_current(global_solver, (Context, _Solver)).
 
 assert_depth(N) :- b_getval(solver_depth, N).
 
@@ -326,7 +315,7 @@ z3_push(Foriginal, Status) :-
     ;  (
         Status = l_type_error,
         get_type_inference_map_list(L),
-        report(error, "Type error in term: %w\nMap was %w", [FG, L])
+        report(error, "Type error in term: %w. Type map was %w", [FG, L])
     )
     ).
 
@@ -335,13 +324,6 @@ z3_push(Foriginal, Status) :-
 %% l_type_error is the only one that does not push onto the solver.
 
 z3_push(F) :- z3_push(F, R), (R == l_true ; R == l_undef), !.
-
-print_declarations :-
-    current_output(Out),
-    z3_declarations_string(S),
-    writeln(Out, S),
-    z3_enums_string(S2),
-    writeln(Out, S2).
 
 z3_eval(Expression, Completion, Result) :-
     \+ is_list(Expression), !,
@@ -391,7 +373,6 @@ internal_assert_and_check_list(Solver, List, Status) :-
     Conj =.. [and | List],
     internal_assert_and_check(Solver, Conj, Status).
 */
-
 
 z3_push_and_print(F,R) :- z3_push(F,R), z3_check_and_print(R1), assertion(R == R1).
 

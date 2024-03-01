@@ -8,7 +8,8 @@
               valid_status_list/1,
               valid_status/1,
               z3_declare/2,
-              add_attribute/2
+              add_attribute/2,
+              print_declarations/0
           ]).
 
 /** <module> z3_utils
@@ -119,6 +120,17 @@ ground_list([F|Rest], [FG|Grest], Result) :- ground_version(F, FG, GFG), ground_
 
 valid_status_list([l_true, l_false, l_undef, l_type_error]).
 valid_status(X) :- valid_status_list(L), member(X, L).
+
+
+%! Prints declarations for formulas asserted so far, as Z3 ast maps.
+%  Can be used to see the declarations used in the previous z3.pl query (reset on a new z3.pl push).
+
+print_declarations :-
+    current_output(Out),
+    z3_declarations_string(S),
+    writeln(Out, S),
+    z3_enums_string(S2),
+    writeln(Out, S2).
 
 
 :- begin_tests(z3_utils_tests).
