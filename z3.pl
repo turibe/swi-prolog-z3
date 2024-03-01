@@ -67,7 +67,9 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
                   declare_z3_types_for_symbols/2,
                   z3_declare/2            % +Formula,+Type    Declares Formula to have Type.
                   ]
-              ).
+             ).
+
+:- use_module(utils, [repeat_string/3]).
 
 :- use_module(library(assoc)).
 :- use_module(library(ordsets)).
@@ -93,14 +95,9 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
                   z3_reset_context/0, %% should not be called directly, use this module's z3_reset instead
                   z3_declarations/1,
                   z3_enum_declarations/1,
-                  z3_current_context/1
+                  z3_current_context_id/1
               ]).
 
-
-%% we now use "print_message" for error messages.
-
-:- multifile prolog:(message/1).
-prolog:message(z3_message(S)) --> {}, [S].
 
 test_message :- print_message(informational, z3_message("foo informational")),
                 print_message(error, z3_message("foo error")),
@@ -110,9 +107,10 @@ test_message :- print_message(informational, z3_message("foo informational")),
 safe_free_solver :-
     get_global_solver(OldSolver) ->
         (
-            z3_current_context(CurrentContext),
+            z3_current_context_id(CurrentContext),
             get_global_context(OldContext),
             ((CurrentContext == OldContext) ->
+                 print_message(informational, z3_message("About to free old solver")),
                  z3_free_solver(OldSolver),
                  print_message(informational, z3_message("Safely freed old solver"))
             ;
@@ -130,7 +128,10 @@ safe_free_solver :-
 z3_reset :-
     %% assertion(b_getval(solver_depth, 0)), %% test cleanup violates this
     safe_free_solver,
+    assertion(\+ get_global_solver(_)),
     z3_reset_context,
+    z3_current_context_id(Context),
+    nb_setval(global_context, Context),
     new_global_solver.
 
 
@@ -139,21 +140,22 @@ z3_reset :-
 %% Before an assert, we check that variable, and pop the solver as many times as needed to match it.
 
 %% indent according to solver pushes:
-%% TODO: improve this reporting.
-%% report(type_error(T)) :- print(T), nl, flush_output.
-report(T) :- indent, write(T), nl, flush_output.
-report(F, Vars) :-
-    swritef(String, F, Vars),
-    report(String).
+report(K, T) :- indent(T, R),
+                print_message(K, z3_message(R)).
 
-indent :- assert_depth(N),
-          forall(between(1, N, _X), (write("--"), write(N), write(": "))).
+report(K, F, Vars) :- swritef(String, F, Vars),
+                      report(K, String).
+
+indent(Message, R) :- assert_depth(N),
+                      repeat_string("----", N, S),
+                      atomics_to_string([S,Message], R).
+             
 
 %! Resets declarations and solver, but not enums.
 %  Can be used to ensure that the solver goes with the latest context.
 reset_globals :-
     z3_reset_declarations,
-    %% the only way to really reset the enums is to get a new context.
+    %% the only way to really reset the enums is to get a new context, we don't do that here
     new_global_solver,
     reset_var_counts,
     initialize_type_inference_map.
@@ -178,28 +180,29 @@ attribute_goals(V) :- get_attr(V, z3, Attr),
 
 %% Worth keeping an inverse map of "fake Z3 constants" to Prolog vars? Might need it for eval...
 attr_unify_hook(Attr, Var) :- get_attr(Var, z3, Other), !,
-                              report("Running hook for %w", [Other]),
+                              report(informational, "Running hook for %w", [Other]),
                               z3_push(==(Attr, Other), R),
                               \+ R = l_false.
 attr_unify_hook(Attr, Var) :- var(Var), !,
                               add_attribute(Var, Attr).
 attr_unify_hook(Attr, Formula) :-
-    %% report(status("Hook got", Attr, Formula)),
+    %% report(informational, status("Hook got", Attr, Formula)),
     z3_push(==(Attr, Formula), R), \+ (R = l_false).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %% should only be called at the top-most level:
 
-
 new_global_solver :-
-    safe_free_solver,
-    z3_current_context(CurrentContext),
+    print_message(informational, z3_message("Making new z3.pl solver")),
+    safe_free_solver, % still crashes???
+    z3_current_context_id(Current),
     %% by now, we could have a new context, so can't free the old solver unless they're the same
-    z3_make_solver(S),
-    nb_setval(global_context, CurrentContext),
-    nb_setval(global_solver, S),
-    nb_setval(solver_depth, 0).
+    z3_make_solver(Solver),
+    nb_setval(global_context, Current),
+    nb_setval(global_solver, Solver),
+    nb_setval(solver_depth, 0),
+    print_message(informational, z3_message("Made new z3.pl solver")).
 
 get_global_solver(S) :- nb_current(global_solver, S).
 get_global_context(C) :- nb_current(global_context, C).
@@ -227,17 +230,17 @@ resolve_solver_depth(X) :- b_getval(solver_depth, X),
 
 
 resolve_solver_depth(X, Scopes) :- X >= Scopes,
-                                       % report(status("scopes OK", Scopes, X)),
+                                       % report(informational, status("scopes OK", Scopes, X)),
                                        !.
 resolve_solver_depth(X, Scopes) :- X < Scopes,
-                                   % report(status("need to pop", Scopes, X)),
+                                   % report(informational, status("need to pop", Scopes, X)),
                                    Numpops is Scopes - X,
                                    popn(Numpops).
 
 popn(Numpops) :- get_global_solver(S),
                  (  z3_solver_pop(S, Numpops, _)
                  -> true
-                 ; report("error popping Z3 solver\n")
+                 ; report(error, "error popping Z3 solver\n")
                  ).
 
 %% user-visible:
@@ -323,7 +326,7 @@ z3_push(Foriginal, Status) :-
     ;  (
         Status = l_type_error,
         get_type_inference_map_list(L),
-        report("Type error in term: %w\nMap was %w", [FG, L])
+        report(error, "Type error in term: %w\nMap was %w", [FG, L])
     )
     ).
 
@@ -698,7 +701,7 @@ test(mul_roundtrip) :-
 
 %% fails for A=4, B=2
 test(random_bv_xor) :-
-    random_between(0, 63, Width), % z3_ast_to_term fails for 64
+    random_between(1, 63, Width), % z3_ast_to_term fails for 64
     High is (1<<Width) - 1,
     random_between(0, High, A), % inclusive
     random_between(0, High, B),

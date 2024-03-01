@@ -117,6 +117,7 @@ typedef Z3_ast_map sort_map;
 
 // ***************************** GLOBAL VARIABLES ********************************************
 
+static long initialize_count = 0;
 
 // The Context struct has the objects needed to typecheck and convert Prolog terms to Z3.
 // Solver and model objects are explicit, and we can do push and pop on solvers from Prolog.
@@ -126,13 +127,12 @@ struct ContextStruct {
   sort_map enum_sorts;  // map from names to Z3 enumeration sorts, used for building terms
   decl_map enum_declarations; // declarations that typechecker will need
   decl_map declarations; // standard declarations
+  long context_id;
 };
 
 typedef struct ContextStruct *Context;
 
 functor_t pair_functor;
-
-// Context global_context = NULL;
 
 // struct EnumSortInfo global_enum_info;
 
@@ -227,6 +227,9 @@ foreign_t z3_reset_context_foreign() {
   Z3_ast_map_dec_ref(ctx, global_context.enum_declarations);
 
   Z3_del_context(ctx);
+
+  initialize_count += 1;
+  global_context.context_id = initialize_count;
 
   // Z3_finalize_memory(); // for good measure too? dangerous.
 
@@ -1353,10 +1356,14 @@ foreign_t z3_model_constants_foreign(term_t model_term, term_t list) {
   return rval;
 }
 
+// foreign_t z3_current_context_foreign(term_t context_term) {
+//  Z3_context ctx = get_context();
+//  return PL_unify_pointer(context_term, ctx);
+// }
+
 // useful to check validity of solvers:
-foreign_t z3_current_context_foreign(term_t context_term) {
-  Z3_context ctx = get_context();
-  return PL_unify_pointer(context_term, ctx);
+foreign_t z3_current_context_id_foreign(term_t context_term) {
+  return PL_unify_int64(context_term, global_context.context_id);
 }
 
 // Makes a Z3 sort from a Prolog expression:
@@ -2211,11 +2218,8 @@ foreign_t map_test_foreign(term_t string_atom) {
   return TRUE;
 }
 
-
-
 #define PRED(name, arity, func, attr) \
   PL_register_foreign_in_module("z3_swi_foreign", name, arity, func, attr)
-
 
 install_t install()
 {
@@ -2270,7 +2274,8 @@ install_t install()
   PRED("z3_enums_string", 1, z3_enums_string_foreign, 0); // -string
 
   PRED("z3_remove_declaration", 2, z3_remove_declaration_foreign, 0); // +name, +arity
-  PRED("z3_current_context", 1, z3_current_context_foreign, 0); // -context pointer
+  // PRED("z3_current_context", 1, z3_current_context_foreign, 0); // -context pointer
+  PRED("z3_current_context_id", 1, z3_current_context_id_foreign, 0); // -context id
   PRED("map_test", 1, map_test_foreign, 0); //
 
 }

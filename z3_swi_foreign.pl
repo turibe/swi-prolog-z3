@@ -27,7 +27,7 @@
               z3_declarations_string/1,
               z3_remove_declaration/2,
               z3_enums_string/1,
-              z3_current_context/1,
+              z3_current_context_id/1,
               
               op(750, xfy, and), % =, >, etc. are 700 ; Local to the module
               op(751, xfy, or),
@@ -47,6 +47,11 @@ It has no global variables except for those in the C code.
 :- load_foreign_library(z3_swi_foreign).
 
 :- set_prolog_flag(string_stack_tripwire, 20).
+
+%% we now use "print_message" for error messages.
+
+:- multifile prolog:(message/1).
+prolog:message(z3_message(S)) --> {}, [S].
 
 
 %! z3_declare_function(+Formula, +Type)

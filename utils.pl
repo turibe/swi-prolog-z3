@@ -2,7 +2,8 @@
 
 :- module(utils, [
 	      split_list/3,
-	      subterm_list/2
+	      subterm_list/2,
+              repeat_string/3
     ] ).
 
 /** <module> Basic utils
@@ -23,7 +24,14 @@ split_list(L, A, B) :- length(L, N),
 
 subterm_list(T, L) :- findall(Y, arg(_, T, Y), L).
 
+repeat_string(S, N, R) :- must_be(string, S),
+                          must_be(integer, N),
+                          length(L, N),
+                          maplist(=(S), L),
+                          atomics_to_string(L, R).
 
+% atomic_list_concat(L, R) % gets an atom
+                          
 
 :- begin_tests(util_tests).
 
@@ -39,5 +47,7 @@ test(odd) :-
 test(even, true(X == [3,4])) :-
     split_list([1,2,3,4], [1,2], X).
 
+test(repeat_string, true(R == "ababab")) :-
+    repeat_string("ab", 3, R).
 
 :- end_tests(util_tests).

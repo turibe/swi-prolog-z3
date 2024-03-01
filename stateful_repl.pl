@@ -45,7 +45,7 @@ Remembers asserted formulas and declarations from one query to the next.
                   z3_solver_scopes/2,
                   z3_declarations/1,
                   z3_remove_declaration/2,
-                  z3_current_context/1
+                  z3_current_context_id/1
               ]).
 
 :- use_module(z3_utils, [
@@ -95,7 +95,7 @@ get_asserted(M) :- nb_current(asserted_formulas, M).
 % before we do a reset. Otherwise, we'll have an old invalid pointer as the solver.
 
 clear_solver :- nb_current(repl_solver, (Context, S)), !,
-                z3_current_context(CurrentContext),
+                z3_current_context_id(CurrentContext),
                 (CurrentContext = Context
                 ->
                     (
@@ -113,7 +113,7 @@ clear_solver :- true.
 
 reset_globals :- clear_solver,
                  z3_reset_context, % resets everything, including enums
-                 z3_current_context(Context),
+                 z3_current_context_id(Context),
                  z3_make_solver(NewSolver),
                  nb_setval(repl_solver, (Context, NewSolver)),
                  set_type_map(t),
