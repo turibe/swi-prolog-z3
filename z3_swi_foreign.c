@@ -36,8 +36,8 @@
 *****/
 
 
-#define DEBUG(...) do {fprintf(stderr, "DEBUG: "); fprintf(stderr, __VA_ARGS__) ; fflush(stderr); } while (false)
-// #define DEBUG(...) {}
+// #define DEBUG(...) do {fprintf(stderr, "DEBUG: "); fprintf(stderr, __VA_ARGS__) ; fflush(stderr); } while (false)
+#define DEBUG(...) {}
 #define INPROGRESS(...) do {fprintf(stderr, "INPROGRESS: "); fprintf(stderr, __VA_ARGS__); fflush(stderr);} while (false)
 #define ERROR(...) do {fprintf(stderr, "ERROR: "); fprintf(stderr, __VA_ARGS__); fflush(stderr);} while (false)
 #define INFO(...) do {fprintf(stderr, "INFO: "); fprintf(stderr, __VA_ARGS__); fflush(stderr);} while (false)
@@ -2259,8 +2259,8 @@ install_t install()
   PRED("z3_assert", 2, z3_assert_foreign, 0); // +handle, +formula
 
   // for debugging and unit tests, testing round-trips between Prolog and Z3:
-  PRED("term_to_z3_ast", 2, term_to_z3_ast_foreign, 0); // +formula, -z3_ast_pointer
-  PRED("z3_ast_string", 2, z3_ast_string_foreign, 0); // +formula, -string
+  PRED("term_to_z3_ast", 3, term_to_z3_ast_foreign, 0); // +handle, +formula, -z3_ast_pointer
+  PRED("z3_ast_string", 3, z3_ast_string_foreign, 0); // +handle, +formula, -string
   PRED("z3_ast_to_term", 3, z3_ast_to_term_foreign, 0); // +handle, +ast, -formula
   PRED("z3_symbol", 3, z3_symbol_foreign, 0); // +handle, +formula, -symbol_pointer
 
@@ -2275,8 +2275,8 @@ install_t install()
   PRED("z3_solver_check_and_print", 2, z3_solver_check_and_print_foreign, 0); // +handle, -status
 
   PRED("z3_get_model", 2, z3_get_model_foreign, 0); // +handle, -model_pointer
-  PRED("z3_model_eval", 4, z3_model_eval_foreign, 0); // +model_pointer, +formula, +completion_flag, -value
-  PRED("z3_free_model", 2, z3_free_model_foreign, 0); // +model
+  PRED("z3_model_eval", 5, z3_model_eval_foreign, 0); // +handle, +model_pointer, +formula, +completion_flag, -value
+  PRED("z3_free_model", 2, z3_free_model_foreign, 0); // +handle, +model
 
   PRED("z3_simplify_term", 2, z3_simplify_term_foreign, 0); // +term, -simplified_term
   PRED("z3_solver_assertions", 2, z3_solver_assertions_foreign, 0); // +handle_pointer, -assertion_list

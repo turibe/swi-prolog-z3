@@ -8,7 +8,7 @@
               z3_free_model/2, % +handle, +model
               z3_declare_function/3,
               z3_declare_enum/3,
-              z3_model_eval/4,             %% +model_pointer, +formula, +completion_flag, -value
+              z3_model_eval/5,             %% +handle, +model_pointer, +formula, +completion_flag, -value
               z3_model_map/2,
               z3_reset_declarations/1,     %% does not invalidate solvers
               z3_solver_assertions/2,
@@ -104,21 +104,12 @@ test(reset_declarations) :-
 
 is_pointer(X) :- integer(X).
 
-test(solver) :-
-    z3_new_handle(H),
-    z3_make_solver(H,S),
-    is_pointer(S),
-    z3_free_handle(H).
-
-
-test(check_solver) :-
-    z3_new_handle(H),
+test(check_solver, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
     z3_solver_check(H, Status),
     assertion(Status == l_true),
     z3_get_model(H, M),
     is_pointer(M),
-    z3_free_model(H, M),
-    z3_free_handle(H).
+    z3_free_model(H, M).
 
 test(symbol_pointers) :-
     z3_new_handle(H),
@@ -133,30 +124,30 @@ test(symbol_pointers) :-
 %% todo: wrap pointers in terms, for a little more typechecking:
 %% solver(S), model(M), etc.
 
-test(model_eval,  [setup(z3_new_handle(S)), cleanup(z3_free_handle(S))])  :-
-    z3_declare_function(S, a, int),
-    z3_declare_function(S, b, int),
-    z3_assert(S, a=3),
-    z3_assert(S, b=2),
-    z3_solver_check(S, Status),
+test(model_eval,  [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))])  :-
+    z3_declare_function(H, a, int),
+    z3_declare_function(H, b, int),
+    z3_assert(H, a=3),
+    z3_assert(H, b=2),
+    z3_solver_check(H, Status),
     assertion(Status == l_true),
     setup_call_cleanup(
-        z3_get_model(S, Model),
+        z3_get_model(H, Model),
         (
             % TODO: use blobs or some other method to distinguish models and solvers.
-            assertion(z3_model_eval(Model, a+a, false, 6)),
-            assertion(z3_model_eval(Model, a+b, false, 5)),
-            assertion(z3_model_eval(Model, a*b, false, 6)),
-            assertion(z3_model_eval(Model, a**b, false, 9)),
-            assertion(z3_model_eval(Model, z, false, z)), %% no completion
-            assertion(z3_model_eval(Model, z, true, 0)), %% completion
+            assertion(z3_model_eval(H, Model, a+a, false, 6)),
+            assertion(z3_model_eval(H, Model, a+b, false, 5)),
+            assertion(z3_model_eval(H, Model, a*b, false, 6)),
+            assertion(z3_model_eval(H, Model, a**b, false, 9)),
+            assertion(z3_model_eval(H, Model, z, false, z)), %% no completion
+            assertion(z3_model_eval(H, Model, z, true, 0)), %% completion
             true
         ),
-        z3_free_model(S, Model)
+        z3_free_model(H, Model)
     ).
 
 
-test(assert_test, [setup(z3_make_solver(S)), cleanup(z3_free_solver(S))]) :-
+test(assert_test, [setup(z3_new_handle(S)), cleanup(z3_free_handle(S))]) :-
     z3_declare_function(S, a, bool),
     z3_declare_function(S, b, int),
     z3_declare_function(S, c, int),
@@ -191,36 +182,32 @@ test(incompatible_types2, [
 %% TODO: better test for at_least
 
 %%  TODO: free handles
-test(at_least_fail) :-
-    z3_new_handle(H),
+test(at_least_fail, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)), fail] ) :-
     z3_assert(H, atleast(a:bool, b:bool, c:bool)).
 
-test(declare_fail1, [fail]) :-
-    z3_new_handle(H),
+test(declare_fail1, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)), fail] ) :-
     z3_declare_function(H, _X, int).
 
 test(declare_fail2, [fail]) :-
     z3_new_handle(H),
     z3_declare_function(H, a, _Y).
 
-test(declare_fail_different_types, [fail]) :-
-    z3_new_handle(H),
+test(declare_fail_different_types, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)), fail] ) :-
     z3_declare_function(H, a, bool),
     z3_declare_function(H, a, int).
 
-test(declare_fail_different_types1, [fail]) :-
-    z3_new_handle(H),
+test(declare_fail_different_types1, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)), fail] ) :-
     z3_declare_function(H, f(int), bool),
     z3_declare_function(H, f(bool), bool).
 
-test(solver_push_pop, [setup(z3_new_handle(S)), cleanup(z3_free_handle(S))] ) :-
-    z3_solver_push(S, 1),
-    z3_solver_push(S, 2),
-    z3_solver_scopes(S, 2),
-    z3_solver_pop(S, 1, New_scopes),
+test(solver_push_pop, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
+    z3_solver_push(H, 1),
+    z3_solver_push(H, 2),
+    z3_solver_scopes(H, 2),
+    z3_solver_pop(H, 1, New_scopes),
     assertion(New_scopes == 1).
 
-test(solver_pop, [ fail, setup(z3_new_handle(S)), cleanup(z3_free_solver(S)) ]) :-
+test(solver_pop, [ fail, setup(z3_new_handle(S)), cleanup(z3_free_handle(S)) ]) :-
     z3_solver_push(S, 1),
     z3_solver_pop(S, 10, _X).
 
@@ -231,7 +218,7 @@ test(fail_test, [ setup(Message = "a"),  cleanup(writeln(user_output,Message)), 
     writeln(user_output, "testing"),
     fail.
 
-test(get_assertions, [setup(z3_make_solver(S)), cleanup(z3_free_solver(S))] ) :-
+test(get_assertions, [setup(z3_new_handle(S)), cleanup(z3_free_handle(S))] ) :-
     z3_assert(S, and(c:bool,x:bool)),
     z3_assert(S, a:int>3),
     z3_assert(S, b:int>1),
@@ -240,54 +227,54 @@ test(get_assertions, [setup(z3_make_solver(S)), cleanup(z3_free_solver(S))] ) :-
     assertion(R == l_true),
     assertion(List =@= [b>1, a>3, c and x]).
 
-test(real_assertion, [setup(z3_new_handle(S)), cleanup(z3_free_solver(S))] ) :-
+test(real_assertion, [setup(z3_new_handle(S)), cleanup(z3_free_handle(S))] ) :-
     z3_assert(S, x:real = 1.3).
 
-test(roundtrips1) :-
-    term_to_z3_ast("i am a string", AS), z3_ast_to_term(AS, PS),
+test(roundtrips1, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
+    term_to_z3_ast(H, "i am a string", AS), z3_ast_to_term(H, AS, PS),
     assertion(PS == "i am a string"),
-    term_to_z3_ast(123, A1), z3_ast_to_term(A1, T1),
+    term_to_z3_ast(H, 123, A1), z3_ast_to_term(H, A1, T1),
     assertion(T1 == 123),
-    term_to_z3_ast(1.4, A2), z3_ast_to_term(A2, T2),
+    term_to_z3_ast(H, 1.4, A2), z3_ast_to_term(H, A2, T2),
     assertion(T2 == 7 / 5).
 
-test(roundtrips2) :-
-    z3_declare_function(f(int,int,bool),int),
-    z3_declare_function(g(bool),bool),
-    z3_declare_function(c,bool),
+test(roundtrips2, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
+    z3_declare_function(H, f(int,int,bool), int),
+    z3_declare_function(H, g(bool), bool),
+    z3_declare_function(H, c, bool),
     Term = f(a,b,g(c)), % a and b are int by default.
-    term_to_z3_ast(Term, X),
-    z3_ast_to_term(X,Y),
+    term_to_z3_ast(H, Term, X),
+    z3_ast_to_term(H, X, Y),
     assertion(Y == Term).
 
-test(roundtrips_true_false) :-
-    term_to_z3_ast(true, RT), z3_ast_to_term(RT, true),
-    term_to_z3_ast(false, RF), z3_ast_to_term(RF, false).
+test(roundtrips_true_false, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
+    term_to_z3_ast(H, true, RT), z3_ast_to_term(H, RT, true),
+    term_to_z3_ast(H, false, RF), z3_ast_to_term(H, RF, false).
 
 %% This fails because "a" gets type int by default
-test(default_int_fail, [fail, setup(z3_new_handle(S)), cleanup(z3_free_solver(S)) ] ) :-
+test(default_int_fail, [fail, setup(z3_new_handle(S)), cleanup(z3_free_handle(S)) ] ) :-
     z3_assert(S, a),
     z3_solver_check(S, _R),
     setup_call_cleanup(
         z3_get_model(S, Model),
-        z3_model_eval(Model, not(a), false, _V),
+        z3_model_eval(S, Model, not(a), false, _V),
         z3_free_model(S, Model)
     ).
 
-test(was_broken, [setup(z3_new_handle(S)), cleanup(z3_free_solver(S)), true(V==false), true(R==l_true)]) :-
+test(was_broken, [setup(z3_new_handle(S)), cleanup(z3_free_handle(S)), true(V==false), true(R==l_true)]) :-
     z3_assert(S, a:bool),
     z3_solver_check(S, R),
     setup_call_cleanup(
         z3_get_model(S, Model),
-        z3_model_eval(Model, not(a), false, V),
+        z3_model_eval(S, Model, not(a), false, V),
         z3_free_model(S, Model)
     ).
 
-test(should_fail, [fail, setup(z3_new_handle(S)), cleanup(z3_free_solver(S)) ]) :-
+test(should_fail, [fail, setup(z3_new_handle(S)), cleanup(z3_free_handle(S)) ]) :-
     z3_assert(S, a:bool),
     z3_assert(S, a:int > 1).
 
-test(not_caught, [setup(z3_new_handle(S)), cleanup(z3_free_solver(S)) ] ) :-
+test(not_caught, [setup(z3_new_handle(S)), cleanup(z3_free_handle(S)) ] ) :-
     z3_assert(S, a:bool),
     z3_assert(S, a > -1),
     z3_solver_check(S, l_true).
@@ -297,12 +284,12 @@ test(works, [true(V==false), true(R==l_true), setup(z3_new_handle(S)), cleanup(z
     z3_solver_check(S, R),
     setup_call_cleanup(
         z3_get_model(S, Model),
-        z3_model_eval(Model, not(a:bool), false, V),
+        z3_model_eval(S, Model, not(a:bool), false, V),
         z3_free_model(S, Model)
     ).
 
 test(combined_bool_int, [setup(z3_new_handle(S)), cleanup(z3_free_handle(S)) ]) :-
-    z3_declare_function(f(int), int),
+    z3_declare_function(S, f(int), int),
     z3_assert(S, f(a:int) > 1),
     z3_assert(S, f(b:bool) > 2),
     z3_solver_check(S, l_true),
@@ -384,12 +371,11 @@ test(make_numerals) :-
 
 :- begin_tests(basic_enums).
 
-test(enums) :-
-    z3_new_handle(H),
+test(enums, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
     z3_declare_enum(H, color, [black, white, red]),
-    z3_assert(S, and(a:color <> black, a:color <> white)),
-    z3_solver_check(S, l_true),
-    z3_assert(S, a <> red),
-    z3_solver_check(S, l_false).
+    z3_assert(H, and(a:color <> black, a:color <> white)),
+    z3_solver_check(H, l_true),
+    z3_assert(H, a <> red),
+    z3_solver_check(H, l_false).
 
 :- end_tests(basic_enums).
