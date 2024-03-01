@@ -147,7 +147,7 @@ void z3_swi_error_handler(Z3_context ctx, Z3_error_code e) {
 }
 
 void initialize_handle(handle handle) {
-  INFO("Initializing handle %p", handle);
+  DEBUG("Initializing handle %p\n", handle);
 
   Z3_config config = Z3_mk_config();  
   handle->ctx = Z3_mk_context(config);
@@ -211,7 +211,7 @@ foreign_t z3_free_handle_foreign(term_t handle_term) {
   handle h;  
   int rval = PL_get_pointer_ex(handle_term, (void **) &h);
   if (!rval) return rval;
-  INFO("Freeing handle %p\n", h);
+  DEBUG("Freeing handle %p\n", h);
   free_handle_contents(h);
   free(h);
   return TRUE;

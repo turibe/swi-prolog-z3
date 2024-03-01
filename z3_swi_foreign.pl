@@ -89,14 +89,15 @@ z3_enum_declarations(L) :- z3_get_enum_declarations(LG), maplist(translate_entry
 
 :- begin_tests(z3_swi_foreign).
 
+% :- set_test_options(jobs(4)).
+
 test(test_messages) :-
     print_message(informational, z3_message("testing informational message")),
     print_message(error, z3_message("testing error message %w", [1])),
     print_message(warning, z3_message("testing warning message")).
 
 
-test(reset_declarations) :-
-    z3_new_handle(H),
+test(reset_declarations, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
     % TODO: assert something
     z3_reset_declarations(H),
     z3_declarations_string(H, S),
@@ -111,8 +112,7 @@ test(check_solver, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
     is_pointer(M),
     z3_free_model(H, M).
 
-test(symbol_pointers) :-
-    z3_new_handle(H),
+test(symbol_pointers, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
     z3_symbol(H, a, A1),
     z3_symbol(H, a, A2),
     assertion(A1 == A2),
@@ -188,8 +188,7 @@ test(at_least_fail, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)), fail] 
 test(declare_fail1, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)), fail] ) :-
     z3_declare_function(H, _X, int).
 
-test(declare_fail2, [fail]) :-
-    z3_new_handle(H),
+test(declare_fail2, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)), fail] ) :-
     z3_declare_function(H, a, _Y).
 
 test(declare_fail_different_types, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)), fail] ) :-
@@ -317,36 +316,30 @@ test(nested_fail, [fail, setup(z3_new_handle(S)), cleanup(z3_free_handle(S))]) :
 
 :- begin_tests(z3_swi_foreign_bit_vectors).
 
-test(create) :-
-    z3_new_handle(S),
-    z3_assert(S, a:bv(32) = int2bv(32, 12345)),
-    z3_solver_check(S, R),
+test(create, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
+    z3_assert(H, a:bv(32) = int2bv(32, 12345)),
+    z3_solver_check(H, R),
     assertion(R == l_true),
-    z3_model_map(S, Model),
-    assertion(Model.constants==[a-12345]),
-    z3_free_handle(S).
+    z3_model_map(H, Model),
+    assertion(Model.constants==[a-12345]).
 
-test(bv2int) :-
-    z3_new_handle(S),
-    z3_assert(S, a:bv(32) = int2bv(32, -12345)),
-    z3_assert(S, b:int = bv2int(a, true)), % signed
-    z3_assert(S, c:int = bv2int(a, false)), % unsigned
-    z3_solver_check(S, l_true),
-    z3_model_map(S, Model),
+test(bv2int, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
+    z3_assert(H, a:bv(32) = int2bv(32, -12345)),
+    z3_assert(H, b:int = bv2int(a, true)), % signed
+    z3_assert(H, c:int = bv2int(a, false)), % unsigned
+    z3_solver_check(H, l_true),
+    z3_model_map(H, Model),
     C = Model.constants,
-    C == [a-4294954951, b- -12345, c-4294954951],
-    z3_free_handle(S).
+    C == [a-4294954951, b- -12345, c-4294954951].
 
 % add: z3_push(bvmul(a:bv(32),b:bv(32)) = int2bv(32, 1)), z3_model(M).
 
-test(bvnumeral) :-
-    z3_new_handle(S),
-    z3_assert(S, a:bv(4) = bv_numeral([1,1,1,1])),
-    z3_solver_check(S, l_true),
-    z3_model_map(S, Model),
+test(bvnumeral, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
+    z3_assert(H, a:bv(4) = bv_numeral([1,1,1,1])),
+    z3_solver_check(H, l_true),
+    z3_model_map(H, Model),
     C = Model.constants,
-    assertion(C == [a-15]),
-    z3_free_handle(S).
+    assertion(C == [a-15]).
 
 test(make_unsigned_int64) :-
     z3_new_handle(S),
