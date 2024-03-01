@@ -116,6 +116,7 @@ typedef Z3_ast_map sort_map;
 
 // ***************************** GLOBAL VARIABLES ********************************************
 
+static long handle_counter = 0;
 
 // The HandleStruct has the objects needed to typecheck and convert Prolog terms to Z3.
 // Solver and Model objects are separate, and we can do push and pop on solvers from Prolog.
@@ -126,7 +127,7 @@ struct HandleStruct {
   sort_map enum_sorts;  // map from names to Z3 enumeration sorts, used for building terms
   decl_map enum_declarations; // declarations that typechecker will need
   decl_map declarations; // standard declarations
-  long context_id; // used as a unique ID for the context
+  long handle_id; // used as a unique ID for the context
 };
 
 typedef struct HandleStruct *handle;
@@ -197,7 +198,8 @@ foreign_t z3_new_handle_foreign(term_t handle_term) {
   }
   handle h = malloc(sizeof(struct HandleStruct));
   memset(h, 0, sizeof(struct HandleStruct));
-  h->context_id = 0;
+  handle_counter += 1;
+  h->handle_id = handle_counter;
   initialize_handle(h);
   int res = PL_unify_pointer(handle_term, h);
   if (!res) {
@@ -254,13 +256,15 @@ void free_handle_contents(handle h) {
 
 }
 
+// worth it? Simpler to just get a new handle.
 foreign_t z3_reset_handle_foreign(term_t handle_term) {
   handle h;
   int rval = PL_get_pointer_ex(handle_term, (void **) &h);
   if (!rval) return rval;
   free_handle_contents(h);
 
-  h->context_id = h->context_id + 1; // a random ID would do too.
+  handle_counter += 1;
+  h->handle_id = handle_counter; // a random ID would do too.
 
   // Z3_finalize_memory(); // for good measure too? dangerous.
 
@@ -1366,13 +1370,13 @@ foreign_t z3_model_constants_foreign(term_t handle_term, term_t model_term, term
   return rval;
 }
 
-// useful to check validity of solvers:
-foreign_t z3_current_handle_id_foreign(term_t handle_term, term_t result_term) {
+// useful to check validity of handle-related things
+foreign_t z3_handle_id_foreign(term_t handle_term, term_t result_term) {
     handle h;
   int rval = PL_get_pointer_ex(handle_term, (void **) &h);
   if (!rval) return rval;
 
-  return PL_unify_int64(result_term, h->context_id);
+  return PL_unify_int64(result_term, h->handle_id);
 }
 
 // Makes a Z3 sort from a Prolog expression:
@@ -1630,7 +1634,7 @@ Z3_ast term_to_ast(const handle h, decl_map declaration_map, const term_t formul
         char *term_string = NULL;
         int res = PL_get_chars(formula, &term_string, CVT_WRITE);
         if (!res) term_string = NULL;
-        ERROR("The c wrapper can only handle atoms on the lhs of \":\", got %s\n", term_string);
+        ERROR("The C wrapper can only handle atoms on the lhs of \":\", got %s\n", term_string);
         return NULL;
         // To improve this, we would need to infer the function type for the lhs, and compare with the rhs.
         // Better done in z3.pl.
@@ -2296,7 +2300,7 @@ install_t install()
 
   PRED("z3_remove_declaration", 3, z3_remove_declaration_foreign, 0); // +handle, +name, +arity
 
-  PRED("z3_current_handle_id", 2, z3_current_handle_id_foreign, 0); // -context id
+  PRED("z3_handle_id", 2, z3_handle_id_foreign, 0); // -context id
   PRED("map_test", 1, map_test_foreign, 0); //
 
   PRED("z3_new_handle", 1, z3_new_handle_foreign, 0); // -handle

@@ -3,8 +3,8 @@
 
 :- module(z3_swi_foreign, [
               z3_assert/2, % +handle, -solver
-              z3_declarations/1,
-              z3_enum_declarations/1,
+              z3_declarations/2,
+              z3_enum_declarations/2,
               z3_free_model/2, % +handle, +model
               z3_declare_function/3,
               z3_declare_enum/3,
@@ -21,7 +21,6 @@
               z3_solver_scopes/2,
               z3_reset_handle/1, % invalidates solvers, declaration maps
               %% for debugging:
-              z3_declarations/1,
               z3_declarations_string/2,
               z3_remove_declaration/3,
               z3_enums_string/2,
@@ -84,12 +83,14 @@ z3_model_map(H, Model) :-
 
 translate_entry(Entry, NewEntry) :- Entry = (Key-Value), Key =.. [_ | Args], NK =.. [/ | Args], NewEntry = (NK-Value).
 
-z3_declarations(L) :- z3_get_declarations(LG), maplist(translate_entry, LG, L).
-z3_enum_declarations(L) :- z3_get_enum_declarations(LG), maplist(translate_entry, LG, L).
+z3_declarations(H, L) :- z3_get_declarations(H, LG), maplist(translate_entry, LG, L).
+z3_enum_declarations(H, L) :- z3_get_enum_declarations(H, LG), maplist(translate_entry, LG, L).
+
+
+:- Jobs = 2,
+   set_test_options([jobs(Jobs), cleanup(true), output(on_failure)]).
 
 :- begin_tests(z3_swi_foreign).
-
-% :- set_test_options(jobs(4)).
 
 test(test_messages) :-
     print_message(informational, z3_message("testing informational message")),
@@ -311,6 +312,15 @@ test(neq_numeric, [setup(z3_new_handle(S)), cleanup(z3_free_handle(S))] ) :-
 
 test(nested_fail, [fail, setup(z3_new_handle(S)), cleanup(z3_free_handle(S))]) :-
     z3_assert(S, f(a:int):int = 3).
+
+test(handle_ids) :-
+    z3_new_handle(H1),
+    z3_new_handle(H2),
+    z3_handle_id(H1, I1),
+    z3_handle_id(H2, I2),
+    \+ I1 == I2,
+    z3_free_handle(H1),
+    z3_free_handle(H2).
 
 :- end_tests(z3_swi_foreign).
 
