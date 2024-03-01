@@ -127,7 +127,8 @@ valid_status(X) :- valid_status_list(L), member(X, L).
 
 print_declarations :-
     current_output(Out),
-    z3_declarations_string(S),
+    z3_current_context(C),
+    z3_declarations_string(C, S),
     writeln(Out, S),
     z3_enums_string(S2),
     writeln(Out, S2).

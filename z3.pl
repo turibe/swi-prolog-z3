@@ -76,7 +76,7 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
 
 :- use_module(z3_swi_foreign, [
                   z3_assert/2,
-                  z3_declarations_string/1,
+                  z3_declarations_string/2,
                   z3_enums_string/1,
                   z3_free_model/1,
                   z3_free_solver/1,
