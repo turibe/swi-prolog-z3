@@ -9,6 +9,7 @@
 
 % :- use_module(z3).
 
+:- use_module(z3_utils).
 
 %% for coverage: show_coverage(run_tests, [dir(cov)]).
 

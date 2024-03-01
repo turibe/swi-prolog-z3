@@ -37,8 +37,8 @@ for finding minimally unsatisfiable subsets, and maximally satisfiable ones.
 
 :- use_module(utils).
 
-%% debuginfo(X) :- writeln(X), flush_output.
-%% debuginfo(X, Y) :- write(X), writeln(Y), flush_output.
+% debuginfo(X) :- writeln(X), flush_output.
+% debuginfo(X, Y) :- write(X), writeln(Y), flush_output.
 debuginfo(_X) :- true.
 debuginfo(_X, _Y) :- true.
 

@@ -47,8 +47,7 @@ assert_formula_list_types(L) :-
     set_map(Enew).
 
 
-assert_type(Term, Type) :- must_be(ground, Term),
-                           get_map(E),
+assert_type(Term, Type) :- get_map(E),
                            type_inference:typecheck(Term, Type, E, Enew),
                            set_map(Enew).
 
@@ -66,7 +65,7 @@ test(failtest, [fail]) :-
 test(inferencetest, [true(X-Y == int-lambda([int], int)) , nondet ]) :-
     assert_formula_list_types([f(a) > 1, b:int > a]),
     get_map(M),
-    get_assoc(a, M, X),
+    get_assoc(a/0, M, X),
     get_assoc(f/1, M, Y).
 
 

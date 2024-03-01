@@ -1,29 +1,11 @@
-%%% -*- Mode: Prolog; Module: z3; -*-
+%%% -*- Mode: Prolog; Module: z3; -*-.
 
-/** <module> Prolog documentation processor
+% The user-visible functions rely on an implicit solver, pushed and popped automatically, and a backtrackable type map:
 
-This module builds on the basic functionality of z3_swi_foreign.pl to provide:
-
-- Typechecking and declaring Z3 variables and functions
-- Attributed variables
-- pushing and popping assertions on the solver as we assert and backtrack
-
-For incrementality, this module maintains a global_solver, where the push and pops happen.
-So even though it is a single Z3 C object, kept in a non-backtrackable Prolog variable, it is meant to works as a backtrackable one.
-
-type_inference_global_backtrackable does keep a --- backtrackable --- type map.
-
-@author Tomas Uribe
-@license MIT
-*/
-
-
-% All of the user-visible functions rely on an implicit solver, pushed accordingly, and a backtrackable type map:
 :- module(z3, [
               solver_scopes/1,         % +Num_scopes, starting at 0
               z3_check/1,              % +Status Returns status of global solver: l_true, l_false, l_undet
               z3_check_and_print/1,    % +Status Returns status, prints model if possible
-              z3_declare/2,            % +Formula,+Type    Declares Formula to have Type.
               z3_eval/2,               % +Expression,-Result  Evaluates Expression in a current model, if the current solver is SAT.
               z3_eval/3,               % z3_eval, with boolean completion flag
               z3_is_consistent/1,      % +Formula  Succeeds if Formula is consistent with current solver/context. Fails if l_undet.
@@ -45,9 +27,26 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
               op(751, xfy, or),
               op(740, xfy, <>),  % different-than
               op(739, xfy, <=>), % iff
-              op(199, xfy, :)
+              op(299, xfy, :)
               % {}/1, % clashes with other CLP libraries
               ]).
+
+/** <module> Z3 high-level integration (backtrackable version)
+
+This module builds on the basic functionality of z3_swi_foreign.pl to provide:
+
+- Typechecking and declaring Z3 variables and functions.
+- Attributed variables.
+- Pushing and popping assertions on the solver as we assert and backtrack.
+
+For incrementality, this module maintains a global_solver, where the push and pops happen.
+So even though it is a single Z3 C object, kept in a non-backtrackable Prolog variable, it is meant to works as a backtrackable one.
+
+type_inference_global_backtrackable does keep a --- backtrackable --- type map.
+
+@author Tomas Uribe
+@license MIT
+*/
 
 :- use_module(type_inference_global_backtrackable, [
                   initialize_map/0 as initialize_type_inference_map,
@@ -59,8 +58,18 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
               ]).
 
 :- use_module(type_inference, [
-                  typecheck/4
-                  ]).
+                  typecheck/4,
+                  mappable_symbol/1
+              ]).
+
+:- use_module(z3_utils, [
+                  reset_var_counts/0,
+                  declare_z3_types_for_symbols/2,
+                  z3_declare/2            % +Formula,+Type    Declares Formula to have Type.
+                  ]
+             ).
+
+:- use_module(utils, [repeat_string/3]).
 
 :- use_module(library(assoc)).
 :- use_module(library(ordsets)).
@@ -85,52 +94,61 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
                   z3_solver_scopes/2,
                   z3_reset_context/0, %% should not be called directly, use this module's z3_reset instead
                   z3_declarations/1,
-                  z3_enum_declarations/1
+                  z3_enum_declarations/1,
+                  z3_current_context_id/1
               ]).
+
+safe_free_solver :-
+    nb_current(global_solver, (OldContext, OldSolver)) ->
+        (
+            z3_current_context_id(CurrentContext),
+            ((CurrentContext == OldContext) ->
+                 print_message(informational, z3_message("Freeing old z3.pl solver")),
+                 z3_free_solver(OldSolver)
+            ;
+            print_message(warning, z3_message("Could not free old solver because context has changed"))
+            ),
+            nb_delete(global_solver)
+        )
+    ; true.
+
 
 :- initialization(new_global_solver).
 
-
-%% old maps and solvers are invalidated:
+%! Resets the entire Z3 context. All declarations, including enums, are cleared.
+%  Old models and solvers are invalidated.
 z3_reset :-
     %% assertion(b_getval(solver_depth, 0)), %% test cleanup violates this
-    (get_global_solver(Old) ->
-         (
-             z3_free_solver(Old),
-             nb_delete(global_solver)
-         )
-    ;
-    true),
+    safe_free_solver,
+    assertion(\+ get_global_solver(_)),
     z3_reset_context,
     new_global_solver.
 
 
 %% To automatically pop the Z3 server when backtracking:
 %% solver_depth is a backtrackable variable, with the depth level.
-%% Before an assert, we check that variable, and pop the solver as many times as needed.
-
+%% Before an assert, we check that variable, and pop the solver as many times as needed to match it.
 
 %% indent according to solver pushes:
-%% TODO: improve this reporting.
-%% report(type_error(T)) :- print(T), nl, flush_output.
-report(T) :- indent, writef(T), nl, flush_output.
-report(F,Vars) :-
-    swritef(String, F,Vars),
-    report(String).
+report(K, T) :- indent(T, R),
+                print_message(K, z3_message(R)).
 
-indent :- assert_depth(N),
-          forall(between(1, N, _X), (print(---), print(N))).
+report(K, F, Vars) :- swritef(String, F, Vars),
+                      report(K, String).
 
-%% Makes sure that the solver goes with latest context.
-%% does not reset the context, so does not reset enums.
+indent(Message, R) :- assert_depth(N),
+                      repeat_string("----", N, S),
+                      atomics_to_string([S,Message], R).
+
+
+%! Resets declarations and solver, but not enums.
+%  Can be used to ensure that the solver goes with the latest context.
 reset_globals :-
-    %% z3_reset, %% crash without this; would be nice if it was not needed.
     z3_reset_declarations,
-    %% the only way to really reset the enums is to get a new context.
+    %% the only way to really reset the enums is to get a new context, we don't do that here
     new_global_solver,
     reset_var_counts,
     initialize_type_inference_map.
-
 
 add_enums([], M, M).
 add_enums([Pair | Rest], Min, Mout) :-
@@ -138,26 +156,13 @@ add_enums([Pair | Rest], Min, Mout) :-
     typecheck(F, Type, Min, Mnew),
     add_enums(Rest, Mnew, Mout).
 
-%% Map for initializing type inference:
-enum_declarations_map(M) :-
+%! Creates a typechecking (assoc) map with the current enum declarations.
+%  Used to initialize the typechecking map in the presence of enums.
+z3_enum_declarations_assoc_map(M) :-
     z3_enum_declarations(L),
     add_enums(L, t, M).
 
-reset_var_counts :- nb_setval(varcount, 0).
-
-inc_var_count(X) :- nb_getval(varcount, X),
-                    New is X + 1,
-                    nb_setval(varcount, New).
-
-%%%%% Attribute (Prolog) variables %%%%%%%%%%
-
-add_attribute(V, Attr) :- var(V),
-                          get_attr(V, z3, Attr), !, %  equality should already be asserted
-                          true.
-add_attribute(V, Attr) :- var(V),
-                          inc_var_count(Count),
-                          atom_concat(v_, Count, Attr),
-                          put_attr(V, z3, Attr).
+%%%%%%%%%%%%%%%%%%%%% Attribute variables %%%%%%%%%%%%%%%%%%%%%%%
 
 attribute_goals(V) :- get_attr(V, z3, Attr),
                       z3_push(==(V, Attr), R),
@@ -165,25 +170,31 @@ attribute_goals(V) :- get_attr(V, z3, Attr),
 
 %% Worth keeping an inverse map of "fake Z3 constants" to Prolog vars? Might need it for eval...
 attr_unify_hook(Attr, Var) :- get_attr(Var, z3, Other), !,
-                              report("Running hook for %w", [Other]),
+                              report(informational, "Running hook for %w", [Other]),
                               z3_push(==(Attr, Other), R),
                               \+ R = l_false.
 attr_unify_hook(Attr, Var) :- var(Var), !,
                               add_attribute(Var, Attr).
 attr_unify_hook(Attr, Formula) :-
-    %% report(status("Hook got", Attr, Formula)),
+    %% report(informational, status("Hook got", Attr, Formula)),
     z3_push(==(Attr, Formula), R), \+ (R = l_false).
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %% should only be called at the top-most level:
-new_global_solver :-
-    %% by now, we could have a new context, so can't free the old solver
-    z3_make_solver(S),
-    nb_setval(global_solver, S),
-    nb_setval(solver_depth, 0).
 
-get_global_solver(S) :- nb_current(global_solver, S).
+new_global_solver :-
+    print_message(informational, z3_message("Making new z3.pl solver")),
+    %% by now, we could have a new context, so can't free the old solver unless it goes with it.
+    safe_free_solver,
+    z3_current_context_id(Current),
+    z3_make_solver(Solver),
+    nb_setval(global_solver, (Current, Solver)),
+    nb_setval(solver_depth, 0),
+    print_message(informational, z3_message("Made new z3.pl solver")).
+
+get_global_solver(Solver) :- nb_current(global_solver, (_Context, Solver)).
+%% get_global_context(Context) :- nb_current(global_solver, (Context, _Solver)).
 
 assert_depth(N) :- b_getval(solver_depth, N).
 
@@ -208,17 +219,17 @@ resolve_solver_depth(X) :- b_getval(solver_depth, X),
 
 
 resolve_solver_depth(X, Scopes) :- X >= Scopes,
-                                       % report(status("scopes OK", Scopes, X)),
+                                       % report(informational, status("scopes OK", Scopes, X)),
                                        !.
 resolve_solver_depth(X, Scopes) :- X < Scopes,
-                                   % report(status("need to pop", Scopes, X)),
+                                   % report(informational, status("need to pop", Scopes, X)),
                                    Numpops is Scopes - X,
                                    popn(Numpops).
 
 popn(Numpops) :- get_global_solver(S),
                  (  z3_solver_pop(S, Numpops, _)
                  -> true
-                 ; report("error popping Z3 solver\n")
+                 ; report(error, "error popping Z3 solver\n")
                  ).
 
 %% user-visible:
@@ -241,7 +252,9 @@ z3_check_and_print(Status) :-
     z3_solver_check_and_print(Solver, Status).
 
 
-% returns a model for the current solver, if check succeeds:
+%! z3_model(-Model)
+%  Returns a model for the solver at the current depth, if z3_check succeeds.
+%  Note that Z3 can return "uncertain" models if the status is l_undef.
 z3_model(Model) :-
     resolve_solver_depth(_),
     z3_check(Status),
@@ -255,48 +268,9 @@ z3_model_assoc(Model) :-
     list_to_assoc(ModelLists.functions, FA),
     Model = model{constants:CA, functions:FA}.
 
-
-% We now allow overloading by arity.
-
-% Grounds any variables in X, and also returns the symbols it finds, using f/N for arities bigger than 1:
-
-ground_version(X, Attr, [Attr]) :- var(X), !, add_attribute(X, Attr).
-ground_version(X, X, S) :- number(X), !, ord_empty(S).
-ground_version(X, X, [X]) :- atomic(X), !, true.
-ground_version(C, XG:T, Result) :- compound(C), C = X:T, !,
-                                   (ground(T) -> true ; type_error(ground, T)),
-                                   ground_version(X, XG, Result).
-ground_version(X, G, Result) :- compound(X),
-                                functor(X, F, Arity),
-                                X =.. [F|Rest],
-                                ground_list(Rest, Grest, R),
-                                G =.. [F|Grest],
-                                ord_add_element(R, F/Arity, Result).
-ground_version([], [], []).
-
-remove_type_annotations(X, X) :- atomic(X), !.
-remove_type_annotations(X:_T, X1) :- mapargs(remove_type_annotations, X, X1), !.
-remove_type_annotations(F, F1) :- compound(F), !, mapargs(remove_type_annotations, F, F1).
-
-ground_list([], [], S) :- ord_empty(S).
-ground_list([F|Rest], [FG|Grest], Result) :- ground_version(F, FG, GFG), ground_list(Rest, Grest, Arest), ord_union(GFG, Arest, Result).
-
-valid_status_list([l_true, l_false, l_undef, l_type_error]).
-valid_status(X) :- valid_status_list(L), member(X, L).
-
-
-/*
-check_status_arg(Status) :- var(Status), !, true.
-check_status_arg(Status) :- nonvar(Status),
-                            (valid_status(Status) -> true ; (
-                                valid_status_list(L),
-                                domain_error(L, Status)
-                            )), !.
-*/
 check_status_arg(Status) :- valid_status_list(L),
                             must_be((var; oneof(L)), Status).
 
-%% TODO: map "alldifferent" to "distinct".
 expand_macros(F, R) :- functor(F, isoneof, _N), !,
                        F =.. [isoneof | [X | Rest]],
                        maplist({X}/[V,X=V]>>true, Rest, L),
@@ -317,7 +291,7 @@ z3_push(Foriginal, Status) :-
     expand_macros(Foriginal, F),
     (b_getval(solver_depth, 0) ->
          z3_reset_declarations, %% does not clear enums
-         enum_declarations_map(EnumMap),
+         z3_enum_declarations_assoc_map(EnumMap),
          set_type_inference_map(EnumMap)
     ; true),
     get_type_inference_map(OldAssoc),
@@ -326,10 +300,10 @@ z3_push(Foriginal, Status) :-
     %% updates the type inference map:
     (assert_type(FG, bool) ->
          (
-             get_type_inference_map(Assoc),
              %% Only need to declare new symbols:
              exclude(>>({OldAssoc}/[X], get_assoc(X, OldAssoc, _Y)), Symbols, NewSymbols),
              %% writeln(compare(Symbols, NewSymbols)),
+             get_type_inference_map(Assoc),
              declare_z3_types_for_symbols(NewSymbols, Assoc),
              push_solver(Solver),
              %% We now remove ":" terms from FG. Unfortunately, this can't be done by "ground_version", because
@@ -341,7 +315,7 @@ z3_push(Foriginal, Status) :-
     ;  (
         Status = l_type_error,
         get_type_inference_map_list(L),
-        report("Type error in term: %w\nMap was %w", [FG, L])
+        report(error, "Type error in term: %w. Type map was %w", [FG, L])
     )
     ).
 
@@ -350,24 +324,6 @@ z3_push(Foriginal, Status) :-
 %% l_type_error is the only one that does not push onto the solver.
 
 z3_push(F) :- z3_push(F, R), (R == l_true ; R == l_undef), !.
-
-%% goes through a list of symbols and declares them in Z3, using z3_declare
-declare_z3_types_for_symbols([], _M).
-declare_z3_types_for_symbols([X|Rest], M) :-
-    (get_assoc(X, M, Def) -> (
-                                  %% write("Declaring "), writeln(Def),
-                                  z3_declare(X, Def)
-                              )
-    ; true),
-    declare_z3_types_for_symbols(Rest, M).
-
-
-print_declarations :-
-    current_output(Out),
-    z3_declarations_string(S),
-    writeln(Out, S),
-    z3_enums_string(S2),
-    writeln(Out, S2).
 
 z3_eval(Expression, Completion, Result) :-
     \+ is_list(Expression), !,
@@ -411,42 +367,12 @@ get_term_for_var(X, T) :- var(X),
                           add_attribute(X, T).
 
 
-%% z3_declare updates the internal (C) Z3 decl map:
-
-z3_declare(F:T) :- z3_declare(F, T). %% take care of explicit types
-z3_declare(F, T) :- var(F), !,
-                    add_attribute(F, Attr),
-                    z3_declare(Attr, T).
-z3_declare(F, int) :- integer(F), !, true.
-z3_declare(F, real) :- float(F), !, true.
-z3_declare(F, T) :- atom(T), !,
-                    z3_declare_function(F, T).
-z3_declare(F, T) :- compound(T),
-                    functor(T, bv, 1), !,
-                    must_be(ground, T),
-                    z3_declare_function(F, T).
-z3_declare(F, T) :- var(T), !,
-                    T = uninterpreted,
-                    z3_declare_function(F, T).
-z3_declare(F, lambda(Arglist, Range)) :- (var(F) -> type_error(nonvar, F) ; true), !,
-                                         F = F1/N,
-                                         length(Arglist, Len),
-                                         assertion(N == Len),
-                                         ground_arglist(Arglist),
-                                         Fapp =.. [F1|Arglist],
-                                         (var(Range) -> Range = uninterpreted ; true), !,
-                                         z3_declare_function(Fapp, Range).
-
-mk_uninterpreted(X) :- (var(X) -> X = uninterpreted ; true ).
-ground_arglist(L) :- maplist(mk_uninterpreted, L).
-
 
 /*
 internal_assert_and_check_list(Solver, List, Status) :-
     Conj =.. [and | List],
     internal_assert_and_check(Solver, Conj, Status).
 */
-
 
 z3_push_and_print(F,R) :- z3_push(F,R), z3_check_and_print(R1), assertion(R == R1).
 
@@ -503,7 +429,7 @@ test(typetest, [true(A-F == int-lambda([foobarsort], int)) , nondet ] ) :-
     test_formulas(Formulas),
     assert_formula_list_types(Formulas),
     get_type_inference_map(Map),
-    get_assoc(a, Map, A),
+    get_assoc(a/0, Map, A),
     get_assoc(f/1, Map, F).
 
 test(nonsat, [true(R1 == l_true), true(R2 == l_false)] ) :-
@@ -591,6 +517,12 @@ test(scopes, [true(((N1 == 1), (N2==2))) ] ) :-
 
 test(between) :-
     z3_push(between(x:int, 1, 4)), z3_push(between(x, 2, 3)), z3_is_implied(x = 3 or x = 2).
+
+test(instantiate_types, [true(X == 32)]) :-
+    z3_push(a:bv(32) = b:bv(X), R),
+    assertion(R == l_true),
+    z3_push(c:T = d:int),
+    assertion(T == int).
 
 :- end_tests(push_assert).
 
@@ -693,7 +625,8 @@ test(real2int) :-
 
 test(isint) :-
     z3_push(is_int(3.0)),
-    \+ z3_push(is_int(2)).
+    \+ z3_push(is_int(2)), %% should give type error
+    z3_push(is_int(2), l_type_error).
 
 test(ite_implies) :-
     z3_push(ite(x,y=1,y=2)),
@@ -718,8 +651,6 @@ test(nary_minus) :-
     z3_push(x:int = -(0,1,2,3,4)),
     z3_is_implied( x = -10 ).
 
-test(declare_lambda, [true(X==uninterpreted)]) :-
-    z3_declare(f/1, lambda([X], real)).
 
 test(nested_uninterpreted) :-
     z3_push(f(g(a,b)) = c),
@@ -751,7 +682,7 @@ test(mul_roundtrip) :-
 
 %% fails for A=4, B=2
 test(random_bv_xor) :-
-    random_between(0, 63, Width), % z3_ast_to_term fails for 64
+    random_between(1, 63, Width), % z3_ast_to_term fails for 64
     High is (1<<Width) - 1,
     random_between(0, High, A), % inclusive
     random_between(0, High, B),
@@ -767,6 +698,12 @@ test(push_numeral) :-
     z3_push(unsigned = bv2int(a, false)),
     z3_model(_M).
 
+test(combined_bvnumeral) :-
+    z3_push(bvmul(a:bv(32),b:bv(32)) = int2bv(32, 1)),
+    z3_push(bvuge(b, mk_numeral("1321", bv(32)))),
+    z3_model(_M).
+
+
 :- end_tests(z3pl_bitvectors).
 
 :- begin_tests(enums).
@@ -781,13 +718,14 @@ test(enums_basic, [setup(z3_reset), cleanup(z3_reset),
     z3_model(M),
     Z = M.constants.
 
-tests(enum_declarations, [setup(z3_reset), cleanup(z3_reset),
-                          true(Declarations == [black/0-color, white/0-color])
+test(enum_declarations, [setup(z3_reset), cleanup(z3_reset),
+                          true(DeclSorted == [black/0-color, white/0-color])
                          ]) :-
     z3_declare_enum(color, [black, white]),
     z3_enum_declarations(Declarations),
-    enum_declarations_map(Map),
-    assertion(get_assoc(Map, black, color)),
+    sort(Declarations, DeclSorted),
+    z3_enum_declarations_assoc_map(Map),
+    assertion(get_assoc(black/0, Map, color)),
     true.
 
 :- end_tests(enums).

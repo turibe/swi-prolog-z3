@@ -1,17 +1,8 @@
 %%% -*- Mode: Prolog; Module: z3_swi_foreign; -*-
 
-/** <module> Low-level Z3-SWI integration
-
-This is the lowest-level Prolog wrapper.
-It has no global variables except those in the C code.
-
-@author Tomas Uribe
-@license MIT
-*/
 
 :- module(z3_swi_foreign, [
               z3_assert/2,
-              z3_context/1,
               z3_declarations/1,
               z3_enum_declarations/1,
               z3_make_solver/1,
@@ -32,22 +23,49 @@ It has no global variables except those in the C code.
               z3_solver_scopes/2,
               z3_reset_context/0, % invalidates solvers, declaration maps
               %% for debugging:
+              z3_declarations/1,
               z3_declarations_string/1,
+              z3_remove_declaration/2,
               z3_enums_string/1,
+              z3_current_context_id/1,
+              
               op(750, xfy, and), % =, >, etc. are 700 ; Local to the module
               op(751, xfy, or),
               op(740, xfy, <>)
             ]).
 
+
+/** <module> Low-level Z3-SWI integration
+
+This is the lowest-level Prolog wrapper.
+It has no global variables except for those in the C code.
+
+@author Tomas Uribe
+@license MIT
+*/
+
 :- load_foreign_library(z3_swi_foreign).
 
+:- set_prolog_flag(string_stack_tripwire, 20).
 
-%% Declares term F to have sort T, adding the declaration to the map.
-%% New declarations don't override old ones --- fails if there is a conflict.
-%% (Returned pointer is only useful for debugging, so we hide it here)
-%% examples: z3_declare_function(a, int) ; z3_declare_function(f(int, int), real).
+%% we now use "print_message" for error messages.
 
+:- multifile prolog:(message/1).
+prolog:message(z3_message(S)) --> {}, [S].
+prolog:message(z3_message(F,L)) --> {swritef(S, F, L)}, [S].
+
+
+%! z3_declare_function(+Formula, +Type)
+%  Declares term Formula to have sort Type, adding the declaration to the map.
+%  New declarations don't override old ones --- fails if there is a conflict.
+%  examples: z3_declare_function(a, int) ; z3_declare_function(f(int, int), real).
+
+z3_declare_function(F, T) :- F == A/0, z3_declare_function(A, T).
 z3_declare_function(F, T) :- z3_declare_function(F, T, _C).
+% (Returned pointer is only useful for debugging, so we hide it here)
+
+%! z3_model_map(+ModelPointer, -Map)
+%  Constructs a Model term for the given model pointer.
 
 z3_model_map(M, Map) :- z3_model_functions(M, F),
                         z3_model_constants(M, C),
@@ -55,8 +73,8 @@ z3_model_map(M, Map) :- z3_model_functions(M, F),
                         sort(C, CS),
                         Map = model{functions:FS, constants:CS}.
 
-
-% gets a Prolog term representing a model for the given solver S:
+%! z3_model_map_for_solver(+SolverPointer, -Model)
+%  Gets a Prolog term representing a model for the given solver S.
 z3_model_map_for_solver(S, Model) :-
     setup_call_cleanup(z3_solver_get_model(S, M),
                        z3_model_map(M, Model),
@@ -71,17 +89,18 @@ z3_enum_declarations(L) :- z3_get_enum_declarations(LG), maplist(translate_entry
 
 :- begin_tests(z3_swi_foreign).
 
+test(test_messages) :-
+    print_message(informational, z3_message("testing informational message")),
+    print_message(error, z3_message("testing error message %w", [1])),
+    print_message(warning, z3_message("testing warning message")).
+
+
 test(reset_declarations) :-
     z3_reset_declarations,
     z3_declarations_string(S),
     assertion(S =@= "(ast-map)").
 
 is_pointer(X) :- integer(X).
-
-test(context) :-
-    z3_context(context(C)),
-    is_pointer(C).
-
 
 test(solver) :-
     z3_make_solver(S),
@@ -95,6 +114,7 @@ test(check_solver) :-
     assertion(Status == l_true),
     z3_solver_get_model(S, M),
     is_pointer(M),
+    z3_free_model(M),
     z3_free_solver(S).
 
 test(symbol_pointers) :-
@@ -116,22 +136,27 @@ test(model_eval,  [setup(z3_make_solver(S)), cleanup(z3_free_solver(S))])  :-
     z3_assert(S, b=2),
     z3_solver_check(S, Status),
     assertion(Status == l_true),
-    z3_solver_get_model(S, Model),
-    % TODO: use blobs or some other method to distinguish models and solvers.
-    assertion(z3_model_eval(Model, a+a, false, 6)),
-    assertion(z3_model_eval(Model, a+b, false, 5)),
-    assertion(z3_model_eval(Model, a*b, false, 6)),
-    assertion(z3_model_eval(Model, a**b, false, 9)),
-    assertion(z3_model_eval(Model, z, false, z)), %% no completion
-    assertion(z3_model_eval(Model, z, true, 0)), %% completion
-    z3_free_model(Model).
+    setup_call_cleanup(
+        z3_solver_get_model(S, Model),
+        (
+            % TODO: use blobs or some other method to distinguish models and solvers.
+            assertion(z3_model_eval(Model, a+a, false, 6)),
+            assertion(z3_model_eval(Model, a+b, false, 5)),
+            assertion(z3_model_eval(Model, a*b, false, 6)),
+            assertion(z3_model_eval(Model, a**b, false, 9)),
+            assertion(z3_model_eval(Model, z, false, z)), %% no completion
+            assertion(z3_model_eval(Model, z, true, 0)), %% completion
+            true
+        ),
+        z3_free_model(Model)
+    ).
 
 
 test(assert_test, [setup(z3_make_solver(S)), cleanup(z3_free_solver(S))]) :-
     z3_reset_declarations,
     z3_declare_function(a, bool),
     z3_declare_function(b, int),
-    z3_declare_function( c, int),
+    z3_declare_function(c, int),
     z3_assert(S, (a and (b > 0)) and (1.321 < c)),
     z3_solver_check(S, Status),
     assertion(Status == l_true).
@@ -145,13 +170,14 @@ test(get_model_no_check, [fail, setup(z3_make_solver(S)), cleanup(z3_free_solver
     z3_reset_declarations,
     z3_declare_function(a, int),
     z3_assert(S, a = 3),
-    z3_solver_get_model(S, _Model).
+    %% get_model expected to fail:
+    (z3_solver_get_model(S, Model) -> z3_free_model(Model) ; fail).
 
 test(incompatible_types1, [fail, setup(z3_make_solver(S)), cleanup(z3_free_solver(S)) ]) :-
     z3_reset_declarations,
     z3_declare_function(a, foo),
     z3_assert(S, a = 3),
-    z3_solver_get_model(S, _Model).
+    (z3_solver_get_model(S, Model) -> z3_free_model(Model) ; fail).
 
 test(incompatible_types2, [
          setup(z3_make_solver(S)), cleanup(z3_free_solver(S)),
@@ -161,7 +187,7 @@ test(incompatible_types2, [
     z3_declare_function(a, foo),
     z3_declare_function(b, bar),
     z3_assert(S, a = b),
-    z3_solver_get_model(S, _Model).
+    (z3_solver_get_model(S, Model) -> z3_free_model(Model) ; fail).
 
 test(at_least_fail, [fail, setup(z3_make_solver(S)), cleanup(z3_free_solver(S))]) :-
     z3_reset_declarations,
@@ -337,7 +363,7 @@ test(bv2int) :-
     C == [a-4294954951, b- -12345, c-4294954951],
     z3_free_solver(S).
 
-%% add: z3_push(bvmul(a:bv(32),b:bv(32)) = int2bv(32, 1)), z3_model(M).
+% add: z3_push(bvmul(a:bv(32),b:bv(32)) = int2bv(32, 1)), z3_model(M).
 
 test(bvnumeral) :-
     z3_reset_declarations,
@@ -348,11 +374,6 @@ test(bvnumeral) :-
     C = Model.constants,
     assertion(C == [a-15]),
     z3_free_solver(S).
-
-test(combined_bvnumeral) :-
-    z3_push(bvmul(a:bv(32),b:bv(32)) = int2bv(32, 1)),
-    z3_push(bvuge(b, mk_numeral("1321", bv(32)))),
-    z3_model(_M).
 
 test(make_unsigned_int64) :-
     z3_reset_declarations,

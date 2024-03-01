@@ -4,10 +4,11 @@
               typecheck/3,
               typecheck/4,
               typecheck_formula_list/3, % convenience
-              typecheck_to_list/3 % convenience
+              typecheck_to_list/3, % convenience
+              mappable_symbol/1 % true if arg is not a pre-declared atom or function symbol
           ]).
 
-/** <module> Type inference
+/** <module> Type inference for Z3 expressions.
 
 This is a module for typechecking formulas that will be then asserted in Z3,
 without having to declare all of the atom and function types separately.
@@ -189,8 +190,6 @@ signature(^, A, B) :- signature(power, A, B).
 :- declare(bvxnor, [bv(N), bv(N)], bv(N)).
 :- declare(bvxor, [bv(N), bv(N)], bv(N)).
 
-%% TODO: investigate crash with z3_push(a:int = bv2int(c,true)).
-
 %% the result type depends on the value of an arg, so can't quite do this:
 %% :- declare(int2bv, [int, int], bv(_N)).
 
@@ -207,8 +206,8 @@ sub_type(bool, int).
 sub_type(bool, real).
 sub_type(T,T).
 
-%% unify_or_error(T1, T2) :- T1 = T2, !, true.
-%% unify_or_error(T1, T2) :- write(user_error, "Could not unify "), writeln(user_error, types(T1,T2)), fail.
+% unify_or_error(T1, T2) :- T1 = T2, !, true.
+% unify_or_error(T1, T2) :- write(user_error, "Could not unify "), writeln(user_error, types(T1,T2)), fail.
 
 % "mappable" are non-declared atoms or functions whose type signature needs to be inferred; that is, not pre-defined.
 atomic_mappable(X) :- atom(X).
@@ -216,6 +215,8 @@ atomic_mappable(X) :- atom(X).
 compound_mappable(X, N) :- compound(X),
                            functor(X, F, N),
                            \+ declared(F).
+
+mappable_symbol(X) :- must_be(atom,X), \+ declared(X). %% note that declared applies to true and false
 
 check_length(all(_), _) :- !, true.
 check_length(allthen(_,_), _) :- !, true.
@@ -234,6 +235,8 @@ typecheck(false, bool, E, E) :- true, !.
 %% Without this, we must use, e.g., 2.0 instead of 2 when warranted.
 %% typecheck(X, real, E, E) :- integer(X).
 typecheck(X, real, E, E) :- float(X), !.
+%% introduce a rational type?
+typecheck(X, real, E, E) :- rational(X), \+ integer(X), !.
 typecheck(X, string, E, E) :- string(X), !.
 typecheck(T, bv(N), E, E) :- functor(T, int2bv, _), !,
                              T = int2bv(N, I),
@@ -257,12 +260,12 @@ typecheck(T, Type, E, E) :- functor(T, bv_numeral, 1),
                             length(L, N),
                             Type = bv(N).
 typecheck(X, T, Envin, Envout) :- atomic_mappable(X), !,
-                                  (get_assoc(X, Envin, T1) ->
+                                  (get_assoc(X/0, Envin, T1) ->
                                        T = T1, %% unify_or_error(T, T1), % print error if this fails
                                        Envin = Envout
                                   ;
                                   (
-                                      put_assoc(X, Envin, T, Envout)
+                                      put_assoc(X/0, Envin, T, Envout)
                                   )
                                   ).
 typecheck(X, Type, Envin, Envout) :- compound_mappable(X,Arity), !,
@@ -334,13 +337,13 @@ typecheck_to_list(Term, Type, Result) :- empty_assoc(Empty), typecheck(Term, Typ
 
 test(basic, [true(Atype == int), nondet]) :-
     typecheck(and(a:int > b, c), bool, Map),
-    get_assoc(a, Map, Atype),
-    get_assoc(b, Map, int),
-    get_assoc(c, Map, bool).
+    get_assoc(a/0, Map, Atype),
+    get_assoc(b/0, Map, int),
+    get_assoc(c/0, Map, bool).
 
 test(conflict1, [fail]) :-
     typecheck(a:int, _, Map),
-    typecheck(a, bool, Map, _Mapout).
+    typecheck(a/0, bool, Map, _Mapout).
 
 test(conflict2, [fail]) :-
     typecheck(f(a:int), int, Map),
@@ -371,26 +374,28 @@ test(nodottest) :-
     typecheck(f(a):int, int, M),
     \+ get_assoc(:, M, _).
 
-% test(badarity) :-
+test(badarity) :-
+    \+ typecheck(not(_X,_Y), bool, _R).
+
 %    catch(typecheck(not(X,Y), bool, _Map), error(E, _), true),
 %    E =@= syntax_error(arity_error(not(X,Y), 2)) .
 
 test(atleast) :-
     typecheck(atleast(a,b,c,d), bool, Map),
-    get_assoc(a, Map, bool),
-    get_assoc(d, Map, int).
+    get_assoc(a/0, Map, bool),
+    get_assoc(d/0, Map, int).
 
 test(intreal, set(T == [bool, int, real]) ) :-
     typecheck(a>1, bool, t, R),
-    get_assoc(a,R,T).
+    get_assoc(a/0,R,T).
 
 test(bool_plus, set(T == [bool, int]) ) :-
     typecheck((a:int) + b, int, R),
-    get_assoc(b, R, T).
+    get_assoc(b/0, R, T).
 
 test(bool_times, set(T == [bool, int]) ) :-
     typecheck((a:int) * b, int, R),
-    get_assoc(b, R, T).
+    get_assoc(b/0, R, T).
 
 test(nested_decl, [true((FT == lambda([int], int), GT=FT)), nondet ]) :-
     typecheck(f(g(a:int):int):int = b:int, bool, t, R),
@@ -399,7 +404,7 @@ test(nested_decl, [true((FT == lambda([int], int), GT=FT)), nondet ]) :-
 
 test(basic_eq, set(T == [int, real])) :-
     typecheck(a = b:int, bool, t, R),
-    get_assoc(a, R, T),
-    get_assoc(b, R, int).
+    get_assoc(a/0, R, T),
+    get_assoc(b/0, R, int).
 
 :- end_tests(type_inference_tests).

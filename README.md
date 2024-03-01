@@ -2,11 +2,12 @@
 
 Code to use Z3 as a constraint solver inside SWI Prolog, for a basic CLP(CC) implementation.
 Currently supports a basic subset of Z3's capabilities,
-including propositional logic, equality, arithmetic, and uninterpreted function symbols.
+including propositional logic, equality, arithmetic, bit-vectors, and uninterpreted function symbols.
 
 With the high-level API in `z3.pl`,
 Z3 asserts are incremental and backtrackable, and the Z3 solver context is pushed and popped automatically.
 
+Alternatively, `stateful-repl` accumulates state from one query to the next.
 
 ### Contact
 
@@ -17,8 +18,9 @@ Github: [https://github.com/turibe/swi-prolog-z3](https://github.com/turibe/swi-
 
 ## Installation:
 
-Tested on MacOS Sonoma.
-
+Tested on MacOS Sonoma,
+ with Z3 version 4.12.6.0 and SWI-Prolog version 9.1.21 for arm64-darwin.
+ 
 1. Install swi-prolog. This can be done via brew, macports, or download. See [https://www.swi-prolog.org/](https://www.swi-prolog.org/).
 
    After this, you should have `swipl` and `swipl-ld` executables.
@@ -26,7 +28,7 @@ Tested on MacOS Sonoma.
 2. Install and build Z3, including `libz3.dylib` . This can also be done via brew, macports, or download.
 See [https://github.com/Z3Prover/z3](https://github.com/Z3Prover/z3).
 
-Tested with Z3 version 4.12.6.0 and SWI-Prolog version 9.1.21 for arm64-darwin.
+
 
 3. Add a symbolic link to the `libz3.dylib` file in this directory (or copy it over).
 
@@ -41,7 +43,7 @@ swipl-ld -I/<path-to-z3>/z3/src/api/ -L. -o z3_swi_foreign -shared z3_swi_foreig
 This creates a `z3_swi_foreign.so` binary that is loaded into SWI Prolog when `use_module(z3)` is executed.
 
 
-5. Start `swipl`, import the `z3.pl` module, and you're done!
+5. Start `swipl`, import the `z3.pl` module with `use_module(z3)`, and you're done!
 
 ```bash
 swipl
@@ -65,15 +67,24 @@ true.
 M1 = model{constants:[a-2, b-1], functions:[f/1-else-2, f(4)-5, f(2)-4]}.
 ```
 
+6. If you prefer, run `use_module(stateful_repl)` and add assertions interactively:
+```bash
+?- add(a:int > 1).
+?- add(a > b).
+?- model(M).
+```
+
+## Testing
+
 Unit tests can be run with `?- run_tests.` , or running
 
 ```bash
-swipl -f z3.pl -g run_tests -g halt
+swipl -g run_tests -t halt z3.pl stateful_repl.pl z3_swi_foreign.pl
 ```
 
 ## Code and Functionality Overview
 
-### High-level: z3.pl
+### High-level, backtrackable: z3.pl
 
 The z3.pl module offers a high-level, user-friendly API, with:
     
@@ -82,7 +93,8 @@ The z3.pl module offers a high-level, user-friendly API, with:
 - Prolog goals that push assertions onto the Z3 solver, that are automatically popped when Prolog backtracks.
 
 The type inference at this level also uses a backtrackable type map, so
-both types and assertions start afresh from one query to the next. 
+both types and assertions start afresh from one query to the next.
+(If you don't want this, see `stateful_repl.pl`.)
 
 The basic operations are:
 
@@ -92,7 +104,8 @@ The basic operations are:
 z3_push(f(a:int) = b and b = 3, Status). %% Status = l_true
 ```
 
-Status will be one of `{l_true, l_false, l_undef}`. One can also use `push/1`, which will fails if status is `l_false`.
+Status will be one of `{l_true, l_false, l_undef, l_type_error}`.
+One can also use `push/1`, which will fails if status is `l_false` or `l_type_error`.
 
 - `z3_is_consistent(+Formula)`: Tests whether `Formula` is consistent with what has been pushed so far.
 
@@ -126,12 +139,25 @@ z3_push(X > b), z3_push(b > c), member(X, [a,b,c,d])
 ```
 will only succeed for `X = a` and `X = d`.
 
+### High-level, stateful: stateful_repl.pl
+
+Using `z3.pl`, all assertions and type declarations (except for enums) are reset from one query to the next.
+`stateful_repl` offers an alternative to `z3.pl`, where assertions and declarations are accumulated.
+
+The main commands are:
+- add(+Formula)
+- asserted(-FormulaList)
+- reset
+- is_implied(+Formula)
+- is_consistent(+Formula)
+- model(-Model)
+- declarations(-Declarations)
 
 ### Lower-level: z3_swi_foreign.pl
 
 The lower-level module has no Prolog globals.
 It could be used to write an alternative to `z3.pl` that keeps state between queries,
-similarly to the Python integration or the Z3 promp.
+similarly to the Python integration or the Z3 prompt.
 
 ### Lowest level: z3_swi_foreign.c
 
@@ -144,6 +170,15 @@ The `z3_swi_foreign.c` file has the C code that glues things together, to be com
 
 `type_inference_global_backtrackable.pl` uses this to implement a global backtrackable type inference map.
 
+### Enumerated types
+
+Finite-domain enumerated types are "sticky", and are declared with
+```
+z3_declare_enum(+enum_name, +values_list)
+```
+For example, `z3_declare_enum(fruit, [apple, banana, pear])`.
+The associated declarations can be listed with `z3_enum_declarations`. To reset them, we have to reset the entire Z3 context,
+with `z3_reset_context` (low-level), `z3_reset` (for `z3.pl`), or `reset` (for `stateful_repl.pl`).
 
 ### Explanations and Relaxation
 
@@ -152,6 +187,14 @@ for explanation (finding minimal unsatisfiable subsets) and relaxation (maximal 
 See [https://cdn.aaai.org/AAAI/2004/AAAI04-027.pdf](https://cdn.aaai.org/AAAI/2004/AAAI04-027.pdf).
 This code can be used on stand-alone basis, plugging in any monotonic `check` or `assert` predicate.
 See [quickexplain.pl](https://github.com/turibe/swi-prolog-z3/blob/main/quickexplain.pl).
+
+## Documentation
+
+Run
+```prolog
+doc_server(8080)
+```
+and navigate to [http://localhost:8080/pldoc/](http://localhost:8080/pldoc/) to see docs.
 
 ## Future Work
 
