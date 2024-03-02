@@ -16,9 +16,9 @@
               z3_model/1,              % +ModelTerm  Gets a model if possible. Fails if not l_sat.
               z3_model_assoc/1,        % +ModelAssocTerm  A model that uses assoc lists (less readable).
               z3_push/1,               % +Formula   Pushes the formula, fails if status is l_false.
-              z3_push/2,               % +Formula,+Status  Attempts to push the formula, returns status
+              z3_push/2,               % +Formula, +Status  Attempts to push the formula, returns status
               z3_push_and_print/1,     % +Formula   Convenience
-              z3_push_and_print/2,     % +Formula,+Status  Convenience
+              z3_push_and_print/2,     % +Formula, +Status  Convenience
               z3_reset/0,              % resets everything, use sparingly
 
               op(750, xfy, and), % =, >, etc. are 700
@@ -85,7 +85,7 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
                   z3_enums_string/2,
                   z3_free_handle/1,
                   z3_free_model/2,
-                  z3_get_model/2
+                  z3_get_model/2,
                   z3_model_eval/5,
                   z3_model_map/2,
                   z3_new_handle/1,
@@ -94,7 +94,7 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
                   z3_solver_check_and_print/2,
                   z3_solver_pop/3,
                   z3_solver_push/2,
-                  z3_solver_scopes/2,
+                  z3_solver_scopes/2
               ]).
 
 free_handle :-
@@ -250,8 +250,8 @@ z3_model(Model) :-
     resolve_solver_depth(_),
     z3_check(Status),
     member(Status, [l_true, l_undef]), !,
-    get_global_handle(S),
-    z3_model_map(S, Model).
+    get_global_handle(H),
+    z3_model_map(H, Model).
 
 z3_model_assoc(Model) :-
     z3_model(ModelLists),
@@ -451,7 +451,10 @@ test(atmost1) :-
     R2 = l_false.
 
 test(atleast) :-
-    z3_push(atleast(a:bool, b:bool, c:bool, 2), R), z3_push(a, R1), z3_push(not(b), R2), z3_push(not(c), R3),
+    z3_push(atleast(a:bool, b:bool, c:bool, 2), R),
+    z3_push(a, R1),
+    z3_push(not(b), R2),
+    z3_push(not(c), R3),
     R = l_true,
     R1 = l_true,
     R2 = l_true,

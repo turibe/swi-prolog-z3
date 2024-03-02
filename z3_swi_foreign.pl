@@ -180,11 +180,14 @@ test(incompatible_types2, [
     z3_assert(S, a = b),
     (z3_get_model(S, Model) -> z3_free_model(S, Model) ; fail).
 
-%% TODO: better test for at_least
 
-%%  TODO: free handles
-test(at_least_fail, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)), fail] ) :-
-    z3_assert(H, atleast(a:bool, b:bool, c:bool)).
+test(atleast_type, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
+    \+ z3_assert(H, atleast(a:bool, b:bool, c:bool)),
+    z3_assert(H, atleast(a:bool, b:bool, c:bool, 2)).
+
+test(atmost_type, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
+    \+ z3_assert(H, atmost(a:bool, b:bool, c:bool)),
+    z3_assert(H, atmost(a:bool, b:bool, c:bool, 2)).
 
 test(declare_fail1, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)), fail] ) :-
     z3_declare_function(H, _X, int).

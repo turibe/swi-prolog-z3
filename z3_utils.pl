@@ -5,7 +5,7 @@
               ground_version/3,
               print_declarations/1,
               remove_type_annotations/2,
-              reset_var_counts/0,
+              reset_var_counts/0,  % internal attribute variables count
               valid_status/1,
               valid_status_list/1,
               z3_declare/3,
@@ -15,7 +15,7 @@
 
 /** <module> z3_utils
 
-Utilities shared by z3.pl and sateful_repl.pl
+Utilities shared by z3.pl and stateful_repl.pl
 
 */
 
@@ -59,7 +59,7 @@ z3_declare_types_for_symbols(H, L, M) :-
 %! z3_declare(+F, +T)
 %  updates the internal (C code) Z3 declaration map.
 %  Unknown types are considered to be uninterpreted.
-% NEXT: add H as an argument to all of these:
+
 z3_declare(H, F:T) :- z3_declare(H, F, T). %% take care of explicit types
 z3_declare(H, F/0, T) :- !, z3_declare(H, F, T).
 z3_declare(H, F, T) :- var(F), !,
