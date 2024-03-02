@@ -158,7 +158,7 @@ void initialize_handle(handle handle) {
   Z3_solver solver = Z3_mk_solver(ctx);
   handle->solver = solver;
   DEBUG("Made solver %p\n", solver);
-  Z3_solver_inc_ref(ctx, solver); // should be freed with z3_free_solver
+  Z3_solver_inc_ref(ctx, solver);
 
   Z3_set_error_handler(ctx, z3_swi_error_handler);
   Z3_del_config(config);
@@ -203,9 +203,11 @@ foreign_t z3_new_handle_foreign(term_t handle_term) {
   initialize_handle(h);
   int res = PL_unify_pointer(handle_term, h);
   if (!res) {
+    ERROR("error in z3_new_handle.");
     free_handle_contents(h);
     free(h);
   }
+  INFO("Made new handle %p\n", h);
   return res;
 }
 
@@ -213,7 +215,7 @@ foreign_t z3_free_handle_foreign(term_t handle_term) {
   handle h;  
   int rval = PL_get_pointer_ex(handle_term, (void **) &h);
   if (!rval) return rval;
-  DEBUG("Freeing handle %p\n", h);
+  INFO("Freeing handle %p\n", h);
   free_handle_contents(h);
   free(h);
   return TRUE;
@@ -243,6 +245,12 @@ void free_handle_contents(handle h) {
   Z3_context ctx = h->ctx;
   DEBUG("freeing handle contents for %p\n", ctx);
 
+  unsigned scopes = Z3_solver_get_num_scopes(ctx, h->solver);
+  INFO("Scopes when freeing is %u\n", scopes);
+  Z3_solver_pop(ctx, h->solver, scopes);
+  Z3_solver_reset(ctx, h->solver);
+  Z3_solver_dec_ref(ctx, h->solver);
+  
   Z3_ast_map_reset(ctx, h->declarations);
   Z3_ast_map_reset(ctx, h->enum_sorts);
   Z3_ast_map_reset(ctx, h->enum_declarations);
@@ -407,9 +415,9 @@ foreign_t z3_get_model_foreign(term_t handle_term, term_t model_term) {
 
   Z3_model model = Z3_solver_get_model(h->ctx, solver);
   
-  if (model) {
+  if (model && PL_unify_pointer(model_term, model)) {
     Z3_model_inc_ref(h->ctx, model);
-    return PL_unify_pointer(model_term, model);
+    return TRUE;
   }
   return FALSE;
 }
@@ -532,7 +540,7 @@ bool z3_sort_to_term(Z3_context ctx, Z3_sort sort, term_t result) {
 foreign_t z3_declaration_map_to_term(Z3_context ctx, decl_map declaration_map, term_t result) {
 
   Z3_ast_vector keys = Z3_ast_map_keys(ctx, declaration_map);
-  Z3_ast_vector_inc_ref(ctx, keys); // needed?
+  Z3_ast_vector_inc_ref(ctx, keys);
   unsigned size = Z3_ast_vector_size(ctx, keys);
 
   term_t l = PL_new_term_ref();
@@ -1179,6 +1187,7 @@ foreign_t model_functions(Z3_context ctx, Z3_model m, term_t list) {
 
     unsigned fentries = Z3_func_interp_get_num_entries (ctx, finterp);
     DEBUG("Entries is %d\n", fentries);
+    bool problem = false;
     for (unsigned j = 0; j < fentries; j++) {
       DEBUG("processing entry %d\n", j);
       Z3_func_entry point = Z3_func_interp_get_entry(ctx, finterp, j);
@@ -1198,8 +1207,14 @@ foreign_t model_functions(Z3_context ctx, Z3_model m, term_t list) {
         DEBUG("getting subterm %u\n", w);
         Z3_ast keyw = Z3_func_entry_get_arg(ctx, point, w);
         if (!z3_ast_to_term_internal(ctx, keyw, subterms+w)) {
-          return FALSE;
+          problem = true;
+          break;
         }
+      }
+      
+      if (problem) {
+        Z3_func_entry_dec_ref(ctx, point);
+        break;
       }
 
       // NEXT: Use PL_put_dict to make a map directly.
@@ -1210,26 +1225,40 @@ foreign_t model_functions(Z3_context ctx, Z3_model m, term_t list) {
         func = PL_new_functor(PL_new_atom(function_name), arity);
       }
       if (!PL_cons_functor_v(lhs, func, subterms)) {
-        return FALSE;
+        Z3_func_entry_dec_ref(ctx, point);
+        problem = true;
+        break;
       }
 
       DEBUG("making rhs\n");
       term_t rhs = PL_new_term_ref();
       if (!z3_ast_to_term_internal(ctx, value, rhs)) {
-        return FALSE;
+        Z3_func_entry_dec_ref(ctx, point);
+        problem = true;
+        break;
       }
 
       term_t pair = PL_new_term_ref();
       if (!PL_cons_functor(pair, pair_functor, lhs, rhs)) {
         DEBUG("error consing functor\n");
-        return FALSE;
+        Z3_func_entry_dec_ref(ctx, point);
+        problem = true;
+        break;
       }
 
       DEBUG("consing list\n");
       int r = PL_cons_list(l, pair, l);
       if (!r) {
-        return r;
+        Z3_func_entry_dec_ref(ctx, point);
+        problem = true;
+        break;
       }
+      Z3_func_entry_dec_ref(ctx, point);
+    }
+    
+    if (problem) {
+      Z3_func_interp_dec_ref(ctx, finterp);
+      return FALSE;
     }
 
     // In a scenario like z3_push(and(f(a:int) = 3, f(a,a) = 4)), z3_model_map(M), z3_check_and_print(R).

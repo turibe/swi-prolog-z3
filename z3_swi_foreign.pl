@@ -86,8 +86,8 @@ translate_entry(Entry, NewEntry) :- Entry = (Key-Value), Key =.. [_ | Args], NK 
 z3_declarations(H, L) :- z3_get_declarations(H, LG), maplist(translate_entry, LG, L).
 z3_enum_declarations(H, L) :- z3_get_enum_declarations(H, LG), maplist(translate_entry, LG, L).
 
-
-:- Jobs = 2,
+% Investigate: garbage collection doesn't quite work when more than one thread is used:
+:- Jobs = 1,
    set_test_options([jobs(Jobs), cleanup(true), output(on_failure)]).
 
 :- begin_tests(z3_swi_foreign).
@@ -354,24 +354,20 @@ test(bvnumeral, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
     C = Model.constants,
     assertion(C == [a-15]).
 
-test(make_unsigned_int64) :-
-    z3_new_handle(S),
+test(make_unsigned_int64, [setup(z3_new_handle(S)), cleanup(z3_free_handle(S))] ) :-
     % z3_assert(S, a:int = mk_unsigned_int64(123,int)),
     z3_assert(S, a:bv(16) = mk_unsigned_int64(123, bv(16))),
     z3_solver_check(S, l_true),
     z3_model_map(S, Model),
     C = Model.constants,
-    assertion(C == [a-123]),
-    z3_free_handle(S).
+    assertion(C == [a-123]).
 
-test(make_numerals) :-
-    z3_new_handle(S),
+test(make_numerals, [setup(z3_new_handle(S)), cleanup(z3_free_handle(S))] ) :-
     z3_assert(S, a:bv(16) = mk_numeral("123", bv(16))),
     z3_solver_check(S, l_true),
     z3_model_map(S, Model),
     C = Model.constants,
-    assertion(C == [a-123]),
-    z3_free_handle(S).
+    assertion(C == [a-123]).
 
 :- end_tests(z3_swi_foreign_bit_vectors).
 
