@@ -6,22 +6,20 @@
               solver_scopes/1,         % +Num_scopes, starting at 0
               z3_check/1,              % +Status Returns status of global solver: l_true, l_false, l_undet
               z3_check_and_print/1,    % +Status Returns status, prints model if possible
+              z3_declarations/1,       % -Declarations  Get declarations so far, or those used in the previous query (reset on a new push).
+              z3_declare_enum/2,       % +EnumName, +EnumValues. Not backtrackable.
+              z3_enum_declarations/1,
               z3_eval/2,               % +Expression,-Result  Evaluates Expression in a current model, if the current solver is SAT.
               z3_eval/3,               % z3_eval, with boolean completion flag
               z3_is_consistent/1,      % +Formula  Succeeds if Formula is consistent with current solver/context. Fails if l_undet.
               z3_is_implied/1,         % +Formula  Succeeds if Formula is implied by current solver/context. Fails if l_undet.
-              z3_declare_enum/3,
               z3_model/1,              % +ModelTerm  Gets a model if possible. Fails if not l_sat.
               z3_model_assoc/1,        % +ModelAssocTerm  A model that uses assoc lists (less readable).
               z3_push/1,               % +Formula   Pushes the formula, fails if status is l_false.
               z3_push/2,               % +Formula,+Status  Attempts to push the formula, returns status
               z3_push_and_print/1,     % +Formula   Convenience
               z3_push_and_print/2,     % +Formula,+Status  Convenience
-              %% print_declarations/0,    % print declarations so far, or those used in the previous query (reset on a new push).
-              z3_enum_declarations/2,
-              z3_declarations/1,
-
-              z3_reset/0,      % resets everything, use sparingly
+              z3_reset/0,              % resets everything, use sparingly
 
               op(750, xfy, and), % =, >, etc. are 700
               op(751, xfy, or),
@@ -58,17 +56,17 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
               ]).
 
 :- use_module(type_inference, [
-                  typecheck/4,
                   mappable_symbol/1
               ]).
 
 :- use_module(z3_utils, [
-                  reset_var_counts/0,
-                  declare_z3_types_for_symbols/3,
-                  valid_status_list/1,
                   ground_version/3,
                   remove_type_annotations/2,
-                  z3_declare/3            % +Handle, +Formula,+Type    Declares Formula to have Type.
+                  reset_var_counts/0,
+                  valid_status_list/1,
+                  z3_declare/3,            % +Handle, +Formula,+Type    Declares Formula to have Type.
+                  z3_declare_types_for_symbols/3,
+                  z3_enum_declarations_assoc_map/2
                   ]
              ).
 
@@ -79,24 +77,24 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
 
 :- use_module(z3_swi_foreign, [
                   z3_assert/2,
+                  z3_declarations/2,
                   z3_declarations_string/2,
-                  z3_enums_string/2,
-                  z3_free_model/2,
-                  z3_free_handle/1,
-                  z3_declare_function/3,
-                  z3_new_handle/1,
                   z3_declare_enum/3,
+                  z3_declare_function/3,
+                  z3_enum_declarations/2,
+                  z3_enums_string/2,
+                  z3_free_handle/1,
+                  z3_free_model/2,
+                  z3_get_model/2
                   z3_model_eval/5,
                   z3_model_map/2,
+                  z3_new_handle/1,
                   z3_reset_declarations/1,
                   z3_solver_check/2,
                   z3_solver_check_and_print/2,
                   z3_solver_pop/3,
                   z3_solver_push/2,
                   z3_solver_scopes/2,
-                  z3_declarations/1,
-                  z3_enum_declarations/2,
-                  z3_get_model/2
               ]).
 
 free_handle :-
@@ -136,25 +134,20 @@ indent(Message, R) :- assert_depth(N),
                       atomics_to_string([S,Message], R).
 
 
-%! Resets declarations and solver, but not enums.
-%  Can be used to ensure that the solver goes with the latest context.
+%! Resets all declarations and solver, including enums:
 reset_globals :-
-    %% the only way to really reset the enums is to get a new context, we don't do that here
     new_global_handle,
     reset_var_counts,
     initialize_type_inference_map.
 
-add_enums([], M, M).
-add_enums([Pair | Rest], Min, Mout) :-
-    Pair = ((F/0) - Type),
-    typecheck(F, Type, Min, Mnew),
-    add_enums(Rest, Mnew, Mout).
+z3_declare_enum(N,V) :- get_global_handle(H),
+                        z3_declare_enum(H,N,V).
 
-%! Creates a typechecking (assoc) map with the current enum declarations.
-%  Used to initialize the typechecking map in the presence of enums.
-z3_enum_declarations_assoc_map(H, M) :-
-    z3_enum_declarations(H, L),
-    add_enums(L, t, M).
+z3_enum_declarations(D) :- get_global_handle(H),
+                           z3_enum_declarations(H, D).
+
+z3_declarations(D) :- get_global_handle(H),
+                      z3_declarations(H, D).
 
 %%%%%%%%%%%%%%%%%%%%% Attribute variables %%%%%%%%%%%%%%%%%%%%%%%
 
@@ -303,7 +296,7 @@ z3_push(Foriginal, Status) :-
              exclude(>>({OldAssoc}/[X], get_assoc(X, OldAssoc, _Y)), Symbols, NewSymbols),
              %% writeln(compare(Symbols, NewSymbols)),
              get_type_inference_map(Assoc),
-             declare_z3_types_for_symbols(H, NewSymbols, Assoc),
+             z3_declare_types_for_symbols(H, NewSymbols, Assoc),
              push_solver(Solver),
              %% We now remove ":" terms from FG. Unfortunately, this can't be done by "ground_version", because
              %% we use the ":" annotations in the type checking after variables are grounded (assert_type);
@@ -710,8 +703,7 @@ test(combined_bvnumeral) :-
 test(enums_basic, [setup(z3_reset), cleanup(z3_reset),
                    true(Z == [x-banana])
                   ]) :-
-    get_global_handle(H),
-    z3_declare_enum(H, fruit, [apple, banana, pear]),
+    z3_declare_enum(fruit, [apple, banana, pear]),
     z3_push(x:fruit <> pear),
     z3_is_implied(or(x = banana or x = apple)),
     z3_push(x <> apple),
@@ -721,10 +713,10 @@ test(enums_basic, [setup(z3_reset), cleanup(z3_reset),
 test(enum_declarations, [setup(z3_reset), cleanup(z3_reset),
                           true(DeclSorted == [black/0-color, white/0-color])
                         ]) :-
-    get_global_handle(H),
-    z3_declare_enum(H, color, [black, white]),
-    z3_enum_declarations(H, Declarations),
+    z3_declare_enum(color, [black, white]),
+    z3_enum_declarations(Declarations),
     sort(Declarations, DeclSorted),
+    get_global_handle(H),
     z3_enum_declarations_assoc_map(H, Map),
     assertion(get_assoc(black/0, Map, color)),
     true.

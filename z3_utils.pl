@@ -1,15 +1,16 @@
 %%% -*- mode: Prolog; Module: z3_utils; -*-.
 
 :- module(z3_utils, [
-              declare_z3_types_for_symbols/3,
-              reset_var_counts/0,
-              ground_version/3,
-              remove_type_annotations/2,
-              valid_status_list/1,
-              valid_status/1,
-              z3_declare/3,
               add_attribute/2,
-              print_declarations/1
+              ground_version/3,
+              print_declarations/1,
+              remove_type_annotations/2,
+              reset_var_counts/0,
+              valid_status/1,
+              valid_status_list/1,
+              z3_declare/3,
+              z3_declare_types_for_symbols/3,
+              z3_enum_declarations_assoc_map/2
           ]).
 
 /** <module> z3_utils
@@ -21,6 +22,7 @@ Utilities shared by z3.pl and sateful_repl.pl
 :- use_module(z3_swi_foreign).
 
 :- use_module(type_inference, [
+                  typecheck/4,
                   mappable_symbol/1
                   ]).
 
@@ -48,7 +50,7 @@ add_attribute(V, Attr) :- var(V),
 
 %% goes through a list of symbols and declares them in Z3, using z3_declare:
 
-declare_z3_types_for_symbols(H, L, M) :-
+z3_declare_types_for_symbols(H, L, M) :-
     maplist({H,M}/[X]>>(get_assoc(X, M, Def) -> z3_declare(H, X, Def) ; true), L).
 
 %! z3_declare(+F:T)
@@ -132,6 +134,19 @@ print_declarations(H) :-
     writeln(Out, S),
     z3_enums_string(H, S2),
     writeln(Out, S2).
+
+
+add_enums([], M, M).
+add_enums([Pair | Rest], Min, Mout) :-
+    Pair = ((F/0) - Type),
+    typecheck(F, Type, Min, Mnew),
+    add_enums(Rest, Mnew, Mout).
+
+%! Creates a typechecking (assoc) map with the current enum declarations.
+%  Used to initialize the typechecking map in the presence of enums.
+z3_enum_declarations_assoc_map(H, M) :-
+    z3_enum_declarations(H, L),
+    add_enums(L, t, M).
 
 
 :- begin_tests(z3_utils_tests).
