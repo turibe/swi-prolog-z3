@@ -19,7 +19,7 @@
               z3_solver_push/2,
               z3_simplify_term/2,
               z3_solver_scopes/2,
-              z3_reset_handle/1, % invalidates solvers, declaration maps
+
               %% for debugging:
               z3_declarations_string/2,
               z3_remove_declaration/3,
@@ -94,9 +94,8 @@ z3_enum_declarations(H, L) :- z3_get_enum_declarations(H, LG), maplist(translate
 
 z3_alloc(S) :- z3_alloc_size(N), readable_bytes(N,S).
 
-% Investigate: garbage collection doesn't quite work when more than one thread is used:
-:- Jobs = 1,
-   set_test_options([jobs(Jobs), cleanup(true), output(on_failure)]).
+% Investigate: Z3 garbage collection doesn't quite work when more than one thread is used:
+:- Jobs = 2, set_test_options([jobs(Jobs), cleanup(true), output(on_failure)]).
 
 :- begin_tests(z3_swi_foreign).
 

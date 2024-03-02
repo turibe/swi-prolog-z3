@@ -6,6 +6,9 @@
 #include <ctype.h>
 #include <assert.h>
 
+#include <pthread.h>
+
+
 // #include <gmp.h>
 
 #include <z3.h>
@@ -116,6 +119,9 @@ typedef Z3_ast_map sort_map;
 
 // ***************************** GLOBAL VARIABLES ********************************************
 
+
+static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+
 static long handle_counter = 0;
 
 // The HandleStruct has the objects needed to typecheck and convert Prolog terms to Z3.
@@ -151,6 +157,8 @@ void z3_swi_error_handler(Z3_context ctx, Z3_error_code e) {
 void initialize_handle(handle handle) {
   DEBUG("Initializing handle %p\n", handle);
 
+  pthread_mutex_lock(&mutex);
+  
   Z3_config config = Z3_mk_config();  
   handle->ctx = Z3_mk_context(config);
   Z3_context ctx = handle->ctx;
@@ -176,6 +184,8 @@ void initialize_handle(handle handle) {
   handle->int_sort = Z3_mk_int_sort(ctx);
   handle->bool_sort = Z3_mk_bool_sort(ctx);
   handle->real_sort = Z3_mk_real_sort(ctx);
+
+  pthread_mutex_unlock(&mutex);
 }
 
 // TODO: Z3_solver_get_statistics
@@ -227,8 +237,10 @@ foreign_t z3_free_handle_foreign(term_t handle_term) {
   int rval = PL_get_pointer_ex(handle_term, (void **) &h);
   if (!rval) return rval;
   INFO("Freeing handle %p\n", h);
+  pthread_mutex_lock(&mutex);
   free_handle_contents(h);
   free(h);
+  pthread_mutex_unlock(&mutex);
   return TRUE;
 }
 
@@ -280,6 +292,7 @@ void free_handle_contents(handle h) {
 
 }
 
+/****
 // worth it? Simpler to just get a new handle.
 foreign_t z3_reset_handle_foreign(term_t handle_term) {
   handle h;
@@ -294,6 +307,7 @@ foreign_t z3_reset_handle_foreign(term_t handle_term) {
 
   return TRUE;
 }
+***/
 
 // ************************* END GLOBALS *************************
 
@@ -2322,7 +2336,7 @@ install_t install()
   PRED("z3_model_functions", 3, z3_model_functions_foreign, 0); // +handle, +model_pointer, -functions_term
   PRED("z3_model_constants", 3, z3_model_constants_foreign, 0); // +handle, +model_pointer, -constants_term
 
-  PRED("z3_reset_handle", 1, z3_reset_handle_foreign, 0); // clears everything, use sparingly; but is the only way to reset enums
+  // PRED("z3_reset_handle", 1, z3_reset_handle_foreign, 0); // clears everything, use sparingly; but is the only way to reset enums
 
   PRED("z3_reset_declarations", 1, z3_reset_declarations_foreign, 0); // +handle // clears declarations, including enums, keeps Z3 context
   PRED("z3_get_enum_declarations", 2, z3_get_enum_declarations_foreign, 0); // +handle, -term
