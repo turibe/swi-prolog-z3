@@ -396,7 +396,7 @@ z3_is_implied(F) :- z3_push(not(F), Status),
 %%%%%%%%%%%%%%%%%%%%%%%%%% unit tests %%%%%%%%%%%%%%%%%
 
 
-:- begin_tests(push_assert, [setup(reset_globals)]).
+:- begin_tests(push_assert, [setup(reset_globals), cleanup(reset_globals)]).
 
 test_formulas(Formulas) :-
     Formulas = [foo(a) = b+c,

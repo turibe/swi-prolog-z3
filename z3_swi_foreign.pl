@@ -27,6 +27,9 @@
 
               z3_new_handle/1,
               z3_free_handle/1,
+
+              z3_alloc_size/1,
+              z3_alloc/1, % -string
               
               op(750, xfy, and), % =, >, etc. are 700 ; Local to the module
               op(751, xfy, or),
@@ -46,6 +49,8 @@ It has no global variables except for those in the C code.
 :- load_foreign_library(z3_swi_foreign).
 
 :- set_prolog_flag(string_stack_tripwire, 20).
+
+:- use_module(utils).
 
 %% we now use "print_message" for error messages.
 
@@ -85,6 +90,9 @@ translate_entry(Entry, NewEntry) :- Entry = (Key-Value), Key =.. [_ | Args], NK 
 
 z3_declarations(H, L) :- z3_get_declarations(H, LG), maplist(translate_entry, LG, L).
 z3_enum_declarations(H, L) :- z3_get_enum_declarations(H, LG), maplist(translate_entry, LG, L).
+
+
+z3_alloc(S) :- z3_alloc_size(N), readable_bytes(N,S).
 
 % Investigate: garbage collection doesn't quite work when more than one thread is used:
 :- Jobs = 1,
@@ -171,10 +179,7 @@ test(incompatible_types1, [fail, setup(z3_new_handle(S)), cleanup(z3_free_handle
     z3_assert(S, a = 3),
     (z3_get_model(S, Model) -> z3_free_model(S, Model) ; fail).
 
-test(incompatible_types2, [
-         setup(z3_new_handle(S)), cleanup(z3_free_handle(S)),
-         fail
-     ]) :-
+test(incompatible_types2, [setup(z3_new_handle(S)), cleanup(z3_free_handle(S)), fail]) :-
     z3_declare_function(S, a, foo),
     z3_declare_function(S, b, bar),
     z3_assert(S, a = b),

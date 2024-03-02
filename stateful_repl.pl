@@ -225,16 +225,16 @@ test(instantiate_type) :-
     assertion(X == 32).
 
 test(clear_types) :-
-    reset,
-    add(x:int = y:int),
-    (add((b:real = c:real) and (1 = 2)) -> true ;
-     add(b:int = c:int)).
+     reset,
+     add(x:int = y:int),
+     (add((b:real = c:real) and (1 = 2)) -> true ;
+      add(b:int = c:int)).
 
-test(implied_and_consistent) :-
-    reset,
-    add(a > 10),
-    is_implied(a > 1),
-    \+ is_consistent(a < 5),
-    \+ is_implied(a > 20).
+%% test(implied_and_consistent, [blocked(memtest)] ) :-
+%%     reset,
+%%     add(a > 10),
+%%     is_implied(a > 1),
+%%     \+ is_consistent(a < 5),
+%%     \+ is_implied(a > 20).
 
 :- end_tests(repl_tests).

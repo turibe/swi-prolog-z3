@@ -128,6 +128,7 @@ struct HandleStruct {
   decl_map enum_declarations; // declarations that typechecker will need
   decl_map declarations; // standard declarations
   long handle_id; // used as a unique ID for the context
+  Z3_sort int_sort, bool_sort, real_sort;
 };
 
 typedef struct HandleStruct *handle;
@@ -172,21 +173,31 @@ void initialize_handle(handle handle) {
   handle->declarations = Z3_mk_ast_map(ctx);
   Z3_ast_map_inc_ref(ctx, handle->declarations);
 
+  handle->int_sort = Z3_mk_int_sort(ctx);
+  handle->bool_sort = Z3_mk_bool_sort(ctx);
+  handle->real_sort = Z3_mk_real_sort(ctx);
 }
 
 // TODO: Z3_solver_get_statistics
 
 // TODO: make this handle_stats(h, A, B, C), print in PL.
 
-foreign_t print_handle_stats_foreign(term_t handle_term) {
+foreign_t handle_stats_foreign(term_t handle_term, term_t num_declarations, term_t num_enum_sorts, term_t num_enum_declarations) {
   handle h;
   int rval = PL_get_pointer_ex(handle_term, (void **) &h);
   if (!rval) return rval;
   
   Z3_context ctx = h->ctx;
-  fprintf(stderr, "Declarations map has size %d\n", Z3_ast_map_size(ctx, h->declarations));
-  fprintf(stderr, "Enum sorts map has size %d\n", Z3_ast_map_size(ctx, h->enum_sorts));
-  fprintf(stderr, "Enum declarations map has size %d\n", Z3_ast_map_size(ctx, h->enum_declarations));
+  uint64_t decl_size = Z3_ast_map_size(ctx, h->declarations);
+  int res = PL_unify_uint64(num_declarations, decl_size);
+  if (!res) return res;
+  uint64_t enum_sorts_size = Z3_ast_map_size(ctx, h->enum_sorts);
+  res = PL_unify_uint64(num_enum_sorts, enum_sorts_size);
+  if (!res) return res;
+  uint64_t enum_declarations_size =  Z3_ast_map_size(ctx, h->enum_declarations);
+  res = PL_unify_uint64(num_enum_declarations, enum_declarations_size);
+  if (!res) return res;
+  
   return TRUE;
 }
 
@@ -218,6 +229,11 @@ foreign_t z3_free_handle_foreign(term_t handle_term) {
   INFO("Freeing handle %p\n", h);
   free_handle_contents(h);
   free(h);
+  return TRUE;
+}
+
+foreign_t z3_finalize_memory_foreign() {
+  Z3_finalize_memory();
   return TRUE;
 }
 
@@ -273,8 +289,6 @@ foreign_t z3_reset_handle_foreign(term_t handle_term) {
 
   handle_counter += 1;
   h->handle_id = handle_counter; // a random ID would do too.
-
-  // Z3_finalize_memory(); // for good measure too? dangerous.
 
   initialize_handle(h);
 
@@ -348,6 +362,7 @@ foreign_t z3_enums_string_foreign(term_t handle_term, term_t result) {
   makes a new solver and unifies it with the arg; not needed now.
 */
 
+/**
 foreign_t z3_make_solver_foreign(term_t handle_term, term_t solver_term) {
   handle h;
   int rval = PL_get_pointer_ex(handle_term, (void **) &h); // TODO: use ||
@@ -362,6 +377,7 @@ foreign_t z3_make_solver_foreign(term_t handle_term, term_t solver_term) {
   DEBUG("made solver %p\n", (void *) solver );
   return PL_unify_pointer(solver_term, solver);
 }
+*/
 
 
 /**
@@ -369,6 +385,7 @@ foreign_t z3_make_solver_foreign(term_t handle_term, term_t solver_term) {
    In Prolog, we can use setup_call_cleanup to do this automatically.
 **/
 
+/*
 foreign_t z3_free_solver_foreign(term_t handle_term, term_t u) {
   handle h;
   int rval = PL_get_pointer_ex(handle_term, (void **) &h);
@@ -383,6 +400,7 @@ foreign_t z3_free_solver_foreign(term_t handle_term, term_t u) {
   Z3_solver_dec_ref(h->ctx, solver);
   return TRUE;
 }
+*/
 
 foreign_t z3_free_model_foreign(term_t handle_term, term_t model_term) {
   handle h;
@@ -391,9 +409,8 @@ foreign_t z3_free_model_foreign(term_t handle_term, term_t model_term) {
 
   Z3_model model;
   rval = PL_get_pointer_ex(model_term, (void **) &model);
-  if (!rval) {
-    return rval;
-  }
+  if (!rval) return rval;
+
   DEBUG("freeing model %p\n", (void *) model);
   Z3_model_dec_ref(h->ctx, model);
   return TRUE;
@@ -666,8 +683,6 @@ foreign_t z3_declare_enum_foreign(term_t handle_term, term_t sort_name_term, ter
   // The type inference needs to know about this.
   // We reach down and get the declarations from the global, and let that be the initial map when typechecking.
 
-  // pointer is not useful in PL
-  // return PL_unify_pointer(result, s);
   free(enum_names);
   free(enum_consts);
   free(enum_testers);
@@ -948,8 +963,8 @@ foreign_t z3_assert_foreign(term_t handle_term, term_t formula) {
 
   DEBUG("made formula %p\n", (void *) z3_formula);
   Z3_sort formula_sort = Z3_get_sort(h->ctx, z3_formula);
-  Z3_sort BOOL_SORT = Z3_mk_bool_sort(h->ctx);
-  if (formula_sort != BOOL_SORT) {
+  Z3_sort_kind kind = Z3_get_sort_kind(h->ctx, formula_sort);
+  if (kind != Z3_BOOL_SORT) {
     char * formula_string;
     rval = PL_get_chars(formula, &formula_string, CVT_WRITE);
     if (!rval) {
@@ -1271,6 +1286,7 @@ foreign_t model_functions(Z3_context ctx, Z3_model m, term_t list) {
     Z3_ast felse = Z3_func_interp_get_else(ctx, finterp);
     term_t else_value = PL_new_term_ref();
     if (!z3_ast_to_term_internal(ctx, felse, else_value)) {
+      Z3_func_interp_dec_ref(ctx, finterp);
       return FALSE;
     }
 
@@ -1281,35 +1297,25 @@ foreign_t model_functions(Z3_context ctx, Z3_model m, term_t list) {
     term_t arity_term = top_pair_term + 3;
     term_t fname_arity_term = top_pair_term + 4;
     term_t else_singleton = top_pair_term + 5;
-    {
+    bool ok;
+    { // brackets here to make sure function_name is not reused:
       const Z3_string function_name = Z3_get_symbol_string(ctx, symbol);
-      int res = PL_put_atom_chars(fname_term, function_name);
-      if (!res) return res;
+      ok = PL_put_atom_chars(fname_term, function_name);
     }
-    if (!PL_put_integer(arity_term, arity)) {
-      return FALSE;
-    }
+    
+    ok = ok && PL_put_integer(arity_term, arity);
     // arity term is f/N
-    if (!PL_cons_functor(fname_arity_term, slash_functor, fname_term, arity_term)) {
-      return FALSE;
-    }
+    ok = ok && PL_cons_functor(fname_arity_term, slash_functor, fname_term, arity_term);
 
     // else_term is a pair " F/N-else ":
-    int res = PL_put_atom_chars(else_singleton, "else");
-    if (!res) return res;
-    if (!PL_cons_functor(else_term, pair_functor, fname_arity_term, else_singleton)) {
-      return FALSE;
-    }
+    ok = ok && PL_put_atom_chars(else_singleton, "else");
+    ok = ok && PL_cons_functor(else_term, pair_functor, fname_arity_term, else_singleton);
     // we now make a pair " <else_term> - else_value ":
-    if (!PL_cons_functor(top_pair_term, pair_functor, else_term, else_value)) {
-      return FALSE;
-    }
-
-    if (!PL_cons_list(l, top_pair_term, l)) {
-        return FALSE;
-    }
-
+    ok = ok && PL_cons_functor(top_pair_term, pair_functor, else_term, else_value);
+    ok = ok && PL_cons_list(l, top_pair_term, l);
+    
     Z3_func_interp_dec_ref(ctx, finterp);
+    if (!ok) return FALSE;
   }
 
   return PL_unify(l, list);
@@ -1373,9 +1379,8 @@ foreign_t z3_model_functions_foreign(term_t handle_term, term_t model_term, term
   const Z3_context ctx = h->ctx;
   Z3_model model;
   rval = PL_get_pointer_ex(model_term, (void **) &model);
-  if (!rval) {
-    return rval;
-  }
+  if (!rval) return rval;
+
   Z3_model_inc_ref(ctx, model);
   rval = model_functions(ctx, model, list);
   Z3_model_dec_ref(ctx, model);
@@ -1386,13 +1391,10 @@ foreign_t z3_model_constants_foreign(term_t handle_term, term_t model_term, term
   handle h;
   int rval = PL_get_pointer_ex(handle_term, (void **) &h);
   if (!rval) return rval;
-
   Z3_context ctx = h->ctx;
   Z3_model model;
   rval = PL_get_pointer_ex(model_term, (void **) &model);
-  if (!rval) {
-    return rval;
-  }
+  if (!rval) return rval;
   Z3_model_inc_ref(ctx, model);
   rval = model_constants(ctx, model, list);
   Z3_model_dec_ref(ctx, model);
@@ -1422,18 +1424,15 @@ Z3_sort mk_sort(handle h, term_t expression) {
     DEBUG("making sort for atom %s\n", name_string);
     if (strcmp(name_string, "bool") == 0 || strcmp(name_string, "boolean") == 0) {
       DEBUG("returning bool sort\n");
-      Z3_sort BOOL_SORT = Z3_mk_bool_sort(ctx);
-      return BOOL_SORT;
+      return h->bool_sort;
     }
     if (strcmp(name_string, "int") == 0 || strcmp(name_string, "integer") == 0) {
       DEBUG("returning int sort\n");
-      Z3_sort INT_SORT = Z3_mk_int_sort(ctx);
-      return INT_SORT;
+      return h->int_sort;
     }
     if (strcmp(name_string, "float") == 0 || strcmp(name_string, "real") == 0 || strcmp(name_string, "double") == 0) {
       DEBUG("returning sort for float/real/double\n");
-      Z3_sort REAL_SORT = Z3_mk_real_sort(ctx);
-      return REAL_SORT;  // not the same as a floating point number in Z3
+      return h->real_sort; // not the same as a floating point number in Z3
       // return Z3_mk_fpa_sort_double(ctx);
     }
     // Check if there's an enumeration sort for it:
@@ -1618,10 +1617,9 @@ Z3_ast term_to_ast(const handle h, decl_map declaration_map, const term_t formul
     // We don't use PL_get_float because Z3 does not make reals from floats.
     // Z3_sort sort = Z3_mk_fpa_sort_double(ctx);
     DEBUG("making float\n");
-    Z3_sort REAL_SORT = Z3_mk_real_sort(ctx);
     char *formula_string;
     if (PL_get_chars(formula, &formula_string, CVT_FLOAT) ) {
-      result = Z3_mk_numeral(ctx, formula_string, REAL_SORT);
+      result = Z3_mk_numeral(ctx, formula_string, h->real_sort);
       if (result == NULL) {
         ERROR("Z3_mk_numeral failed for %s\n", formula_string);
       }
@@ -2270,6 +2268,13 @@ foreign_t map_test_foreign(term_t handle_term, term_t string_atom) {
   return TRUE;
 }
 
+
+foreign_t z3_alloc_size_foreign(term_t size_term) {
+  uint64_t s = Z3_get_estimated_alloc_size();
+  return PL_unify_uint64(size_term, s);
+}
+
+
 #define PRED(name, arity, func, attr) \
   PL_register_foreign_in_module("z3_swi_foreign", name, arity, func, attr)
 
@@ -2335,6 +2340,9 @@ install_t install()
   PRED("z3_new_handle", 1, z3_new_handle_foreign, 0); // -handle
   PRED("z3_free_handle", 1, z3_free_handle_foreign, 0); // +handle
 
-  PRED("print_handle_stats", 1, print_handle_stats_foreign, 0); // +handle
+  PRED("z3_alloc_size", 1, z3_alloc_size_foreign, 0); // +size
+  PRED("z3_finalize_memory", 0, z3_finalize_memory_foreign, 0); // +size // debugging only, dangerous.
+
+  PRED("handle_stats", 4, handle_stats_foreign, 0); // +handle, -A, -B, -C
   
 }

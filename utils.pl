@@ -3,7 +3,8 @@
 :- module(utils, [
 	      split_list/3,
 	      subterm_list/2,
-              repeat_string/3
+              repeat_string/3,
+              readable_bytes/2
     ] ).
 
 /** <module> Basic utils
@@ -31,7 +32,16 @@ repeat_string(S, N, R) :- must_be(string, S),
                           atomics_to_string(L, R).
 
 % atomic_list_concat(L, R) % gets an atom
-                          
+
+kilo(X) :- X is 1024.
+meg(X) :- kilo(K), X is K * 1024.
+gig(X) :- meg(M), X is M * 1024.
+
+readable_bytes(Bytes, Output) :- Bytes < 1024, !, swritef(Output, "%w bytes", [Bytes]).
+readable_bytes(Bytes, Output) :- meg(M), Bytes =< M, !, kilo(K), Kilos is Bytes/K, swritef(Output, "%w K", [Kilos]).
+readable_bytes(Bytes, Output) :- gig(G), Bytes =< G, !, meg(M), Megs is Bytes/M, swritef(Output, "%w Megs", [Megs]).
+readable_bytes(Bytes, Output) :- gig(G), assertion(Bytes > G), !, Gigs is Bytes/G, swritef(Output, "%w Gigs", [Gigs]).
+
 
 :- begin_tests(util_tests).
 
