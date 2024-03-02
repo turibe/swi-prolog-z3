@@ -72,7 +72,7 @@ z3_model_map_internal(H, M, Map) :- z3_model_functions(H, M, F),
                                     sort(C, CS),
                                     Map = model{functions:FS, constants:CS}.
 
-%! z3_model_map_for_solver(+Hande, -Model)
+%! z3_model_map(+Handle, -Model)
 %  Gets a Prolog term representing a model for the given solver S.
 z3_model_map(H, Model) :-
     setup_call_cleanup(z3_get_model(H, M),

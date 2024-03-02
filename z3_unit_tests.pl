@@ -92,7 +92,7 @@ test(conjunction) :-
 
 
 test(uninterpreted_model) :-
-    z3_reset_declarations,
+    z3_reset,
     z3_push(and(f(a) = b, f(b)=c)),
     z3_model(_X{constants:C, functions:F}),
     sort(C, C1),

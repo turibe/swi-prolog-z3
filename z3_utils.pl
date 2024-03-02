@@ -1,15 +1,15 @@
-%%% -*- mode: Prolog; Module: z3_utils; --*
+%%% -*- mode: Prolog; Module: z3_utils; -*-.
 
 :- module(z3_utils, [
-              declare_z3_types_for_symbols/2,
+              declare_z3_types_for_symbols/3,
               reset_var_counts/0,
               ground_version/3,
               remove_type_annotations/2,
               valid_status_list/1,
               valid_status/1,
-              z3_declare/2,
+              z3_declare/3,
               add_attribute/2,
-              print_declarations/0
+              print_declarations/1
           ]).
 
 /** <module> z3_utils
@@ -48,8 +48,8 @@ add_attribute(V, Attr) :- var(V),
 
 %% goes through a list of symbols and declares them in Z3, using z3_declare:
 
-declare_z3_types_for_symbols(L, M) :-
-    maplist({M}/[X]>>(get_assoc(X, M, Def) -> z3_declare(X,Def) ; true), L).
+declare_z3_types_for_symbols(H, L, M) :-
+    maplist({H,M}/[X]>>(get_assoc(X, M, Def) -> z3_declare(H, X, Def) ; true), L).
 
 %! z3_declare(+F:T)
 %  calls z3_declare(F, T). "F:T" is used to require the type of F to be T.
@@ -57,30 +57,31 @@ declare_z3_types_for_symbols(L, M) :-
 %! z3_declare(+F, +T)
 %  updates the internal (C code) Z3 declaration map.
 %  Unknown types are considered to be uninterpreted.
-z3_declare(F:T) :- z3_declare(F, T). %% take care of explicit types
-z3_declare(F/0, T) :- !, z3_declare(F, T).
-z3_declare(F, T) :- var(F), !,
-                    add_attribute(F, Attr),
-                    z3_declare(Attr, T).
-z3_declare(F, int) :- integer(F), !, true.
-z3_declare(F, real) :- float(F), !, true.
-z3_declare(F, T) :- atom(T), !,
-                    z3_declare_function(F, T).
-z3_declare(F, T) :- compound(T),
+% NEXT: add H as an argument to all of these:
+z3_declare(H, F:T) :- z3_declare(H, F, T). %% take care of explicit types
+z3_declare(H, F/0, T) :- !, z3_declare(H, F, T).
+z3_declare(H, F, T) :- var(F), !,
+                       add_attribute(F, Attr),
+                       z3_declare(H, Attr, T).
+z3_declare(_, F, int) :- integer(F), !, true.
+z3_declare(_, F, real) :- float(F), !, true.
+z3_declare(H, F, T) :- atom(T), !,
+                       z3_declare_function(H, F, T).
+z3_declare(H, F, T) :- compound(T),
                     functor(T, bv, 1), !,
                     must_be(ground, T),
-                    z3_declare_function(F, T).
-z3_declare(F, T) :- var(T), !,
+                    z3_declare_function(H, F, T).
+z3_declare(H, F, T) :- var(T), !,
                     T = uninterpreted,
-                    z3_declare_function(F, T).
-z3_declare(F, lambda(Arglist, Range)) :- (var(F) -> type_error(nonvar, F) ; true), !,
-                                         F = F1/N,
-                                         length(Arglist, Len),
-                                         assertion(N == Len),
-                                         ground_arglist(Arglist),
-                                         Fapp =.. [F1|Arglist],
-                                         (var(Range) -> Range = uninterpreted ; true), !,
-                                         z3_declare_function(Fapp, Range).
+                    z3_declare_function(H, F, T).
+z3_declare(H, F, lambda(Arglist, Range)) :- (var(F) -> type_error(nonvar, F) ; true), !,
+                                            F = F1/N,
+                                            length(Arglist, Len),
+                                            assertion(N == Len),
+                                            ground_arglist(Arglist),
+                                            Fapp =.. [F1|Arglist],
+                                            (var(Range) -> Range = uninterpreted ; true), !,
+                                            z3_declare_function(H, Fapp, Range).
 
 
 %! ground_version(+Term, -GroundTerm, -SymbolList)
@@ -125,12 +126,11 @@ valid_status(X) :- valid_status_list(L), member(X, L).
 %! Prints declarations for formulas asserted so far, as Z3 ast maps.
 %  Can be used to see the declarations used in the previous z3.pl query (reset on a new z3.pl push).
 
-print_declarations :-
+print_declarations(H) :-
     current_output(Out),
-    z3_current_context(C),
-    z3_declarations_string(C, S),
+    z3_declarations_string(H, S),
     writeln(Out, S),
-    z3_enums_string(S2),
+    z3_enums_string(H, S2),
     writeln(Out, S2).
 
 
@@ -148,6 +148,8 @@ test(remove_type_annotations, true(FN=and(a, b = c))) :-
 
 
 test(declare_lambda, [true(X==uninterpreted)]) :-
-    z3_declare(f/1, lambda([X], real)).
+    z3_new_handle(H),
+    z3_declare(H, f/1, lambda([X], real)),
+    z3_free_handle(H).
 
 :- end_tests(z3_utils_tests).
