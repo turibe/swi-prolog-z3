@@ -13,7 +13,7 @@
 
 %% for coverage: show_coverage(run_tests, [dir(cov)]).
 
-:- begin_tests(z3_pl_tests, [setup(reset_globals)] ).
+:- begin_tests(z3_pl_tests, [setup(reset_globals), cleanup(free_globals)] ).
 
 test(findall, [true(R == [a,c]) ] ) :-
     z3_push(f(a:int) = b:int),
@@ -29,7 +29,7 @@ test(declare_lambda) :-
     z3_declare(f/1,lambda([int],int)),
     z3_push(f(a) > b).
 
-test(get_model, [true(C1 == [(a-13), (b-13), (d-4)] ), true(F1 == [(f(4)-5), ((f/1-else)-20)] ) ]) :-
+test(get_model, [true(C1 == [(a=13), (b=13), (d=4)] ), true(F1 == [(f(4)=5), ((f/1=else)=20)] ) ]) :-
     z3_push(a:int > 10),
     z3_push(b:int > 12),
     z3_push(a=b),
@@ -97,17 +97,17 @@ test(uninterpreted_model) :-
     z3_model(_X{constants:C, functions:F}),
     sort(C, C1),
     assertion(
-        C1 == [(a-'uninterpreted!val!0'), (b-'uninterpreted!val!1'), (c-'uninterpreted!val!2')]
+        C1 == [(a='uninterpreted!val!0'), (b='uninterpreted!val!1'), (c='uninterpreted!val!2')]
     ),
     sort(F, F1),
     assertion(
-        F1 == [(f('uninterpreted!val!1')-'uninterpreted!val!2'), ((f/1-else)-'uninterpreted!val!1')]
+        F1 == [(f('uninterpreted!val!1')='uninterpreted!val!2'), ((f/1=else)='uninterpreted!val!1')]
     ).
 
 test(reals) :-
     z3_push(a:real > 1), z3_push(a = b), z3_push(a= 3.1), z3_model(M),
     assertion(
-        M.constants == [a-31/10, b-31/10] ).
+        M.constants == [a=31/10, b=31/10] ).
 
 :- use_module(quickexplain).
 

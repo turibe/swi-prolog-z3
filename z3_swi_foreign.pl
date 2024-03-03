@@ -85,8 +85,8 @@ z3_model_map(H, Model) :-
                        z3_free_model(H, M)
                       ).
 
-
-translate_entry(Entry, NewEntry) :- Entry = (Key-Value), Key =.. [_ | Args], NK =.. [/ | Args], NewEntry = (NK-Value).
+%% The ":" here must match the declarations_pair_functor in the C code.
+translate_entry(Entry, NewEntry) :- Entry = (Key:Value), Key =.. [_ | Args], NK =.. [/ | Args], NewEntry = (NK:Value).
 
 z3_declarations(H, L) :- z3_get_declarations(H, LG), maplist(translate_entry, LG, L).
 z3_enum_declarations(H, L) :- z3_get_enum_declarations(H, LG), maplist(translate_entry, LG, L).
@@ -95,7 +95,7 @@ z3_enum_declarations(H, L) :- z3_get_enum_declarations(H, LG), maplist(translate
 z3_alloc(S) :- z3_alloc_size(N), readable_bytes(N,S).
 
 % Investigate: Z3 garbage collection doesn't quite work when more than one thread is used:
-:- Jobs = 2, set_test_options([jobs(Jobs), cleanup(true), output(on_failure)]).
+:- Jobs = 1, set_test_options([jobs(Jobs), cleanup(true), output(on_failure)]).
 
 :- begin_tests(z3_swi_foreign).
 
@@ -208,8 +208,8 @@ test(declare_fail_different_types1, [setup(z3_new_handle(H)), cleanup(z3_free_ha
     z3_declare_function(H, f(bool), bool).
 
 test(solver_push_pop, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
-    z3_solver_push(H, 1),
-    z3_solver_push(H, 2),
+    z3_solver_push(H, X1), X1 == 1,
+    z3_solver_push(H, X2), X2 == 2,
     z3_solver_scopes(H, 2),
     z3_solver_pop(H, 1, New_scopes),
     assertion(New_scopes == 1).
@@ -301,7 +301,7 @@ test(combined_bool_int, [setup(z3_new_handle(S)), cleanup(z3_free_handle(S)) ]) 
     z3_assert(S, f(b:bool) > 2),
     z3_solver_check(S, l_true),
     z3_model_map(S, Model),
-    assertion(Model.constants == [a-4, b-false]).
+    assertion(Model.constants == [a=4, b=false]).
 
 test(arity_error, [fail, setup(z3_new_handle(S)), cleanup(z3_free_handle(S)) ]) :-
     z3_assert(S, =(a,b,c)).
@@ -338,7 +338,7 @@ test(create, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
     z3_solver_check(H, R),
     assertion(R == l_true),
     z3_model_map(H, Model),
-    assertion(Model.constants==[a-12345]).
+    assertion(Model.constants==[a=12345]).
 
 test(bv2int, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
     z3_assert(H, a:bv(32) = int2bv(32, -12345)),
@@ -347,7 +347,7 @@ test(bv2int, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
     z3_solver_check(H, l_true),
     z3_model_map(H, Model),
     C = Model.constants,
-    C == [a-4294954951, b- -12345, c-4294954951].
+    C == [a=4294954951, b= -12345, c=4294954951].
 
 % add: z3_push(bvmul(a:bv(32),b:bv(32)) = int2bv(32, 1)), z3_model(M).
 
@@ -356,7 +356,7 @@ test(bvnumeral, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
     z3_solver_check(H, l_true),
     z3_model_map(H, Model),
     C = Model.constants,
-    assertion(C == [a-15]).
+    assertion(C == [a=15]).
 
 test(make_unsigned_int64, [setup(z3_new_handle(S)), cleanup(z3_free_handle(S))] ) :-
     % z3_assert(S, a:int = mk_unsigned_int64(123,int)),
@@ -364,14 +364,14 @@ test(make_unsigned_int64, [setup(z3_new_handle(S)), cleanup(z3_free_handle(S))] 
     z3_solver_check(S, l_true),
     z3_model_map(S, Model),
     C = Model.constants,
-    assertion(C == [a-123]).
+    assertion(C == [a=123]).
 
 test(make_numerals, [setup(z3_new_handle(S)), cleanup(z3_free_handle(S))] ) :-
     z3_assert(S, a:bv(16) = mk_numeral("123", bv(16))),
     z3_solver_check(S, l_true),
     z3_model_map(S, Model),
     C = Model.constants,
-    assertion(C == [a-123]).
+    assertion(C == [a=123]).
 
 :- end_tests(z3_swi_foreign_bit_vectors).
 

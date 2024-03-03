@@ -136,9 +136,10 @@ print_declarations(H) :-
     writeln(Out, S2).
 
 
+%% The ":" here must match the declarations_pair_functor in the C code.
 add_enums([], M, M).
 add_enums([Pair | Rest], Min, Mout) :-
-    Pair = ((F/0) - Type),
+    Pair = ((F/0) : Type),
     typecheck(F, Type, Min, Mnew),
     add_enums(Rest, Mnew, Mout).
 

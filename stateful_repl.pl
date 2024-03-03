@@ -216,7 +216,7 @@ read_state(Filename) :-
     maplist(add, L).
 
 :- begin_tests(repl_tests,
-               [setup(reset), cleanup(reset)]
+               [setup(reset), cleanup(clear_handle)]
               ).
 
 test(instantiate_type) :-

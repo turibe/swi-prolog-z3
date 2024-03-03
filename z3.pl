@@ -20,6 +20,7 @@
               z3_push_and_print/1,     % +Formula   Convenience
               z3_push_and_print/2,     % +Formula, +Status  Convenience
               z3_reset/0,              % resets everything, use sparingly
+              free_globals/0,
 
               op(750, xfy, and), % =, >, etc. are 700
               op(751, xfy, or),
@@ -117,6 +118,10 @@ z3_reset :-
     assertion(\+ get_global_handle(_)),
     new_global_handle.
 
+free_globals :-
+    free_handle,
+    true.
+    
 
 %% To automatically pop the Z3 server when backtracking:
 %% solver_depth is a backtrackable variable, with the depth level.
@@ -317,6 +322,8 @@ z3_push(Foriginal, Status) :-
 
 z3_push(F) :- z3_push(F, R), (R == l_true ; R == l_undef), !.
 
+solve(L, M) :- maplist(z3_push, L), z3_model(M).
+
 z3_eval(Expression, Completion, Result) :-
     \+ is_list(Expression), !,
     get_global_handle(S),
@@ -396,7 +403,7 @@ z3_is_implied(F) :- z3_push(not(F), Status),
 %%%%%%%%%%%%%%%%%%%%%%%%%% unit tests %%%%%%%%%%%%%%%%%
 
 
-:- begin_tests(push_assert, [setup(reset_globals), cleanup(reset_globals)]).
+:- begin_tests(push_assert, [setup(reset_globals), cleanup(free_globals)]).
 
 test_formulas(Formulas) :-
     Formulas = [foo(a) = b+c,
@@ -522,7 +529,7 @@ test(instantiate_types, [true(X == 32)]) :-
 :- end_tests(push_assert).
 
 
-:- begin_tests(attribute, [setup(reset_globals)]).
+:- begin_tests(attribute, [setup(reset_globals), cleanup(free_globals)]).
 
 test(avar_succeeds) :-
     z3_push(X>10, R), X = 12, R = l_true.
@@ -553,8 +560,8 @@ test(attribute_eval, [true(R == 126)]) :-
 test(attribute_model) :-
     z3_push(X=14), z3_push(Y=X-5), z3_push(a = X-1), z3_push(b = Y*Y),
     z3_model(M),
-    assertion(member(a-13, M.constants)),
-    assertion(member(b-81, M.constants)).
+    assertion(member(a=13, M.constants)),
+    assertion(member(b=81, M.constants)).
 
 
 test(isoneof) :-
@@ -564,39 +571,39 @@ test(isoneof) :-
 
 :- end_tests(attribute).
 
-:- begin_tests(boolean, [setup(reset_globals)]).
+:- begin_tests(boolean, [setup(reset_globals), cleanup(free_globals)]).
 
 test(bool_plus) :-
     z3_push((a:real) + (b:bool) = 3.0), z3_push(b), z3_model(M),
-    M.constants == [a-2, b-true].
+    M.constants == [a=2, b=true].
 
 test(bool_times) :-
     z3_push((a:real) * (b:bool) = 0.0), z3_push(a = 3.2), z3_model(M),
-    assertion(M.constants == [a-16/5, b-false]).
+    assertion(M.constants == [a=16/5, b=false]).
 
 test(more_arith) :-
     z3_push(a:bool + b:real = 1.0), z3_model(M1), z3_push(b < 1), z3_model(M2),
-    assertion(M1.constants == [a-false, b-1]),
-    assertion(M2.constants == [a-true, b-0]).
+    assertion(M1.constants == [a=false, b=1]),
+    assertion(M2.constants == [a=true, b=0]).
 
 test(bool_or) :-
     z3_push(((a;b))), z3_push(not(b)), z3_model(M),
-    assertion(M.constants == [a-true, b-false]).
+    assertion(M.constants == [a=true, b=false]).
 
 test(bool_and) :-
     z3_push((a,b)), z3_model(M),
-    assertion(M.constants == [a-true, b-true]).
+    assertion(M.constants == [a=true, b=true]).
 
 test(bool_andor, [fail]) :-
     z3_push((a,b)), z3_push(((not(a), not(b)))).
 
 test(bool_implies) :-
     z3_push(a->b), z3_model(M),
-    assertion(M.constants = [a-false]).
+    assertion(M.constants = [a=false]).
 
 test(bool_iff) :-
     z3_push(a<=>b), z3_push(a), z3_model(M),
-    assertion(M.constants = [a-true, b-true]).
+    assertion(M.constants = [a=true, b=true]).
 
 test(type_error_scopes) :-
     z3_push(x:foo = y:bar, R), solver_scopes(S),
@@ -611,12 +618,12 @@ test(is_implied_pop) :-
 test(int2real) :-
     z3_push(x = int2real(3)),
     z3_model(M),
-    assertion(M.constants = [x-3]).
+    assertion(M.constants = [x=3]).
 
 test(real2int) :-
     z3_push(x = real2int(3.3)),
     z3_model(M),
-    assertion(M.constants = [x-3]).
+    assertion(M.constants = [x=3]).
 
 test(isint) :-
     z3_push(is_int(3.0)),
@@ -653,7 +660,7 @@ test(nested_uninterpreted) :-
 
 :- end_tests(boolean).
 
-:- begin_tests(z3pl_bitvectors).
+:- begin_tests(z3pl_bitvectors, [setup(reset_globals), cleanup(free_globals)]).
 
 test(basicor, [true((Ror == 9, Rand == 0))]) :-
     z3_push(a = int2bv(32, 1)),
@@ -661,7 +668,7 @@ test(basicor, [true((Ror == 9, Rand == 0))]) :-
     z3_eval(bvor(a,b), Ror),
     z3_eval(bvand(a,b), Rand).
 
-test(neg_no_overflow, [true(C == [b-127])] )  :-
+test(neg_no_overflow, [true(C == [b=127])] )  :-
     z3_push(false = bvneg_no_overflow(bvnot(b:bv(8))), R),
     assertion(R = l_true),
     z3_model(M),
@@ -671,7 +678,7 @@ test(mul_roundtrip) :-
     z3_push(bvmul(a:bv(32),b:bv(32)) = int2bv(32, 1)),
     z3_model(M),
     %% z3_eval(bvmul(int2bv(32,M.constants...)))
-    M.constants = [a-A, b-B],
+    M.constants = [a=A, b=B],
     z3_eval(bvmul(int2bv(32, A), int2bv(32, B)), R),
     assertion(R = 1).
 
@@ -703,18 +710,18 @@ test(combined_bvnumeral) :-
 
 :- begin_tests(enums).
 
-test(enums_basic, [setup(z3_reset), cleanup(z3_reset),
-                   true(Z == [x-banana])
+test(enums_basic, [setup(reset_globals), cleanup(free_globals),
+                   true(Z == [x=banana])
                   ]) :-
     z3_declare_enum(fruit, [apple, banana, pear]),
     z3_push(x:fruit <> pear),
-    z3_is_implied(or(x = banana or x = apple)),
+    z3_is_implied(or(x = banana, x = apple)),
     z3_push(x <> apple),
     z3_model(M),
     Z = M.constants.
 
-test(enum_declarations, [setup(z3_reset), cleanup(z3_reset),
-                          true(DeclSorted == [black/0-color, white/0-color])
+test(enum_declarations, [setup(reset_globals), cleanup(free_globals),
+                          true(DeclSorted == [(black/0):color, (white/0):color])
                         ]) :-
     z3_declare_enum(color, [black, white]),
     z3_enum_declarations(Declarations),

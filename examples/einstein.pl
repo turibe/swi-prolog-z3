@@ -191,8 +191,7 @@ alternate_drinks_order(M) :- drinks_order(Order), counterexample(Order, M).
 
 :- begin_tests(einstein).
 
-test(no_enums) :-
-    z3:reset_globals,
+test(no_enums, [setup(z3:z3_reset), cleanup(z3:free_globals)]) :-
     assert_puzzle(M),
     assertion(member(bluehouse - 2, M.constants)),
     assertion(member(german - 4, M.constants)),
@@ -203,9 +202,7 @@ test(no_enums) :-
     \+ alternate_smokes_order(_),
     \+ alternate_drinks_order(_).
 
-test(enums, [
-         setup(z3:z3_reset), cleanup(z3:z3_reset)
-     ]) :-
+test(enums, [setup(z3:z3_reset), cleanup(z3:free_globals)]) :-
     declare_enums,
     assert_puzzle(M),
     assertion(member(pet(4) - fish, M.functions)),

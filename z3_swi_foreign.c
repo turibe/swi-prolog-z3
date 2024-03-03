@@ -139,7 +139,8 @@ struct HandleStruct {
 
 typedef struct HandleStruct *handle;
 
-static functor_t pair_functor;
+static functor_t pair_functor; // "="
+static functor_t declaration_pair_functor; // ":"
 
 // forward declarations:
 Z3_ast term_to_ast(handle h, decl_map map, term_t formula);
@@ -258,7 +259,7 @@ foreign_t z3_finalize_memory_foreign() {
 // }
 
 
-// resets declarations but not enums:
+// resets declarations but not enums, which cannot be reset in the same way:
 foreign_t z3_reset_declarations_foreign(term_t handle_term) {
   handle h;
   int rval = PL_get_pointer_ex(handle_term, (void **) &h);
@@ -593,7 +594,7 @@ foreign_t z3_declaration_map_to_term(Z3_context ctx, decl_map declaration_map, t
     bool res = z3_sort_to_term(ctx, sort, value_term);
 
     term_t pair = PL_new_term_ref();
-    if (!PL_cons_functor(pair, pair_functor, key_term, value_term)) {
+    if (!PL_cons_functor(pair, declaration_pair_functor, key_term, value_term)) {
       ERROR("error consing functor\n");
       Z3_ast_vector_dec_ref(ctx, keys);
       return FALSE;
@@ -917,6 +918,10 @@ foreign_t z3_solver_push_foreign(term_t handle_term, term_t output_term) {
   handle h;
   int rval = PL_get_pointer_ex(handle_term, (void **) &h);
   if (!rval) return rval;
+  if (!PL_is_variable(output_term)) {
+    ERROR("z3_solver_push: output term should be a variable.");
+    return FALSE;
+  }
   const Z3_solver solver = h->solver;
   const Z3_context ctx = h->ctx;
   Z3_solver_push(ctx, solver);
@@ -2301,7 +2306,8 @@ install_t install()
 
   // name, arity, function, flags
 
-  pair_functor = PL_new_functor(PL_new_atom("-"), 2);
+  pair_functor = PL_new_functor(PL_new_atom("="), 2);
+  declaration_pair_functor = PL_new_functor(PL_new_atom(":"), 2);
 
   // make a new solver:
   // hide inside handle:
