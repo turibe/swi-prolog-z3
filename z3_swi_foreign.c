@@ -2288,7 +2288,7 @@ foreign_t map_test_foreign(term_t handle_term, term_t string_atom) {
 }
 
 
-foreign_t z3_alloc_size_foreign(term_t size_term) {
+foreign_t z3_alloc_bytes_foreign(term_t size_term) {
   uint64_t s = Z3_get_estimated_alloc_size();
   return PL_unify_uint64(size_term, s);
 }
@@ -2360,7 +2360,7 @@ install_t install()
   PRED("z3_new_handle", 1, z3_new_handle_foreign, 0); // -handle
   PRED("z3_free_handle", 1, z3_free_handle_foreign, 0); // +handle
 
-  PRED("z3_alloc_size", 1, z3_alloc_size_foreign, 0); // +size
+  PRED("z3_alloc_bytes", 1, z3_alloc_bytes_foreign, 0); // +size
   PRED("z3_finalize_memory", 0, z3_finalize_memory_foreign, 0); // +size // debugging only, dangerous.
 
   PRED("handle_stats", 4, handle_stats_foreign, 0); // +handle, -A, -B, -C

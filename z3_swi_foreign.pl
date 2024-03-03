@@ -28,7 +28,7 @@
               z3_new_handle/1,
               z3_free_handle/1,
 
-              z3_alloc_size/1,
+              z3_alloc_bytes/1,
               z3_alloc/1, % -string
               
               op(750, xfy, and), % =, >, etc. are 700 ; Local to the module
@@ -85,16 +85,22 @@ z3_model_map(H, Model) :-
                        z3_free_model(H, M)
                       ).
 
-%% The ":" here must match the declarations_pair_functor in the C code.
-translate_entry(Entry, NewEntry) :- Entry = (Key:Value), Key =.. [_ | Args], NK =.. [/ | Args], NewEntry = (NK:Value).
+%% Constructs a F/N term:
+translate_entry(Entry, NewEntry) :-
+    Entry =.. [_, Key, Value],
+    Key =.. [_, F, N],
+    NK = F/N,
+    NewEntry = (NK:Value).
 
 z3_declarations(H, L) :- z3_get_declarations(H, LG), maplist(translate_entry, LG, L).
 z3_enum_declarations(H, L) :- z3_get_enum_declarations(H, LG), maplist(translate_entry, LG, L).
 
 
-z3_alloc(S) :- z3_alloc_size(N), readable_bytes(N,S).
+z3_alloc(S) :- z3_alloc_bytes(N), readable_bytes(N,S).
 
-% Investigate: Z3 garbage collection doesn't quite work when more than one thread is used:
+% When more than one thread is used, need to make sure that tests free Z3 structs when they're done
+% (not just reset them).
+
 :- Jobs = 1, set_test_options([jobs(Jobs), cleanup(true), output(on_failure)]).
 
 :- begin_tests(z3_swi_foreign).
@@ -383,5 +389,16 @@ test(enums, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
     z3_solver_check(H, l_true),
     z3_assert(H, a <> red),
     z3_solver_check(H, l_false).
+
+test(separate_enums, [setup((z3_new_handle(H1), z3_new_handle(H2))),
+                      cleanup((z3_free_handle(H1), z3_free_handle(H2)))] ) :
+    z3_declare_enum(H1, color, [black, white, red]),
+    z3_declare_enum(H1, food, [cereal, milk]),
+    z3_declare_enum(H2, color, [green, blue]),
+    \+ z3_assert(H1, black:int > 1),
+    z3_assert(H2, black:int > 1),
+    z3_assert(H2, milk = 2),
+    \+ z3_assert(H1, x:color <> black and x:color <> white).
+    
 
 :- end_tests(basic_enums).
