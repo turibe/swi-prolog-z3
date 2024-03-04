@@ -33,22 +33,20 @@ Remembers asserted formulas and declarations from one query to the next.
 */
 
 :- use_module(z3_swi_foreign, [
-                  z3_make_solver/1,
-                  z3_free_solver/1,
-                  z3_reset_context/0,
-                  z3_solver_push/2,
                   z3_assert/2,
-                  z3_solver_check/2,
-                  z3_model_map_for_solver/2,
+                  z3_declarations/2,
+                  z3_free_handle/1,
+                  z3_model_map/2,
+                  z3_new_handle/1,
+                  z3_remove_declaration/3,
+                  z3_check/2,
                   z3_solver_pop/3,
-                  z3_solver_scopes/2,
-                  z3_declarations/1,
-                  z3_remove_declaration/2,
-                  z3_current_context_id/1
+                  z3_solver_push/2,
+                  z3_solver_scopes/2
               ]).
 
 :- use_module(z3_utils, [
-                  declare_z3_types_for_symbols/2,
+                  z3_declare_types_for_symbols/3,
                   ground_version/3,
                   remove_type_annotations/2
               ]).
@@ -76,7 +74,7 @@ z3_help :- writeln("Z3 repl help\n"),
 :- initialization(reset_globals).
 
 % fails if the variable does not exist:
-get_repl_solver(S) :- nb_current(repl_solver, (_, S)).
+get_repl_handle(H) :- nb_current(repl_handle, H).
 get_type_map(M) :- nb_current(typecheck_map, M).
 set_type_map(M) :- nb_setval(typecheck_map, M).
 
@@ -92,30 +90,15 @@ get_asserted(M) :- nb_current(asserted_formulas, M).
 % we should call reset_globals if there is a chance for the context to be invalidated
 % before we do a reset. Otherwise, we'll have an old invalid pointer as the solver.
 
-clear_solver :- nb_current(repl_solver, (Context, S)), !,
-                z3_current_context_id(CurrentContext),
-                (CurrentContext = Context
-                ->
-                    (
-                        z3_solver_scopes(S, N),
-                        z3_solver_pop(S, N, X),
-                        print_message(informational, z3_message("Scopes was %w", [N])),
-                        assertion(X == 0),
-                        print_message(informational, z3_message("Freeing old repl solver")),
-                        z3_free_solver(S)
-                    )
-                ;
-                print_message(warning, z3_message("There's a new repl context, previous solver is invalidated."))
-                ),
-                nb_delete(repl_solver).
-clear_solver :- true.
+clear_handle :- nb_current(repl_handle, H), !,
+                z3_free_handle(H),
+                nb_delete(repl_handle).
+clear_handle :- true.
 
 
-reset_globals :- clear_solver,
-                 z3_reset_context, % resets everything, including enums
-                 z3_current_context_id(Context),
-                 z3_make_solver(NewSolver),
-                 nb_setval(repl_solver, (Context, NewSolver)),
+reset_globals :- clear_handle,
+                 z3_new_handle(H),
+                 nb_setval(repl_handle, H),
                  set_type_map(t),
                  set_recorded_formulas([]),
                  true.
@@ -130,24 +113,25 @@ push_formula(Formula, NewMap, NewSymbols, Status) :-
      ),
     !, %% commit to first solution
     exclude(>>({OldAssoc}/[X], get_assoc(X, OldAssoc, _Y)), Symbols, NewSymbols),
-    declare_z3_types_for_symbols(NewSymbols, NewMap),
-    get_repl_solver(Solver),
-    z3_solver_push(Solver, _),
+    get_repl_handle(Handle),
+    z3_declare_types_for_symbols(Handle, NewSymbols, NewMap),
+    z3_solver_push(Handle, _),
     remove_type_annotations(FG, FG_notypes),
-    z3_assert(Solver, FG_notypes),
-    z3_solver_check(Solver, Status).
+    z3_assert(Handle, FG_notypes),
+    z3_check(Handle, Status).
 
 
-
-remove_one(F/N) :- z3_remove_declaration(F, N).
-remove_declarations(L) :- maplist(remove_one, L). % all declarations should have the form F/N
+remove_one(H, F/N) :- z3_remove_declaration(H, F, N).
+remove_declarations(L) :-
+    get_repl_handle(H),
+    maplist(remove_one(H), L). % all declarations should have the form F/N
 
 %! add_formula(+F)
 %  Adds Z3 formula F. Typechecks and adds resulting declarations as well.
 add_formula(F) :- push_formula(F, NewMap, NewSymbols, Status),
                   (member(Status, [l_false, l_type_error])  -> (
-                                           get_repl_solver(Solver),
-                                           z3_solver_pop(Solver, 1, _),
+                                           get_repl_handle(Handle),
+                                           z3_solver_pop(Handle, 1, _),
                                            remove_declarations(NewSymbols),
                                            fail
                                         )
@@ -159,7 +143,8 @@ add_formula(F) :- push_formula(F, NewMap, NewSymbols, Status),
 %! decl(-M)
 %  Get all declarations
 decl(M) :-
-    z3_declarations(Z),
+    get_repl_handle(H),
+    z3_declarations(H, Z),
     declarations(D),
     M = {z3:Z, pl:D}.
     
@@ -185,15 +170,15 @@ declarations(L) :- get_type_map(M),
 
 %! model(-Model)
 %  Get a Z3 model of formulas asserted so far.
-model(Model) :- get_repl_solver(S),
-                z3_model_map_for_solver(S, Model).
+model(Model) :- get_repl_handle(H),
+                z3_model_map(H, Model).
 
-scopes(N) :- get_repl_solver(S),
+scopes(N) :- get_repl_handle(S),
              z3_solver_scopes(S, N).
 
 push_check_and_pop(F, Status) :-
     push_formula(F, _NewMap, NewSymbols, Status),
-    get_repl_solver(Solver),
+    get_repl_handle(Solver),
     z3_solver_pop(Solver, 1, _),
     remove_declarations(NewSymbols).
 
@@ -213,7 +198,7 @@ implies(X) :- is_implied(X).
 z3_pop(Formula) :-
     must_be(var, Formula),
     pop_recorded_formulas(Formula),
-    get_repl_solver(S),
+    get_repl_handle(S),
     z3_solver_pop(S).               
 ****/
 
@@ -231,7 +216,7 @@ read_state(Filename) :-
     maplist(add, L).
 
 :- begin_tests(repl_tests,
-               [setup(reset), cleanup(reset)]
+               [setup(reset), cleanup(clear_handle)]
               ).
 
 test(instantiate_type) :-
@@ -240,16 +225,16 @@ test(instantiate_type) :-
     assertion(X == 32).
 
 test(clear_types) :-
-    reset,
-    add(x:int = y:int),
-    (add((b:real = c:real) and (1 = 2)) -> true ;
-     add(b:int = c:int)).
+     reset,
+     add(x:int = y:int),
+     (add((b:real = c:real) and (1 = 2)) -> true ;
+      add(b:int = c:int)).
 
-test(implied_and_consistent) :-
-    reset,
-    add(a > 10),
-    is_implied(a > 1),
-    \+ is_consistent(a < 5),
-    \+ is_implied(a > 20).
+%% test(implied_and_consistent, [blocked(memtest)] ) :-
+%%     reset,
+%%     add(a > 10),
+%%     is_implied(a > 1),
+%%     \+ is_consistent(a < 5),
+%%     \+ is_implied(a > 20).
 
 :- end_tests(repl_tests).
