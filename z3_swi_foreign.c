@@ -7,14 +7,9 @@
 
 #include <pthread.h>
 
-<<<<<<< HEAD
 // /opt/homebrew/Cellar/gmp/6.3.0/include/gmp.h
 #include <gmp.h>
 #include <SWI-Prolog.h>
-=======
-
-// #include <gmp.h>
->>>>>>> main
 
 #include <z3.h>
 
