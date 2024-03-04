@@ -1,12 +1,15 @@
 
 #include <stdio.h>
-#include <SWI-Prolog.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
 #include <assert.h>
 
-// #include <gmp.h>
+#include <pthread.h>
+
+// /opt/homebrew/Cellar/gmp/6.3.0/include/gmp.h
+#include <gmp.h>
+#include <SWI-Prolog.h>
 
 #include <z3.h>
 
@@ -1562,7 +1565,16 @@ Z3_ast term_to_ast(const Z3_context ctx, decl_map declaration_map, const term_t 
       return Z3_mk_int64(ctx, lval, intsort);
     }
     else {
-      ERROR("Could not get long in PL_INTEGER case\n");
+      mpz_t mpz;
+      mpz_init(mpz);
+      int res = PL_get_mpz(formula, mpz);
+      if (!res) {
+        ERROR("Could not get long in PL_INTEGER case\n");
+      }
+      else {
+        fprintf(stderr, "Made mpz\n");
+      }
+      mpz_clear(mpz);
       return NULL;
     }
     break;
