@@ -12,8 +12,8 @@
               z3_model_map/2,
               z3_reset_declarations/1,     %% does not invalidate solvers
               z3_solver_assertions/2,
-              z3_solver_check/2,
-              z3_solver_check_and_print/2, % calls Z2_model_to_string
+              z3_check/2,
+              z3_check_and_print/2, % calls Z2_model_to_string
               z3_get_model/2,
               z3_solver_pop/3,
               z3_solver_push/2,
@@ -120,7 +120,7 @@ test(reset_declarations, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] )
 is_pointer(X) :- integer(X).
 
 test(check_solver, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
-    z3_solver_check(H, Status),
+    z3_check(H, Status),
     assertion(Status == l_true),
     z3_get_model(H, M),
     is_pointer(M),
@@ -143,7 +143,7 @@ test(model_eval,  [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))])  :-
     z3_declare_function(H, b, int),
     z3_assert(H, a=3),
     z3_assert(H, b=2),
-    z3_solver_check(H, Status),
+    z3_check(H, Status),
     assertion(Status == l_true),
     setup_call_cleanup(
         z3_get_model(H, Model),
@@ -166,7 +166,7 @@ test(assert_test, [setup(z3_new_handle(S)), cleanup(z3_free_handle(S))]) :-
     z3_declare_function(S, b, int),
     z3_declare_function(S, c, int),
     z3_assert(S, (a and (b > 0)) and (1.321 < c)),
-    z3_solver_check(S, Status),
+    z3_check(S, Status),
     assertion(Status == l_true).
 
 test(int_real_types, [setup(z3_new_handle(S)), cleanup(z3_free_handle(S))] ) :-
@@ -235,7 +235,7 @@ test(get_assertions, [setup(z3_new_handle(S)), cleanup(z3_free_handle(S))] ) :-
     z3_assert(S, and(c:bool,x:bool)),
     z3_assert(S, a:int>3),
     z3_assert(S, b:int>1),
-    z3_solver_check(S, R),
+    z3_check(S, R),
     z3_solver_assertions(S, List),
     assertion(R == l_true),
     assertion(List =@= [b>1, a>3, c and x]).
@@ -267,7 +267,7 @@ test(roundtrips_true_false, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))
 %% This fails because "a" gets type int by default
 test(default_int_fail, [fail, setup(z3_new_handle(S)), cleanup(z3_free_handle(S)) ] ) :-
     z3_assert(S, a),
-    z3_solver_check(S, _R),
+    z3_check(S, _R),
     setup_call_cleanup(
         z3_get_model(S, Model),
         z3_model_eval(S, Model, not(a), false, _V),
@@ -276,7 +276,7 @@ test(default_int_fail, [fail, setup(z3_new_handle(S)), cleanup(z3_free_handle(S)
 
 test(was_broken, [setup(z3_new_handle(S)), cleanup(z3_free_handle(S)), true(V==false), true(R==l_true)]) :-
     z3_assert(S, a:bool),
-    z3_solver_check(S, R),
+    z3_check(S, R),
     setup_call_cleanup(
         z3_get_model(S, Model),
         z3_model_eval(S, Model, not(a), false, V),
@@ -290,11 +290,11 @@ test(should_fail, [fail, setup(z3_new_handle(S)), cleanup(z3_free_handle(S)) ]) 
 test(not_caught, [setup(z3_new_handle(S)), cleanup(z3_free_handle(S)) ] ) :-
     z3_assert(S, a:bool),
     z3_assert(S, a > -1),
-    z3_solver_check(S, l_true).
+    z3_check(S, l_true).
 
 test(works, [true(V==false), true(R==l_true), setup(z3_new_handle(S)), cleanup(z3_free_handle(S)) ]) :-
     z3_assert(S, a:bool),
-    z3_solver_check(S, R),
+    z3_check(S, R),
     setup_call_cleanup(
         z3_get_model(S, Model),
         z3_model_eval(S, Model, not(a:bool), false, V),
@@ -305,7 +305,7 @@ test(combined_bool_int, [setup(z3_new_handle(S)), cleanup(z3_free_handle(S)) ]) 
     z3_declare_function(S, f(int), int),
     z3_assert(S, f(a:int) > 1),
     z3_assert(S, f(b:bool) > 2),
-    z3_solver_check(S, l_true),
+    z3_check(S, l_true),
     z3_model_map(S, Model),
     assertion(Model.constants == [a=4, b=false]).
 
@@ -317,7 +317,7 @@ test(neq_incompatible, [fail, setup(z3_new_handle(S)), cleanup(z3_free_handle(S)
 
 test(neq_numeric, [setup(z3_new_handle(S)), cleanup(z3_free_handle(S))] ) :-
     z3_assert(S, a:bool <> b:real),
-    z3_solver_check(S, l_true).
+    z3_check(S, l_true).
 
 % The C code does not handle <compound_term>:int annotations.
 % The types for functions should be declared separately, if needed.
@@ -341,7 +341,7 @@ test(handle_ids) :-
 
 test(create, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
     z3_assert(H, a:bv(32) = int2bv(32, 12345)),
-    z3_solver_check(H, R),
+    z3_check(H, R),
     assertion(R == l_true),
     z3_model_map(H, Model),
     assertion(Model.constants==[a=12345]).
@@ -350,7 +350,7 @@ test(bv2int, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
     z3_assert(H, a:bv(32) = int2bv(32, -12345)),
     z3_assert(H, b:int = bv2int(a, true)), % signed
     z3_assert(H, c:int = bv2int(a, false)), % unsigned
-    z3_solver_check(H, l_true),
+    z3_check(H, l_true),
     z3_model_map(H, Model),
     C = Model.constants,
     C == [a=4294954951, b= -12345, c=4294954951].
@@ -359,7 +359,7 @@ test(bv2int, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
 
 test(bvnumeral, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
     z3_assert(H, a:bv(4) = bv_numeral([1,1,1,1])),
-    z3_solver_check(H, l_true),
+    z3_check(H, l_true),
     z3_model_map(H, Model),
     C = Model.constants,
     assertion(C == [a=15]).
@@ -367,14 +367,14 @@ test(bvnumeral, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
 test(make_unsigned_int64, [setup(z3_new_handle(S)), cleanup(z3_free_handle(S))] ) :-
     % z3_assert(S, a:int = mk_unsigned_int64(123,int)),
     z3_assert(S, a:bv(16) = mk_unsigned_int64(123, bv(16))),
-    z3_solver_check(S, l_true),
+    z3_check(S, l_true),
     z3_model_map(S, Model),
     C = Model.constants,
     assertion(C == [a=123]).
 
 test(make_numerals, [setup(z3_new_handle(S)), cleanup(z3_free_handle(S))] ) :-
     z3_assert(S, a:bv(16) = mk_numeral("123", bv(16))),
-    z3_solver_check(S, l_true),
+    z3_check(S, l_true),
     z3_model_map(S, Model),
     C = Model.constants,
     assertion(C == [a=123]).
@@ -386,19 +386,20 @@ test(make_numerals, [setup(z3_new_handle(S)), cleanup(z3_free_handle(S))] ) :-
 test(enums, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
     z3_declare_enum(H, color, [black, white, red]),
     z3_assert(H, and(a:color <> black, a:color <> white)),
-    z3_solver_check(H, l_true),
+    z3_check(H, l_true),
     z3_assert(H, a <> red),
-    z3_solver_check(H, l_false).
+    z3_check(H, l_false).
 
 test(separate_enums, [setup((z3_new_handle(H1), z3_new_handle(H2))),
-                      cleanup((z3_free_handle(H1), z3_free_handle(H2)))] ) :
-    z3_declare_enum(H1, color, [black, white, red]),
+                      cleanup((z3_free_handle(H1), z3_free_handle(H2)))] ) :-
+    z3_declare_enum(H1, color, [black, white]),
     z3_declare_enum(H1, food, [cereal, milk]),
     z3_declare_enum(H2, color, [green, blue]),
-    \+ z3_assert(H1, black:int > 1),
-    z3_assert(H2, black:int > 1),
+    % \+ z3_assert(H1, black = white),
+    z3_assert(H2, black = white),
     z3_assert(H2, milk = 2),
-    \+ z3_assert(H1, x:color <> black and x:color <> white).
+    z3_assert(H1, and(x:color <> black,  x:color <> white)),
+    z3_check(H1, l_false).
     
 
 :- end_tests(basic_enums).

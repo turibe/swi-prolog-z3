@@ -39,7 +39,7 @@ Remembers asserted formulas and declarations from one query to the next.
                   z3_model_map/2,
                   z3_new_handle/1,
                   z3_remove_declaration/3,
-                  z3_solver_check/2,
+                  z3_check/2,
                   z3_solver_pop/3,
                   z3_solver_push/2,
                   z3_solver_scopes/2
@@ -118,7 +118,7 @@ push_formula(Formula, NewMap, NewSymbols, Status) :-
     z3_solver_push(Handle, _),
     remove_type_annotations(FG, FG_notypes),
     z3_assert(Handle, FG_notypes),
-    z3_solver_check(Handle, Status).
+    z3_check(Handle, Status).
 
 
 remove_one(H, F/N) :- z3_remove_declaration(H, F, N).
@@ -130,8 +130,8 @@ remove_declarations(L) :-
 %  Adds Z3 formula F. Typechecks and adds resulting declarations as well.
 add_formula(F) :- push_formula(F, NewMap, NewSymbols, Status),
                   (member(Status, [l_false, l_type_error])  -> (
-                                           get_repl_handle(Solver),
-                                           z3_solver_pop(Solver, 1, _),
+                                           get_repl_handle(Handle),
+                                           z3_solver_pop(Handle, 1, _),
                                            remove_declarations(NewSymbols),
                                            fail
                                         )

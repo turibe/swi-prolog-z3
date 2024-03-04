@@ -91,8 +91,8 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
                   z3_model_map/2,
                   z3_new_handle/1,
                   z3_reset_declarations/1,
-                  z3_solver_check/2,
-                  z3_solver_check_and_print/2,
+                  z3_check/2,
+                  z3_check_and_print/2,
                   z3_solver_pop/3,
                   z3_solver_push/2,
                   z3_solver_scopes/2
@@ -235,17 +235,17 @@ solver_scopes(N) :- resolve_solver_depth(_), raw_solver_scopes(N).
 % so should use z3_push. Also the matter of push and pop.
 internal_assert_and_check(Solver, Formula, Status) :-
     z3_assert(Solver, Formula),
-    z3_solver_check(Solver, Status).
+    z3_check(Solver, Status).
 
 z3_check(Status) :-
     check_status_arg(Status),
     get_global_handle(S),
-    z3_solver_check(S, Status).
+    z3_check(S, Status).
 
 z3_check_and_print(Status) :-
     check_status_arg(Status),
     get_global_handle(Solver),
-    z3_solver_check_and_print(Solver, Status).
+    z3_check_and_print(Solver, Status).
 
 
 %! z3_model(-Model)
@@ -327,7 +327,7 @@ solve(L, M) :- maplist(z3_push, L), z3_model(M).
 z3_eval(Expression, Completion, Result) :-
     \+ is_list(Expression), !,
     get_global_handle(S),
-    z3_solver_check(S, l_true),
+    z3_check(S, l_true),
     replace_var_attributes(Expression, E1),
     setup_call_cleanup(
         z3_get_model(S, Model),
@@ -343,7 +343,7 @@ z3_eval(Expression, Result) :- z3_eval(Expression, false, Result).
 %% Map eval on a list:
 z3_eval_list(L, Completion, Result) :- must_be(list, L),
                                        get_global_handle(S),
-                                       z3_solver_check(S, l_true),
+                                       z3_check(S, l_true),
                                        replace_var_attributes(L, L1),
                                        setup_call_cleanup(
                                            z3_get_model(S, Model),

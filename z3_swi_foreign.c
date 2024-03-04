@@ -432,7 +432,7 @@ foreign_t z3_free_model_foreign(term_t handle_term, term_t model_term) {
 }
 
 /*
-  Gets a model object from the solver; "z3_solver_check" must have been run on the solver first.
+  Gets a model object from the solver; "Z3_solver_check" must have been run on the solver first.
   Otherwise, an error is reported and we fail.
   Unsafe, used for model_eval in Prolog; preferably use z3_model/1.
   Model should be freed after use, with z3_free_model/2.
@@ -1011,7 +1011,7 @@ foreign_t z3_solver_scopes_foreign(term_t handle_term, term_t result) {
   return PL_unify_uint64(result, scopes);
 }
 
-foreign_t z3_solver_check_foreign(term_t handle_term, term_t status_arg) {
+foreign_t z3_check_foreign(term_t handle_term, term_t status_arg) {
   handle h;
   int rval = PL_get_pointer(handle_term, (void **) &h);
   if (!rval) return rval;
@@ -1027,7 +1027,7 @@ foreign_t z3_solver_check_foreign(term_t handle_term, term_t status_arg) {
 }
 
 
-foreign_t z3_solver_check_and_print_foreign(term_t handle_term, term_t status_arg) {
+foreign_t z3_check_and_print_foreign(term_t handle_term, term_t status_arg) {
   handle h;
   int rval = PL_get_pointer_ex(handle_term, (void **) &h);
   if (!rval) {
@@ -2329,8 +2329,8 @@ install_t install()
   PRED("z3_solver_pop", 3, z3_solver_pop_foreign, 0); // +handle, +numpops, -num_scopes
 
   PRED("z3_solver_scopes", 2, z3_solver_scopes_foreign, 0); // +handle, -num_scopes):
-  PRED("z3_solver_check", 2, z3_solver_check_foreign, 0); // +handle, -status
-  PRED("z3_solver_check_and_print", 2, z3_solver_check_and_print_foreign, 0); // +handle, -status
+  PRED("z3_check", 2, z3_check_foreign, 0); // +handle, -status
+  PRED("z3_check_and_print", 2, z3_check_and_print_foreign, 0); // +handle, -status
 
   PRED("z3_get_model", 2, z3_get_model_foreign, 0); // +handle, -model_pointer
   PRED("z3_model_eval", 5, z3_model_eval_foreign, 0); // +handle, +model_pointer, +formula, +completion_flag, -value
