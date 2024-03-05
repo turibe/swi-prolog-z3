@@ -10,7 +10,8 @@
               valid_status_list/1,
               z3_declare/3,
               z3_declare_types_for_symbols/3,
-              z3_enum_declarations_assoc_map/2
+              z3_enum_declarations_assoc/2,
+              expand/2
           ]).
 
 /** <module> z3_utils
@@ -18,6 +19,8 @@
 Utilities shared by z3.pl and stateful_repl.pl
 
 */
+
+:- use_module(library(assoc)).
 
 :- use_module(z3_swi_foreign).
 
@@ -144,10 +147,23 @@ add_enums([Pair | Rest], Min, Mout) :-
 
 %! Creates a typechecking (assoc) map with the current enum declarations.
 %  Used to initialize the typechecking map in the presence of enums.
-z3_enum_declarations_assoc_map(H, M) :-
+z3_enum_declarations_assoc(H, M) :-
     z3_enum_declarations(H, L),
-    add_enums(L, t, M).
+    add_enums(L, t, M).                                   
 
+expand_macros(F, R) :- functor(F, isoneof, _N), !,
+                       F =.. [isoneof | [X | Rest]],
+                       maplist({X}/[V,X=V]>>true, Rest, L),
+                       R =.. [or | L].
+expand_macros(F, R) :- functor(F, alldifferent, _N), !,
+                       F =.. [alldifferent | Rest],
+                       R =.. [distinct | Rest].
+%% The Prolog C interface does not have a way to deconstruct rationals, so we do it here:
+expand_macros(F, R) :- \+ integer(F),
+                       rational(F, A, B), !,
+                       R = mk_rational(A,B).
+
+expand(A,B) :- mapsubterms(expand_macros,A,B).
 
 :- begin_tests(z3_utils_tests).
 
@@ -160,7 +176,6 @@ test(ground_version, true(Symbols == [a/0, b/0, c/0, f/1, g/0]) ) :-
 test(remove_type_annotations, true(FN=and(a, b = c))) :-
     F = and(a:int, b = c:real),
     remove_type_annotations(F, FN).
-
 
 test(declare_lambda, [true(X==uninterpreted)]) :-
     z3_new_handle(H),

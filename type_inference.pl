@@ -201,6 +201,8 @@ signature(^, A, B) :- signature(power, A, B).
 % isoneof(x, v1, v2, ...) is expanded to (x = v1 or x = v2 or ...):
 :- declare(isoneof, T, all(T)).
 
+:- declare(mk_rational, [int, int], real).
+
 sub_type(int, real).
 sub_type(bool, int).
 sub_type(bool, real).

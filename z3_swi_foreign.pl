@@ -10,6 +10,7 @@
               z3_declare_enum/3,
               z3_model_eval/5,             %% +handle, +model_pointer, +formula, +completion_flag, -value
               z3_model_map/2,
+              %% z3_model_map_assoc/2,
               z3_reset_declarations/1,     %% does not invalidate solvers
               z3_solver_assertions/2,
               z3_check/2,
@@ -71,19 +72,33 @@ z3_declare_function(H, F, T) :- z3_declare_function(H, F, T, _C).
 %! z3_model_map(+ModelPointer, -Map)
 %  Constructs a Model term for the given model pointer.
 
-z3_model_map_internal(H, M, Map) :- z3_model_functions(H, M, F),
-                                    z3_model_constants(H, M, C),
-                                    sort(F, FS),
-                                    sort(C, CS),
-                                    Map = model{functions:FS, constants:CS}.
+z3_model_map_lists(H, M, Map) :- z3_model_functions(H, M, F),
+                                 z3_model_constants(H, M, C),
+                                 sort(F, FS),
+                                 sort(C, CS),
+                                 Map = model{functions:FS, constants:CS}.
+
+/****
+z3_model_map_assocs(H, M, Map) :- z3_model_functions(H, M, F),
+                                  z3_model_constants(H, M, C),
+                                  pair_list_to_assoc(F, Fmap),
+                                  pair_list_to_assoc(C, Cmap),
+                                  Map = model{functions:Fmap, constants:Cmap}.
+z3_model_map_assoc(H, Model) :-
+    setup_call_cleanup(z3_get_model(H, M),
+                       z3_model_map_assocs(H, M, Model),
+                       z3_free_model(H, M)
+                      ).
+***/
 
 %! z3_model_map(+Handle, -Model)
 %  Gets a Prolog term representing a model for the given solver S.
 z3_model_map(H, Model) :-
     setup_call_cleanup(z3_get_model(H, M),
-                       z3_model_map_internal(H, M, Model),
+                       z3_model_map_lists(H, M, Model),
                        z3_free_model(H, M)
                       ).
+
 
 %% Constructs a F/N term:
 translate_entry(Entry, NewEntry) :-

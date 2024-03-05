@@ -840,6 +840,18 @@ foreign_t z3_ast_to_term_internal(const Z3_context ctx, Z3_ast ast, term_t term)
       }
       return PL_unify(term, t);
     }
+    if (Z3_get_numeral_small(ctx, ast, &num, &den)) {
+      ERROR("numeral_small succeeded were numeral_rational_int64 did not\n");
+      return FALSE;
+    }
+    Z3_string str = Z3_get_numeral_string(ctx, ast);
+    fprintf(stderr, "Handling numeral term %s\n", str);
+    term_t t = PL_new_term_ref();
+    if (!PL_chars_to_term(str, t)) {
+      ERROR("PL_chars_to_term failed for %s\n", str);
+      return FALSE;
+    }
+    return PL_unify(term, t);
   }
   DEBUG("non-numeral case\n");
   if (Z3_is_string(ctx, ast)) {
@@ -1617,11 +1629,26 @@ Z3_ast term_to_ast(const handle h, decl_map declaration_map, const term_t formul
     break;
   }
   case PL_INTEGER:
-    if (PL_get_long_ex(formula, &lval)) {
+    if (PL_get_long(formula, &lval)) {
       DEBUG("Got PL_get_long\n");
       Z3_sort INT_SORT = Z3_mk_int_sort(ctx);
       return Z3_mk_int64(ctx, lval, INT_SORT);
     }
+    else {
+      char *int_string;
+      if (PL_get_chars(formula, &int_string, CVT_INTEGER)) {
+        result = Z3_mk_numeral(ctx, int_string, h->int_sort);
+        if (result == NULL) {
+          ERROR("Z3_mk_numeral failed for %s\n", int_string);
+        }
+        return result;
+      }
+      else {
+        ERROR("PL_get_chars failed for integer\n");
+        return NULL;
+      }
+    }
+    /**** This would be useful if we could convert mpz to Z3 directly.
     else {
       mpz_t mpz;
       mpz_init(mpz);
@@ -1635,11 +1662,12 @@ Z3_ast term_to_ast(const handle h, decl_map declaration_map, const term_t formul
       mpz_clear(mpz);
       return NULL;
     }
+    ************/
     break;
   case PL_RATIONAL:
-    ERROR("TODO: PL_RATIONAL\n");
-    // look at PL_get_mpq
-    break;
+    ERROR("Got PL_RATIONAL. Use z3_utils:expand\n");
+    // Could look at PL_get_mpq; but better to handle this in Prolog with rational/3.
+    return NULL;
   case PL_FLOAT: {
     // double myf;
     // We don't use PL_get_float because Z3 does not make reals from floats.
@@ -1654,7 +1682,7 @@ Z3_ast term_to_ast(const handle h, decl_map declaration_map, const term_t formul
       return result;
     }
     else {
-      ERROR("PL_get_chars failed for float %s\n", formula_string);
+      ERROR("PL_get_chars failed for float\n");
       return NULL;
     }
     break;
@@ -1770,6 +1798,7 @@ Z3_ast term_to_ast(const handle h, decl_map declaration_map, const term_t formul
 
     if (strcmp(name_string, MK_NUMERAL)==0 ||
         strcmp(name_string, "mk_unsigned_int64")==0) { // confusing name, makes something of the specified sort.
+      CHECK_ARITY(name_string, 2, arity);
       // get sort from second argument:
       DEBUG("numeral/unsigned_int64 case\n");
       term_t sort_term = PL_new_term_ref();
@@ -1879,10 +1908,18 @@ Z3_ast term_to_ast(const handle h, decl_map declaration_map, const term_t formul
       }
       DEBUG("Made subterm %d, %s\n", n, Z3_ast_to_string(ctx, subterms[n-1]));
     }
+      
 
     // ********************************************* built-in compound term_to_ast  ****************************************/
-
-    if (strcmp(name_string, "+") == 0 ) {
+    
+    if (strcmp(name_string, "mk_rational")==0) {
+      CHECK_ARITY(name_string, 2, arity);
+      result = Z3_simplify(ctx, Z3_mk_div(ctx,
+                                          Z3_mk_int2real(ctx, subterms[0]),
+                                          Z3_mk_int2real(ctx, subterms[1]))
+                           );
+    }
+    else if (strcmp(name_string, "+") == 0 ) {
       result = Z3_mk_add(ctx, arity, subterms);
     }
     else if (strcmp(name_string, "*") == 0 ) {

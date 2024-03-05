@@ -48,7 +48,8 @@ Remembers asserted formulas and declarations from one query to the next.
 :- use_module(z3_utils, [
                   z3_declare_types_for_symbols/3,
                   ground_version/3,
-                  remove_type_annotations/2
+                  remove_type_annotations/2,
+                  expand/2
               ]).
 
 :- use_module(type_inference, [
@@ -106,7 +107,8 @@ reset_globals :- clear_handle,
 push_formula(Formula, NewMap, NewSymbols, Status) :-
     %% must_be(ground, Formula),
     get_type_map(OldAssoc),
-    ground_version(Formula, FG, Symbols),
+    expand(Formula, FormulaTransformed),
+    ground_version(FormulaTransformed, FG, Symbols),
     (typecheck(FG, bool, OldAssoc, NewMap) -> true ;
      print_message(error, z3_message("Type error for %w", [FG])),
      fail
