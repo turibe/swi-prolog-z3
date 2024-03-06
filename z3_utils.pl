@@ -159,7 +159,8 @@ expand_macros(F, R) :- functor(F, alldifferent, _N), !,
                        F =.. [alldifferent | Rest],
                        R =.. [distinct | Rest].
 %% The Prolog C interface does not have a way to deconstruct rationals, so we do it here:
-expand_macros(F, R) :- \+ integer(F),
+expand_macros(F, R) :- fail,
+                       \+ integer(F),
                        rational(F, A, B), !,
                        R = mk_rational(A,B).
 

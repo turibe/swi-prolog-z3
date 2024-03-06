@@ -265,6 +265,7 @@ z3_model(Model) :-
     get_global_handle(H),
     z3_model_map(H, Model).
 
+%%  Next: share with stateful_repl.pl
 z3_model_assoc(Model) :-
     z3_model(ModelLists),
     pair_list_to_assoc(ModelLists.constants, CA),
@@ -273,7 +274,6 @@ z3_model_assoc(Model) :-
 
 check_status_arg(Status) :- valid_status_list(L),
                             must_be((var; oneof(L)), Status).
-
 
 %% We now use backtrackable types in Prolog, resetting declarations at the first push.
 %% Note that type declarations in Z3 can't be pushed and popped.

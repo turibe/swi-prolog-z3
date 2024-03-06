@@ -50,7 +50,6 @@ swipl
 ?- use_module(z3).
 Installing Z3 package
 Using Z3 version Z3 4.12.5.0
-Initializing global context
 true.
 ```
 

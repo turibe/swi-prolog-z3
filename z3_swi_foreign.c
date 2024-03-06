@@ -1555,6 +1555,27 @@ Z3_sort mk_sort(handle h, term_t expression) {
 } // mk_sort
 
 
+static predicate_t rational_pred = NULL;
+
+/* terms must be a term_t vector of size 3 */
+bool split_rational(term_t terms) {
+  if (!rational_pred) {
+    rational_pred = PL_predicate("rational", 3, NULL);
+  }
+  qid_t qid = PL_open_query(NULL, PL_Q_NORMAL, rational_pred, terms);
+  int r = PL_next_solution(qid);
+  if (!r) {
+    ERROR("PL_next_solution failed");
+    PL_close_query(qid);
+    return false;
+  }
+  r = PL_cut_query(qid);
+  if (!r) {
+    ERROR("PL_cut_query failed.");
+  }
+  return true;
+}
+
 /*
   Converts the Prolog term "formula" to a Z3 AST.
   Returns NULL if it fails:
@@ -1666,8 +1687,26 @@ Z3_ast term_to_ast(const handle h, decl_map declaration_map, const term_t formul
     break;
   case PL_RATIONAL:
     ERROR("Got PL_RATIONAL. Use z3_utils:expand\n");
-    // Could look at PL_get_mpq; but better to handle this in Prolog with rational/3.
-    return NULL;
+    term_t trefs = PL_new_term_refs(3);
+    if (!PL_unify(trefs, formula)) {
+      ERROR("PL_unify failed for PL_RATIONAL\n");
+      return NULL;
+    }
+    term_t num = trefs + 1;
+    term_t den = trefs + 2;
+    if (split_rational(trefs)) {
+      INFO("split_rational worked!\n");
+      result = Z3_mk_div(ctx,
+                         Z3_mk_int2real(ctx, term_to_ast(h, declaration_map, num)),
+                         Z3_mk_int2real(ctx, term_to_ast(h, declaration_map, den))
+                         );
+      return result;
+    }
+    else {
+      ERROR("split_rational failed\n");      
+      // Could look at PL_get_mpq; but better to handle this in Prolog with rational/3.
+      return NULL;
+    }
   case PL_FLOAT: {
     // double myf;
     // We don't use PL_get_float because Z3 does not make reals from floats.
