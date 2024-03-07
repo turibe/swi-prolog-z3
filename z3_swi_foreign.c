@@ -1597,7 +1597,7 @@ Z3_ast term_to_ast(const handle h, decl_map declaration_map, const term_t formul
   case PL_ATOM: {
     int bval;
     if (PL_get_bool(formula, &bval)) {
-      DEBUG("Got boolean\n");
+      DEBUG("term_to_ast, boolean\n");
       if (bval) {
         return Z3_mk_true(ctx);
       }
@@ -1609,7 +1609,7 @@ Z3_ast term_to_ast(const handle h, decl_map declaration_map, const term_t formul
     if (!res) {
       return NULL;
     }
-    DEBUG("Got atom %s\n", atom_string);
+    DEBUG("term_to_ast, atom %s\n", atom_string);
 
     Z3_func_decl declaration = get_function_declaration(h->ctx, declaration_map, atom_string, 0);
     if (declaration == NULL) {

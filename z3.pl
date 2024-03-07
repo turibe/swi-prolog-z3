@@ -91,7 +91,7 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
                   z3_free_model/2,
                   z3_get_model/2,
                   z3_model_eval/5,
-                  z3_model_map/2,
+                  z3_model_lists/2,
                   z3_new_handle/1,
                   z3_reset_declarations/1,
                   z3_check/2,
@@ -263,7 +263,7 @@ z3_model(Model) :-
     z3_check(Status),
     member(Status, [l_true, l_undef]), !,
     get_global_handle(H),
-    z3_model_map(H, Model).
+    z3_model_lists(H, Model).
 
 %%  Next: share with stateful_repl.pl
 z3_model_assoc(Model) :-

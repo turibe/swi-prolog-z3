@@ -36,7 +36,7 @@ Remembers asserted formulas and declarations from one query to the next.
                   z3_assert/2,
                   z3_declarations/2,
                   z3_free_handle/1,
-                  z3_model_map/2,
+                  z3_model_lists/2,
                   z3_new_handle/1,
                   z3_remove_declaration/3,
                   z3_check/2,
@@ -173,10 +173,13 @@ declarations(L) :- get_type_map(M),
 %! model(-Model)
 %  Get a Z3 model of formulas asserted so far.
 model(Model) :- get_repl_handle(H),
-                z3_model_map(H, Model).
+                z3_model_lists(H, Model).
 
-scopes(N) :- get_repl_handle(S),
-             z3_solver_scopes(S, N).
+model_assoc(Model) :- get_repl_handle(H),
+                      z3_model_assocs(H, Model).
+
+scopes(N) :- get_repl_handle(H),
+             z3_solver_scopes(H, N).
 
 push_check_and_pop(F, Status) :-
     push_formula(F, _NewMap, NewSymbols, Status),
@@ -190,7 +193,6 @@ is_implied(F) :- push_check_and_pop(not(F), Status),
 %% todo: handle l_undef
 is_consistent(F) :- push_check_and_pop(F, Status),
                     Status == l_true.
-    
 
 implies(X) :- is_implied(X).
     
