@@ -1,13 +1,14 @@
 %%% -*- Mode: Prolog; Module: quickexplain; -*-
 
 :- module(quickexplain, [
+              % These assume that Base+Constraints is unsatisfiable:
               qexplain/4, % +AssertPredicate, +Base, +Constraints, -Result
               qexplain/3, % +AssertPredicate, +Constraints, -Result   (empty Base)
               
               qrelax/4,   % +AssertPredicate, +Base, +Constraints, -Result
               qrelax/3,   % +AssertPredicate, +Constraints, -Result   (empty Base)
 
-              % use these if you want a consistency check at the start:
+              % Use these if you want a consistency check at the start:
               top_explain/4,   % +AssertPredicate, +Base, +Constraints, -Result
               top_explain/3,   % +AssertPredicate, +Constraints, -Result   (empty Base)
 

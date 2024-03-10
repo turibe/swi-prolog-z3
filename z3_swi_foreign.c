@@ -1169,7 +1169,7 @@ Z3_func_decl make_function_declaration(handle h, const term_t formula, term_t ra
 
 
 
-// Makes a function (or constant) declarations.
+// Makes a function (or constant) declaration.
 // Example: z3_declare_function(f(int, bool), int, R).
 // Example: z3_declare_function(f(int, int), int, X)
 
@@ -2027,7 +2027,7 @@ Z3_ast term_to_ast(const handle h, decl_map declaration_map, const term_t formul
       // Check that types are compatible; otherwise Z3 quits/crashes
       Z3_sort s1 = Z3_get_sort(ctx, subterms[0]);
       Z3_sort s2 = Z3_get_sort(ctx, subterms[1]);
-      if ((!numeric_sort(ctx, s1)) && (!numeric_sort(ctx, s2)) && (s1 != s2)) // equalities between some expressions of numeric sorts seem to be OK for Z3:
+      if ((!numeric_sort(ctx, s1)) && (!numeric_sort(ctx, s2)) && (s1 != s2)) // equalities between some expressions of numeric sorts are OK for Z3:
         {
           ERROR("different types for equals, failing\n");
           ERROR("sort1: %s\n", Z3_sort_to_string(ctx, s1)); // as with ast_to_string, one sort_to_string invaliates the previous one, so we use two statements.
@@ -2088,7 +2088,7 @@ Z3_ast term_to_ast(const handle h, decl_map declaration_map, const term_t formul
         result = Z3_mk_not(ctx, equality);
       }
     }
-    // between, inclusive (as in python):
+    // between, inclusive of both endpoints (as in python):
     else if (strcmp(name_string, "between") == 0) {
       CHECK_ARITY(name_string, 3, arity);
       Z3_ast conj1 = Z3_mk_ge(ctx, subterms[0], subterms[1]);
@@ -2137,7 +2137,7 @@ Z3_ast term_to_ast(const handle h, decl_map declaration_map, const term_t formul
     }
 
     /***
-        special cases because of the extra arg:
+        special cases, because they have an extra arg:
         (strcmp(name_string, "bvadd_no_overflow") == 0)
         (strcmp(name_string, "bvmul_no_overflow") == 0)
         (strcmp(name_string, "bvsub_no_underflow") == 0)
@@ -2309,8 +2309,8 @@ Z3_ast term_to_ast(const handle h, decl_map declaration_map, const term_t formul
   return result;
 }
 
-// +Term, -Term.
-foreign_t z3_simplify_term_foreign(term_t handle_term, term_t tin, term_t tout) {
+// +handle, +Term, -Term.
+foreign_t z3_simplify_foreign(term_t handle_term, term_t tin, term_t tout) {
   handle h;
   int rval = PL_get_pointer_ex(handle_term, (void **) &h);
   if (!rval) return rval;
@@ -2421,7 +2421,7 @@ install_t install()
   PRED("z3_model_eval", 5, z3_model_eval_foreign, 0); // +handle, +model_pointer, +formula, +completion_flag, -value
   PRED("z3_free_model", 2, z3_free_model_foreign, 0); // +handle, +model
 
-  PRED("z3_simplify_term", 2, z3_simplify_term_foreign, 0); // +term, -simplified_term
+  PRED("z3_simplify", 3, z3_simplify_foreign, 0); // +handle, +term, -simplified_term
   PRED("z3_solver_assertions", 2, z3_solver_assertions_foreign, 0); // +handle_pointer, -assertion_list
 
   PRED("z3_model_functions", 3, z3_model_functions_foreign, 0); // +handle, +model_pointer, -functions_term
@@ -2434,8 +2434,8 @@ install_t install()
   PRED("z3_get_declarations", 2, z3_get_declarations_foreign, 0); // +handle, -term
 
   // for debugging:
-  PRED("z3_declarations_string", 2, z3_declarations_string_foreign, 0); // -string
-  PRED("z3_enums_string", 2, z3_enums_string_foreign, 0); // -string
+  PRED("z3_declarations_string", 2, z3_declarations_string_foreign, 0); // +handle, -string
+  PRED("z3_enums_string", 2, z3_enums_string_foreign, 0); // +handle, -string
 
   PRED("z3_remove_declaration", 3, z3_remove_declaration_foreign, 0); // +handle, +name, +arity
 

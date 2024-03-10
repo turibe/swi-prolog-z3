@@ -131,6 +131,4 @@ test(explain1) :-
     qexplain(z3_push, [a:int = b, b:int = c, c:int = d, d:int = f(a), e:int = f(b), f(a:int) > f(d:int) ], R ),
     assertion( R == [a:int=b, b:int=c, c:int=d, f(a:int)>f(d:int)] ).
 
-
-
 :- end_tests(z3_pl_tests).
