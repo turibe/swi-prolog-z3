@@ -8,7 +8,7 @@
 #include <pthread.h>
 
 // /opt/homebrew/Cellar/gmp/6.3.0/include/gmp.h
-#include <gmp.h>
+// #include <gmp.h>
 #include <SWI-Prolog.h>
 
 #include <z3.h>
@@ -237,7 +237,7 @@ foreign_t z3_free_handle_foreign(term_t handle_term) {
   handle h;  
   int rval = PL_get_pointer_ex(handle_term, (void **) &h);
   if (!rval) return rval;
-  INFO("Freeing handle %p\n", h);
+  DEBUG("Freeing handle %p\n", h);
   pthread_mutex_lock(&mutex);
   free_handle_contents(h);
   free(h);
@@ -275,7 +275,7 @@ void free_handle_contents(handle h) {
   DEBUG("freeing handle contents for %p\n", ctx);
 
   unsigned scopes = Z3_solver_get_num_scopes(ctx, h->solver);
-  INFO("Scopes when freeing is %u\n", scopes);
+  DEBUG("Scopes when freeing is %u\n", scopes);
   Z3_solver_pop(ctx, h->solver, scopes);
   Z3_solver_reset(ctx, h->solver);
   Z3_solver_dec_ref(ctx, h->solver);
@@ -290,25 +290,8 @@ void free_handle_contents(handle h) {
   Z3_ast_map_dec_ref(ctx, h->enum_declarations);
 
   Z3_del_context(ctx);
-
 }
 
-/****
-// worth it? Simpler to just get a new handle.
-foreign_t z3_reset_handle_foreign(term_t handle_term) {
-  handle h;
-  int rval = PL_get_pointer_ex(handle_term, (void **) &h);
-  if (!rval) return rval;
-  free_handle_contents(h);
-
-  handle_counter += 1;
-  h->handle_id = handle_counter; // a random ID would do too.
-
-  initialize_handle(h);
-
-  return TRUE;
-}
-***/
 
 // ************************* END GLOBALS *************************
 
@@ -317,9 +300,8 @@ foreign_t z3_reset_handle_foreign(term_t handle_term) {
 
 Z3_func_decl get_function_declaration(Z3_context ctx, decl_map declaration_map, const char *name_string, const size_t arity) {
   assert(declaration_map != NULL);
-  
-  int map_size = Z3_ast_map_size(ctx, declaration_map);
-  DEBUG("current map size is %d\n", map_size);
+
+  DEBUG("current map size is %d\n", Z3_ast_map_size(ctx, declaration_map));
   Z3_ast key = mk_ast_key(ctx, name_string, arity);
   DEBUG("made key %s\n", Z3_ast_to_string(ctx, key));
   if (!Z3_ast_map_contains(ctx, declaration_map, key)) {
@@ -532,7 +514,7 @@ Z3_symbol mk_symbol(Z3_context ctx, term_t pl_term) {
   default: {
     char *fchars = NULL;
     int res = PL_get_chars(pl_term, &fchars, CVT_WRITE);
-    ERROR("error making symbol %s, term type is %d\n", fchars, term_type);
+    ERROR("error making symbol %s, term type is %d\n", res ? fchars : NULL, term_type);
     return NULL;
   }
   } // end switch
@@ -552,6 +534,7 @@ bool z3_sort_to_term(Z3_context ctx, Z3_sort sort, term_t result) {
     size_int = Z3_get_bv_sort_size(ctx, sort);
     term_t size_term = PL_new_term_ref();
     int res = PL_put_int64(size_term, size_int);
+    if (!res) return FALSE;
     functor_t f = PL_new_functor(PL_new_atom(Z3_get_symbol_string(ctx, sname)), 1);
     if (!PL_cons_functor(cons_term, f, size_term)) {
       return FALSE;
@@ -561,6 +544,7 @@ bool z3_sort_to_term(Z3_context ctx, Z3_sort sort, term_t result) {
     {
       Z3_string sname_string = Z3_get_symbol_string(ctx, sname);
       int res = PL_put_atom_chars(cons_term, sname_string);
+      if (!res) return NULL;
     }
 
   } // end switch
@@ -585,13 +569,13 @@ foreign_t z3_declaration_map_to_term(Z3_context ctx, decl_map declaration_map, t
 
     Z3_func_decl value = (Z3_func_decl) Z3_ast_map_find(ctx, declaration_map, key);
     term_t value_term = PL_new_term_ref();
-
-    // Z3_symbol s = Z3_get_decl_name(ctx, value);
-
     Z3_sort sort = Z3_get_range(ctx, value);
-    Z3_symbol sname = Z3_get_sort_name(ctx, sort);
 
     bool res = z3_sort_to_term(ctx, sort, value_term);
+    if (!res) {
+      ERROR("error in z3_sort_to_term\n");
+      return FALSE;
+    }
 
     term_t pair = PL_new_term_ref();
     if (!PL_cons_functor(pair, declaration_pair_functor, key_term, value_term)) {
@@ -895,9 +879,7 @@ foreign_t term_to_z3_ast_foreign(term_t handle_term, term_t formula, term_t resu
   int rval = PL_get_pointer_ex(handle_term, (void **) &h);
   if (!rval) return rval;
   
-  decl_map declaration_map = h->declarations;
-  Z3_context ctx = h->ctx;
-  Z3_ast z3_ast = term_to_ast(h, declaration_map, formula);
+  Z3_ast z3_ast = term_to_ast(h, h->declarations, formula);
   if (z3_ast == NULL) {
     return FALSE;
   }
@@ -1063,7 +1045,6 @@ Z3_func_decl make_function_declaration(handle h, const term_t formula, term_t ra
    int res;
 
    Z3_context ctx = h->ctx;
-   decl_map declaration_map = h->declarations;
 
    /*
    char *formula_string;
@@ -1432,12 +1413,11 @@ foreign_t z3_model_constants_foreign(term_t handle_term, term_t model_term, term
   return rval;
 }
 
-// useful to check validity of handle-related things
+// useful to check validity of handle-related things. (The pointer itself is not enough, could be reused.)
 foreign_t z3_handle_id_foreign(term_t handle_term, term_t result_term) {
-    handle h;
+  handle h;
   int rval = PL_get_pointer_ex(handle_term, (void **) &h);
   if (!rval) return rval;
-
   return PL_unify_int64(result_term, h->handle_id);
 }
 
@@ -1624,8 +1604,7 @@ Z3_ast term_to_ast(const handle h, decl_map declaration_map, const term_t formul
       DEBUG("did not find declaration for %s, defaulting to int\n", atom_string);
     }
     else {
-      const Z3_string decstring  = Z3_func_decl_to_string(ctx, declaration);
-      DEBUG("Found function %s declaration %s\n", atom_string, decstring);
+      DEBUG("Found function %s declaration %s\n", atom_string, Z3_func_decl_to_string(ctx, declaration));
     }
     if (declaration == NULL) { // Undeclared atoms are by default ints; we could require everything to be declared.
       DEBUG("term_to_ast got atom %s, default int\n", atom_string);
@@ -2426,8 +2405,6 @@ install_t install()
 
   PRED("z3_model_functions", 3, z3_model_functions_foreign, 0); // +handle, +model_pointer, -functions_term
   PRED("z3_model_constants", 3, z3_model_constants_foreign, 0); // +handle, +model_pointer, -constants_term
-
-  // PRED("z3_reset_handle", 1, z3_reset_handle_foreign, 0); // clears everything, use sparingly; but is the only way to reset enums
 
   PRED("z3_reset_declarations", 1, z3_reset_declarations_foreign, 0); // +handle // clears declarations, including enums, keeps Z3 context
   PRED("z3_get_enum_declarations", 2, z3_get_enum_declarations_foreign, 0); // +handle, -term
