@@ -68,7 +68,7 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
                   z3_declare/3,            % +Handle, +Formula,+Type    Declares Formula to have Type.
                   z3_declare_types_for_symbols/3,
                   z3_enum_declarations_assoc/2,
-                  expand/2
+                  expand_term/2
                   ]
              ).
 
@@ -284,7 +284,7 @@ check_status_arg(Status) :- valid_status_list(L),
 z3_push(Foriginal, Status) :-
     check_status_arg(Status),
     (get_global_handle(H) -> true; new_global_handle(H)),
-    expand(Foriginal, F),
+    expand_term(Foriginal, F),
     (b_getval(solver_depth, 0) ->
          z3_reset_declarations(H), %% does not clear enums
          z3_enum_declarations_assoc(H, EnumMap),

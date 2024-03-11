@@ -11,7 +11,7 @@
               z3_declare/3,
               z3_declare_types_for_symbols/3,
               z3_enum_declarations_assoc/2,
-              expand/2
+              expand_term/2                      % +formula, -formula   Transforms terms before giving them to the C API
           ]).
 
 /** <module> z3_utils
@@ -158,13 +158,14 @@ expand_macros(F, R) :- functor(F, isoneof, _N), !,
 expand_macros(F, R) :- functor(F, alldifferent, _N), !,
                        F =.. [alldifferent | Rest],
                        R =.. [distinct | Rest].
-%% The Prolog C interface does not have a way to deconstruct rationals, so we do it here:
+%% The Prolog C interface does not have a way to deconstruct rationals.
+%% One solution is to do it here. Another is to call Prolog from the C code, see z3_swi_foreign.c
 expand_macros(F, R) :- fail,
                        \+ integer(F),
                        rational(F, A, B), !,
                        R = mk_rational(A,B).
 
-expand(A,B) :- mapsubterms(expand_macros,A,B).
+expand_term(A,B) :- mapsubterms(expand_macros,A,B).
 
 :- begin_tests(z3_utils_tests).
 
@@ -182,5 +183,8 @@ test(declare_lambda, [true(X==uninterpreted)]) :-
     z3_new_handle(H),
     z3_declare(H, f/1, lambda([X], real)),
     z3_free_handle(H).
+
+test(expand) :-
+    expand_term(isoneof(x,a,b), or(x=a,x=b)).
 
 :- end_tests(z3_utils_tests).

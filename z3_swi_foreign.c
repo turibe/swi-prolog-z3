@@ -229,7 +229,7 @@ foreign_t z3_new_handle_foreign(term_t handle_term) {
     free_handle_contents(h);
     free(h);
   }
-  INFO("Made new handle %p\n", h);
+  DEBUG("Made new handle %p\n", h);
   return res;
 }
 
@@ -714,7 +714,7 @@ foreign_t z3_remove_declaration_foreign(term_t handle_term, term_t name_term, te
   if (!rval) return rval;
   rval = PL_get_integer(arity_term, &arity);
   if (!rval) return rval;
-  INFO("removing declaration for %s\n", name_string);
+  DEBUG("removing declaration for %s\n", name_string);
   return remove_declaration(h->ctx, h->declarations, name_string, arity);
 }
 
