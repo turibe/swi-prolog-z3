@@ -11,7 +11,7 @@
               z3_declare/3,
               z3_declare_types_for_symbols/3,
               z3_enum_declarations_assoc/2,
-              expand_term/2                      % +formula, -formula   Transforms terms before giving them to the C API
+              z3_expand_term/2                 % +formula, -formula   Transforms terms before giving them to the C API
           ]).
 
 /** <module> z3_utils
@@ -165,7 +165,7 @@ expand_macros(F, R) :- fail,
                        rational(F, A, B), !,
                        R = mk_rational(A,B).
 
-expand_term(A,B) :- mapsubterms(expand_macros,A,B).
+z3_expand_term(A,B) :- mapsubterms(expand_macros,A,B).
 
 :- begin_tests(z3_utils_tests).
 
@@ -185,6 +185,6 @@ test(declare_lambda, [true(X==uninterpreted)]) :-
     z3_free_handle(H).
 
 test(expand) :-
-    expand_term(isoneof(x,a,b), or(x=a,x=b)).
+    z3_expand_term(isoneof(x,a,b), or(x=a,x=b)).
 
 :- end_tests(z3_utils_tests).

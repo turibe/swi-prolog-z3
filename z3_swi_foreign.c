@@ -1674,7 +1674,7 @@ Z3_ast term_to_ast(const handle h, decl_map declaration_map, const term_t formul
     term_t num = trefs + 1;
     term_t den = trefs + 2;
     if (split_rational(trefs)) {
-      INFO("split_rational worked!\n");
+      DEBUG("split_rational worked!\n");
       result = Z3_mk_div(ctx,
                          Z3_mk_int2real(ctx, term_to_ast(h, declaration_map, num)),
                          Z3_mk_int2real(ctx, term_to_ast(h, declaration_map, den))
