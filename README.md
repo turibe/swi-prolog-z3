@@ -1,7 +1,7 @@
 # swi-prolog-z3
 
 Code to use Z3 as a constraint solver inside SWI Prolog, for a basic CLP(CC) implementation.
-Currently supports a basic subset of Z3's capabilities,
+Currently supports a subset of Z3's capabilities,
 including propositional logic, equality, arithmetic, bit-vectors, and uninterpreted function symbols.
 
 With the high-level API in `z3.pl`,
@@ -141,9 +141,10 @@ will only succeed for `X = a` and `X = d`.
 ### High-level, stateful: stateful_repl.pl
 
 Using `z3.pl`, all assertions and type declarations (except for enums) are reset from one query to the next.
-`stateful_repl` offers an alternative to `z3.pl`, where assertions and declarations are accumulated.
+The stateful_repl module offers an alternative to `z3.pl`, where assertions and declarations are accumulated,
+similarly to the Python integration or the Z3 prompt.
 
-The main commands are:
+The main queries / commands are:
 - add(+Formula)
 - asserted(-FormulaList)
 - reset
@@ -154,9 +155,8 @@ The main commands are:
 
 ### Lower-level: z3_swi_foreign.pl
 
-The lower-level module has no Prolog globals.
-It could be used to write an alternative to `z3.pl` that keeps state between queries,
-similarly to the Python integration or the Z3 prompt.
+The lower-level `z3_swi_foreign.pl` module has no Prolog globals.
+It is used by both `z3.pl` and `stateful_repl.pl`.
 
 ### Lowest level: z3_swi_foreign.c
 
@@ -176,8 +176,14 @@ Finite-domain enumerated types are "sticky", and are declared with
 z3_declare_enum(+enum_name, +values_list)
 ```
 For example, `z3_declare_enum(fruit, [apple, banana, pear])`.
-The associated declarations can be listed with `z3_enum_declarations`. To reset them, we have to reset the entire Z3 context,
+The associated declarations can be listed with `z3_enum_declarations`.
+To clear them, we have to reset the entire Z3 context,
 with `z3_reset_context` (low-level), `z3_reset` (for `z3.pl`), or `reset` (for `stateful_repl.pl`).
+
+### Utilities/shortcuts
+
+For convenience, we expand `isoneof(a,v1,...,vn)` to `or(a=v1, ... a=vn)`.
+`alldifferent` is an alias for Z3's `distinct`.
 
 ### Explanations and Relaxation
 
@@ -185,20 +191,20 @@ with `z3_reset_context` (low-level), `z3_reset` (for `z3.pl`), or `reset` (for `
 for explanation (finding minimal unsatisfiable subsets) and relaxation (maximal satisfiable subsets).
 See [https://cdn.aaai.org/AAAI/2004/AAAI04-027.pdf](https://cdn.aaai.org/AAAI/2004/AAAI04-027.pdf).
 This code can be used on stand-alone basis, plugging in any monotonic `check` or `assert` predicate.
+For this Z3 integration, we use `z3_push`.
 See [quickexplain.pl](https://github.com/turibe/swi-prolog-z3/blob/main/quickexplain.pl).
 
 ## Documentation
 
-Run
+From swipl, run
 ```prolog
-doc_server(8080)
+?- doc_server(8080).
 ```
 and navigate to [http://localhost:8080/pldoc/](http://localhost:8080/pldoc/) to see docs.
 
 ## Future Work
 
-- The current version handles only the basic Z3 capabilities: {int,real,bool} types, propositional logic, equality, arithmetic, and uninterpreted function symbols.
-Bit vectors, sets, and quantifiers are future work.
+- The current version handles only the basic Z3 capabilities: {int,real,bool} types, propositional logic, equality, arithmetic, bit vectors, and uninterpreted function symbols.
+Features such as arrays, sets and quantifiers are future work.
 
-- A version that keeps state between queries (simple to do).
 
