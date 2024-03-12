@@ -64,12 +64,40 @@ It has no global variables except for those in the C code.
 prolog:message(z3_message(S)) --> {}, [S].
 prolog:message(z3_message(F,L)) --> {swritef(S, F, L)}, [S].
 
+% Docs for predicates defined in the C interface:
+
+%! z3_solver_scopes(+Handle, -Scopes)
+%  Get the number of solver scopes for the handle's solver.
+
+%! z3_reset_declarations(+Handle)
+%  Resets all declarations for the given handle, except for the enum declarations.
+%  (To reset the enum declarations, get a new handle.)
+
+%! z3_get_model(+Handle, -ModelPointer)
+%  Low-level: gets a model for the given handle/context. The model should be freed with z3_free_model/2.
+
+%! z3_free_model(+Handle, +ModelPointer)
+%  Low-level: frees the model for the given handle/context.
+
+%! z3_free_handle(+Handle)
+%  Low-level: frees the handle and all associated resources (context, solver, declarations).
+
+%! z3_assert(+Handle, +Formula)
+%  Adds formula to the handle's solver. Fails if declarations are missing.
+
+%! z3_alloc_bytes(-Bytes)
+%  Get approximate memory usage, in bytes, from Z3.
+
+%! z3_simplify(+Handle, +Formula, -Formula)
+%  Apply Z3's simplify to the given formula.
+
+%! z3_new_handle(+Handle)
+%  Creates a new handle. Should be freed with z3_free_handle/1.
 
 %! z3_declare_function(+Handle, +Formula, +Type)
 %  Declares term Formula to have sort Type, adding the declaration to the handle's map.
 %  New declarations don't override old ones --- fails if there is a conflict.
 %  examples: z3_declare_function(H, a, int) ; z3_declare_function(H, f(int, int), real).
-
 z3_declare_function(H, F, T) :- F == A/0, z3_declare_function(H, A, T).
 z3_declare_function(H, F, T) :- z3_declare_function(H, F, T, _C).
 % (Returned pointer is only useful for debugging, so we hide it here)
@@ -106,14 +134,19 @@ z3_model_lists(H, Model) :-
                       ).
 
 
-%! Internal: constructs a (F/N:val) term from a (_some_binary(F,N):val) term
+% Internal: constructs a (F/N:val) term from a (_some_binary(F,N):val) term
 translate_entry(Entry, NewEntry) :-
     Entry = Key:Value,
     Key =.. [_, F, N],
     NK = F/N,
     NewEntry = (NK:Value).
 
+%! z3_declarations(+Handle, -List)
+%  Gets the function and constant declarations for Handle as a list.
 z3_declarations(H, L) :- z3_get_declarations(H, LG), maplist(translate_entry, LG, L).
+
+%! z3_enum_declarations(+Handle, -List)
+%  Gets the enum declarations for Handle as a list.
 z3_enum_declarations(H, L) :- z3_get_enum_declarations(H, LG), maplist(translate_entry, LG, L).
 
 

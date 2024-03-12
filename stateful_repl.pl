@@ -71,7 +71,7 @@ z3_help :- format(
            consistent(F)       Check if F is consistent with what has been added so far
            implies(F)          Check if F is implied by what has been added so far
            formulas(L)         Get list of formulas asserted so far
-           status(S)           Get solver status (l_sat, l_unsat, l_undef)
+           status(S)           Get solver status (l_true, l_false, l_undef)
            model(M)            Get a model for formulas added so far, if possible
            reset               Reset all declarations"),
            true.
@@ -189,6 +189,7 @@ declarations(L) :- get_type_map(M),
 
 %! model(-Model)
 %  Get a Z3 model for the formulas asserted so far.
+% Note that Z3 can return "uncertain" models if the status is `l_undef`.
 model(Model) :- get_repl_handle(H),
                 status(_),
                 z3_model_lists(H, Model).
@@ -226,7 +227,7 @@ implies(X) :- implied(X).
 
 %! status(-Status)
 %  Does a z3_check for the formulas asserted so far, returning the
-%  status, one of (`l_sat`, `l_unsat`, `l_undef`).
+%  status, one of (`l_true`, `l_false`, `l_undef`).
 status(Status) :- get_repl_handle(H),
                   z3_check(H, Status).
     

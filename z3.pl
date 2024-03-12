@@ -13,8 +13,8 @@
               z3_eval/3,               % z3_eval, with boolean completion flag
               z3_is_consistent/1,      % +Formula  Succeeds if Formula is consistent with current solver/context. Fails if l_undet.
               z3_is_implied/1,         % +Formula  Succeeds if Formula is implied by current solver/context. Fails if l_undet.
-              z3_model/1,              % +ModelTerm  Gets a model if possible. Fails if not l_sat.
-              z3_model_assoc/1,        % +ModelAssocTerm  A model that uses assoc lists (less readable).
+              z3_model/1,              % +ModelTerm  Gets a model if possible. Fails if status is l_true.
+              z3_model_assocs/1,       % +ModelAssocTerm  A model that uses assoc lists (less readable).
               z3_push/1,               % +Formula   Pushes the formula, fails if status is l_false.
               z3_push/2,               % +Formula, +Status  Attempts to push the formula, returns status
               z3_push_and_print/1,     % +Formula   Convenience
@@ -92,6 +92,7 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
                   z3_get_model/2,
                   z3_model_eval/5,
                   z3_model_lists/2,
+                  z3_model_assocs/2,
                   z3_new_handle/1,
                   z3_reset_declarations/1,
                   z3_check/2,
@@ -101,7 +102,7 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
                   z3_solver_scopes/2
               ]).
 
-% :- initialization(new_global_handle(_)).
+:- initialization(new_global_handle(_)).
 
 free_handle :-
     (nb_current(global_handle, H) ->
@@ -114,7 +115,8 @@ free_handle :-
     nb_delete(global_handle).
 
 
-%! Resets the entire Z3 context. All declarations, including enums, are cleared.
+%! z3_reset
+%  Resets the entire Z3 context. All declarations, including enums, are cleared.
 %  Old models and solvers are invalidated.
 z3_reset :-
     %% assertion(b_getval(solver_depth, 0)), %% test cleanup violates this
@@ -122,6 +124,8 @@ z3_reset :-
     assertion(\+ get_global_handle(_)),
     new_global_handle(_).
 
+%! free_globals
+%  Frees all the implicit global variables, including the Z3 context.
 free_globals :-
     free_handle,
     true.
@@ -142,19 +146,24 @@ indent(Message, R) :- assert_depth(N),
                       repeat_string("----", N, S),
                       atomics_to_string([S,Message], R).
 
-
-%! Resets all declarations and solver, including enums:
+%  Resets all declarations and solver, including enums:
 reset_globals :-
     new_global_handle(_),
     reset_var_counts,
     initialize_type_inference_map.
 
+%! z3_declare_enum(+EnumName,+ValueList)
+%  Declares the given enum type, as ranging over the given list of values.
 z3_declare_enum(N,V) :- get_global_handle(H),
                         z3_declare_enum(H,N,V).
 
+%! z3_enum_declarations(+DeclList)
+%  Get a list for the current enum declarations.
 z3_enum_declarations(D) :- get_global_handle(H),
                            z3_enum_declarations(H, D).
 
+%! z3_declarations(+DeclList)
+%  Get a list for the current declarations.
 z3_declarations(D) :- get_global_handle(H),
                       z3_declarations(H, D).
 
@@ -236,6 +245,9 @@ popn(Numpops) :- get_global_handle(S),
                  ).
 
 %% user-visible:
+
+%! solver_scopes(-N)
+%  Number of scopes for the solver at current backtracking point
 solver_scopes(N) :- resolve_solver_depth(_), raw_solver_scopes(N).
 
 % should not be used directly. Types in Formula could clash with previously defined types,
@@ -244,33 +256,39 @@ internal_assert_and_check(Solver, Formula, Status) :-
     z3_assert(Solver, Formula),
     z3_check(Solver, Status).
 
+%! z3_check(-Status)
+%  Do a solver check and return the status, one of `{l_true, l_false, l_undef}`
 z3_check(Status) :-
     check_status_arg(Status),
     get_global_handle(S),
     z3_check(S, Status).
 
+%! z3_check_and_print(-Status)
+%  Prints a model if status is not `l_false` (that is, known to be unsat).
 z3_check_and_print(Status) :-
     check_status_arg(Status),
     get_global_handle(Solver),
     z3_check_and_print(Solver, Status).
 
-
-%! z3_model(-Model)
-%  Returns a model for the solver at the current depth, if z3_check succeeds.
-%  Note that Z3 can return "uncertain" models if the status is l_undef.
-z3_model(Model) :-
+% Flag toggles between getting the model as lists or as assoc maps:
+z3_model_internal(Flag, Model) :-
+    must_be(oneof([lists, assocs]), Flag),
     resolve_solver_depth(_),
     z3_check(Status),
     member(Status, [l_true, l_undef]), !,
     get_global_handle(H),
-    z3_model_lists(H, Model).
+    (Flag == lists -> z3_model_lists(H, Model) ; z3_model_assocs(H, Model)).
 
-%%  Next: share with stateful_repl.pl
-z3_model_assoc(Model) :-
-    z3_model(ModelLists),
-    pair_list_to_assoc(ModelLists.constants, CA),
-    pair_list_to_assoc(ModelLists.functions, FA),
-    Model = model{constants:CA, functions:FA}.
+%! z3_model(-Model)
+%  Returns a model for the solver at the current depth, if z3_check succeeds.
+%  Note that Z3 can return "uncertain" models if the status is l_undef.
+z3_model(Model) :- z3_model_internal(lists, Model).
+
+
+%! z3_model_assocs(-Model)
+%  Returns a model for the solver at the current depth, if z3_check succeeds, using assoc maps.
+%  Note that Z3 can return "uncertain" models if the status is l_undef.
+z3_model_assocs(Model) :- z3_model_internal(assocs, Model).
 
 check_status_arg(Status) :- valid_status_list(L),
                             must_be((var; oneof(L)), Status).
@@ -281,6 +299,9 @@ check_status_arg(Status) :- valid_status_list(L),
 
 %% Note that z3_push(false, R) will still push "false" onto the solver.
 
+%! z3_push(+Formula, -Status)
+%  Adds the formula to the current (implicit) solver, failng if the resulting status is `l_false` (known to be unsat).
+%  Typechecks the formula and declares any needed types.
 z3_push(Foriginal, Status) :-
     check_status_arg(Status),
     (get_global_handle(H) -> true; new_global_handle(H)),
@@ -316,13 +337,15 @@ z3_push(Foriginal, Status) :-
     ).
 
 
-%% z3_push/1 fails if solver reports inconsistency or type error.
-%% l_type_error is the only one that does not push onto the solver.
-
+%! z3_push(+Formula)
+%  Fails if solver reports inconsistency or type error.
+%  `l_type_error` is the only one that does not push onto the solver.
 z3_push(F) :- z3_push(F, R), (R == l_true ; R == l_undef), !.
 
 solve(L, M) :- maplist(z3_push, L), z3_model(M).
 
+%! z3_eval(+Expression, +CompletionFlag, -Result)
+%  Evaluates the expression in a current model. CompletionFlag is one of `true, false`.
 z3_eval(Expression, Completion, Result) :-
     \+ is_list(Expression), !,
     get_global_handle(S),
@@ -337,6 +360,8 @@ z3_eval(L, C, R) :-
     is_list(L), !,
     z3_eval_list(L, C, R).
 
+%! z3_eval(+Expression, -Result)
+%  Evaluates the expression in a current model, with `false` as the completion flag.
 z3_eval(Expression, Result) :- z3_eval(Expression, false, Result).
 
 %% Map eval on a list:
@@ -372,14 +397,22 @@ internal_assert_and_check_list(Solver, List, Status) :-
     internal_assert_and_check(Solver, Conj, Status).
 */
 
+%! z3_push_and_print(+Formula, -Status)
+%  Pushes the formula, and prints a model.
 z3_push_and_print(F,R) :- z3_push(F,R), z3_check_and_print(R1), assertion(R == R1).
 
+%! z3_push_and_print(+Formula)
+%  Pushes the formula, and prints a model. Fails if status is not `l_true` (sat).
 z3_push_and_print(F) :- z3_push_and_print(F, l_true).
 
-%% succeeds if F is consistent with the current context. Fails if l_undef.
+%! z3_is_consistent(+Formula)
+%  Succeeds if Formula is known to be consistent with the current context. Fails if the resulting status is `l_undef`.
 z3_is_consistent(F) :- z3_push(F, l_true), popn(1).
 
 %% to handle type errors correctly, need to distiguish failure-by-type-error from failure-by-inconsistency:
+
+%! z3_is_implied(+Formula)
+%  Succeeds if Formula is known to be implied by the current context.
 z3_is_implied(F) :- z3_push(not(F), Status),
                     (Status == l_true -> (popn(1) , fail)
                     ;
@@ -714,7 +747,7 @@ test(large_mult) :-
 
 test(rationals_test) :-
     z3_push(x = 3r5),
-    z3_model_assoc(M),
+    z3_model_assocs(M),
     get_assoc(x, M.constants, 3/5).
 
 :- end_tests(large_numbers).
