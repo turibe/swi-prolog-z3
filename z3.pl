@@ -67,11 +67,14 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
                   valid_status_list/1,
                   z3_declare/3,            % +Handle, +Formula,+Type    Declares Formula to have Type.
                   z3_declare_types_for_symbols/3,
-                  z3_enum_declarations_assoc_map/2
+                  z3_enum_declarations_assoc/2,
+                  z3_expand_term/2
                   ]
              ).
 
-:- use_module(utils, [repeat_string/3]).
+:- use_module(utils, [repeat_string/3,
+                      pair_list_to_assoc/2
+                     ]).
 
 :- use_module(library(assoc)).
 :- use_module(library(ordsets)).
@@ -88,7 +91,7 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
                   z3_free_model/2,
                   z3_get_model/2,
                   z3_model_eval/5,
-                  z3_model_map/2,
+                  z3_model_lists/2,
                   z3_new_handle/1,
                   z3_reset_declarations/1,
                   z3_check/2,
@@ -97,6 +100,8 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
                   z3_solver_push/2,
                   z3_solver_scopes/2
               ]).
+
+% :- initialization(new_global_handle(_)).
 
 free_handle :-
     (nb_current(global_handle, H) ->
@@ -108,7 +113,6 @@ free_handle :-
     true),
     nb_delete(global_handle).
 
-:- initialization(new_global_handle).
 
 %! Resets the entire Z3 context. All declarations, including enums, are cleared.
 %  Old models and solvers are invalidated.
@@ -116,7 +120,7 @@ z3_reset :-
     %% assertion(b_getval(solver_depth, 0)), %% test cleanup violates this
     free_handle,
     assertion(\+ get_global_handle(_)),
-    new_global_handle.
+    new_global_handle(_).
 
 free_globals :-
     free_handle,
@@ -141,7 +145,7 @@ indent(Message, R) :- assert_depth(N),
 
 %! Resets all declarations and solver, including enums:
 reset_globals :-
-    new_global_handle,
+    new_global_handle(_),
     reset_var_counts,
     initialize_type_inference_map.
 
@@ -175,7 +179,7 @@ attr_unify_hook(Attr, Formula) :-
 
 %% should only be called at the top-most level:
 
-new_global_handle :-
+new_global_handle(Handle) :-
     print_message(informational, z3_message("Making new z3.pl handle")),
     free_handle,
     z3_new_handle(Handle),
@@ -184,6 +188,9 @@ new_global_handle :-
     print_message(informational, z3_message("Made new z3.pl handle")).
 
 get_global_handle(Handle) :- nb_current(global_handle, Handle).
+
+%% get_or_make_global_handle(H) :-
+    
 
 assert_depth(N) :- b_getval(solver_depth, N).
 
@@ -256,25 +263,17 @@ z3_model(Model) :-
     z3_check(Status),
     member(Status, [l_true, l_undef]), !,
     get_global_handle(H),
-    z3_model_map(H, Model).
+    z3_model_lists(H, Model).
 
+%%  Next: share with stateful_repl.pl
 z3_model_assoc(Model) :-
     z3_model(ModelLists),
-    list_to_assoc(ModelLists.constants, CA),
-    list_to_assoc(ModelLists.functions, FA),
+    pair_list_to_assoc(ModelLists.constants, CA),
+    pair_list_to_assoc(ModelLists.functions, FA),
     Model = model{constants:CA, functions:FA}.
 
 check_status_arg(Status) :- valid_status_list(L),
                             must_be((var; oneof(L)), Status).
-
-expand_macros(F, R) :- functor(F, isoneof, _N), !,
-                       F =.. [isoneof | [X | Rest]],
-                       maplist({X}/[V,X=V]>>true, Rest, L),
-                       R =.. [or | L].
-expand_macros(F, R) :- functor(F, alldifferent, _N), !,
-                       F =.. [alldifferent | Rest],
-                       R =.. [distinct | Rest].
-expand_macros(X, X).
 
 %% We now use backtrackable types in Prolog, resetting declarations at the first push.
 %% Note that type declarations in Z3 can't be pushed and popped.
@@ -284,11 +283,11 @@ expand_macros(X, X).
 
 z3_push(Foriginal, Status) :-
     check_status_arg(Status),
-    get_global_handle(H),
-    expand_macros(Foriginal, F),
+    (get_global_handle(H) -> true; new_global_handle(H)),
+    z3_expand_term(Foriginal, F),
     (b_getval(solver_depth, 0) ->
          z3_reset_declarations(H), %% does not clear enums
-         z3_enum_declarations_assoc_map(H, EnumMap),
+         z3_enum_declarations_assoc(H, EnumMap),
          set_type_inference_map(EnumMap)
     ; true),
     get_type_inference_map(OldAssoc),
@@ -705,8 +704,21 @@ test(combined_bvnumeral) :-
     z3_push(bvuge(b, mk_numeral("1321", bv(32)))),
     z3_model(_M).
 
-
 :- end_tests(z3pl_bitvectors).
+
+:- begin_tests(large_numbers, [setup(reset_globals), cleanup(free_globals)] ).
+
+test(large_mult) :-
+    z3_push(x = 123434349499392931234343214**10),
+    z3_model(_M).
+
+test(rationals_test) :-
+    z3_push(x = 3r5),
+    z3_model_assoc(M),
+    get_assoc(x, M.constants, 3/5).
+
+:- end_tests(large_numbers).
+
 
 :- begin_tests(enums).
 
@@ -727,7 +739,7 @@ test(enum_declarations, [setup(reset_globals), cleanup(free_globals),
     z3_enum_declarations(Declarations),
     sort(Declarations, DeclSorted),
     get_global_handle(H),
-    z3_enum_declarations_assoc_map(H, Map),
+    z3_enum_declarations_assoc(H, Map),
     assertion(get_assoc(black/0, Map, color)),
     true.
 

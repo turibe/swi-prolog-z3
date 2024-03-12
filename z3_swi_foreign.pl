@@ -1,35 +1,41 @@
-%%% -*- Mode: Prolog; Module: z3_swi_foreign; -*-
+%% -*- Mode: Prolog; Module: z3_swi_foreign; -*-
 
 
 :- module(z3_swi_foreign, [
-              z3_assert/2, % +handle, -solver
-              z3_declarations/2,
-              z3_enum_declarations/2,
-              z3_free_model/2, % +handle, +model
-              z3_declare_function/3,
-              z3_declare_enum/3,
+              
+              % A handle bundles Z3 declarations, context, and solver.
+              % Making and freeing handles:
+              z3_new_handle/1,             %% -handle
+              z3_free_handle/1,            %% +handle
+
+              z3_assert/2,                 %% +handle, +formula  Asserts the formula, but does not do a solver check yet.
+              z3_declarations/2,           %% +handle, -declarations
+              z3_enum_declarations/2,      %% +handle, -declarations
+              z3_free_model/2,             %% +handle, +model_pointer
+              z3_declare_function/3,       %% +handle, +formula_schema, +type
+              z3_remove_declaration/3,     %% +handle, +name, +arity
+              z3_declare_enum/3,           %% +handle, +name, +list_of_values
               z3_model_eval/5,             %% +handle, +model_pointer, +formula, +completion_flag, -value
-              z3_model_map/2,
-              z3_reset_declarations/1,     %% does not invalidate solvers
-              z3_solver_assertions/2,
-              z3_check/2,
-              z3_check_and_print/2, % calls Z2_model_to_string
-              z3_get_model/2,
-              z3_solver_pop/3,
-              z3_solver_push/2,
-              z3_simplify_term/2,
-              z3_solver_scopes/2,
+              z3_model_lists/2,            %% +handle, -map with lists for constants and functions
+              z3_model_assocs/2,           %% +handle, -map with assocs for constants and functions
+              z3_reset_declarations/1,     %% +handle  Resets all declarations, does not clear solvers.
+              z3_solver_assertions/2,      %% +handle, -assertions
+              z3_check/2,                  %% +handle, -status
+              z3_check_and_print/2,        %% calls Z3_model_to_string
+              z3_get_model/2,              %% +handle, -model_pointer
+              z3_solver_pop/3,             %% +handle, +N, -new_scopes pop the solver N times
+              z3_solver_push/2,            %% +handle, -new_scopes     push the solver one time
+              z3_simplify/3,               %% +handle, +term, -term
+              z3_solver_scopes/2,          %% +handle, -scopes
 
               %% for debugging:
-              z3_declarations_string/2,
-              z3_remove_declaration/3,
-              z3_enums_string/2,
+              z3_declarations_string/2,    %% +handle, -string
+              z3_enums_string/2,           %% +handle, -string
 
-              z3_new_handle/1,
-              z3_free_handle/1,
 
-              z3_alloc_bytes/1,
-              z3_alloc/1, % -string
+              %% estimates of Z3's memory use:
+              z3_alloc_bytes/1,            %% -num_bytes
+              z3_alloc/1,                  %% -string
               
               op(750, xfy, and), % =, >, etc. are 700 ; Local to the module
               op(751, xfy, or),
@@ -68,26 +74,41 @@ z3_declare_function(H, F, T) :- F == A/0, z3_declare_function(H, A, T).
 z3_declare_function(H, F, T) :- z3_declare_function(H, F, T, _C).
 % (Returned pointer is only useful for debugging, so we hide it here)
 
-%! z3_model_map(+ModelPointer, -Map)
-%  Constructs a Model term for the given model pointer.
+z3_model_lists(H, M, Map) :- z3_model_functions(H, M, F),
+                             z3_model_constants(H, M, C),
+                             sort(F, FS),
+                             sort(C, CS),
+                             Map = model{functions:FS, constants:CS}.
 
-z3_model_map_internal(H, M, Map) :- z3_model_functions(H, M, F),
-                                    z3_model_constants(H, M, C),
-                                    sort(F, FS),
-                                    sort(C, CS),
-                                    Map = model{functions:FS, constants:CS}.
 
-%! z3_model_map(+Handle, -Model)
-%  Gets a Prolog term representing a model for the given solver S.
-z3_model_map(H, Model) :-
+z3_model_assocs(H, M, Map) :- z3_model_functions(H, M, F),
+                              z3_model_constants(H, M, C),
+                              pair_list_to_assoc(F, Fmap),
+                              pair_list_to_assoc(C, Cmap),
+                              Map = model{functions:Fmap, constants:Cmap}.
+
+%! z3_model_assocs(+Handle, -Model)
+%  Gets a Prolog term representing a model for the given solver S, using assoc maps.
+z3_model_assocs(H, Model) :-
+    must_be(ground, H),
     setup_call_cleanup(z3_get_model(H, M),
-                       z3_model_map_internal(H, M, Model),
+                       z3_model_assocs(H, M, Model),
                        z3_free_model(H, M)
                       ).
 
-%% Constructs a F/N term:
+
+%! z3_model_lists(+Handle, -Model)
+%  Gets a Prolog term representing a model for the given solver S, using lists.
+z3_model_lists(H, Model) :-
+    setup_call_cleanup(z3_get_model(H, M),
+                       z3_model_lists(H, M, Model),
+                       z3_free_model(H, M)
+                      ).
+
+
+%! Internal: constructs a (F/N:val) term from a (_some_binary(F,N):val) term
 translate_entry(Entry, NewEntry) :-
-    Entry =.. [_, Key, Value],
+    Entry = Key:Value,
     Key =.. [_, F, N],
     NK = F/N,
     NewEntry = (NK:Value).
@@ -96,6 +117,8 @@ z3_declarations(H, L) :- z3_get_declarations(H, LG), maplist(translate_entry, LG
 z3_enum_declarations(H, L) :- z3_get_enum_declarations(H, LG), maplist(translate_entry, LG, L).
 
 
+%! z3_alloc(-String)
+%  Gets a human-readable description of the (approximate) number of bytes Z3 is currently allocating.
 z3_alloc(S) :- z3_alloc_bytes(N), readable_bytes(N,S).
 
 % When more than one thread is used, need to make sure that tests free Z3 structs when they're done
@@ -306,7 +329,7 @@ test(combined_bool_int, [setup(z3_new_handle(S)), cleanup(z3_free_handle(S)) ]) 
     z3_assert(S, f(a:int) > 1),
     z3_assert(S, f(b:bool) > 2),
     z3_check(S, l_true),
-    z3_model_map(S, Model),
+    z3_model_lists(S, Model),
     assertion(Model.constants == [a=4, b=false]).
 
 test(arity_error, [fail, setup(z3_new_handle(S)), cleanup(z3_free_handle(S)) ]) :-
@@ -335,6 +358,12 @@ test(handle_ids) :-
     z3_free_handle(H1),
     z3_free_handle(H2).
 
+test(simplify, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
+    z3_simplify(H, a * 3 + a, T),
+    assertion(T == 4 * a),
+    z3_simplify(H, b + b + (b:int), T1),
+    assertion(T1 == 3 * b).
+
 :- end_tests(z3_swi_foreign).
 
 :- begin_tests(z3_swi_foreign_bit_vectors).
@@ -343,7 +372,7 @@ test(create, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
     z3_assert(H, a:bv(32) = int2bv(32, 12345)),
     z3_check(H, R),
     assertion(R == l_true),
-    z3_model_map(H, Model),
+    z3_model_lists(H, Model),
     assertion(Model.constants==[a=12345]).
 
 test(bv2int, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
@@ -351,7 +380,7 @@ test(bv2int, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
     z3_assert(H, b:int = bv2int(a, true)), % signed
     z3_assert(H, c:int = bv2int(a, false)), % unsigned
     z3_check(H, l_true),
-    z3_model_map(H, Model),
+    z3_model_lists(H, Model),
     C = Model.constants,
     C == [a=4294954951, b= -12345, c=4294954951].
 
@@ -360,7 +389,7 @@ test(bv2int, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
 test(bvnumeral, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
     z3_assert(H, a:bv(4) = bv_numeral([1,1,1,1])),
     z3_check(H, l_true),
-    z3_model_map(H, Model),
+    z3_model_lists(H, Model),
     C = Model.constants,
     assertion(C == [a=15]).
 
@@ -368,14 +397,14 @@ test(make_unsigned_int64, [setup(z3_new_handle(S)), cleanup(z3_free_handle(S))] 
     % z3_assert(S, a:int = mk_unsigned_int64(123,int)),
     z3_assert(S, a:bv(16) = mk_unsigned_int64(123, bv(16))),
     z3_check(S, l_true),
-    z3_model_map(S, Model),
+    z3_model_lists(S, Model),
     C = Model.constants,
     assertion(C == [a=123]).
 
 test(make_numerals, [setup(z3_new_handle(S)), cleanup(z3_free_handle(S))] ) :-
     z3_assert(S, a:bv(16) = mk_numeral("123", bv(16))),
     z3_check(S, l_true),
-    z3_model_map(S, Model),
+    z3_model_lists(S, Model),
     C = Model.constants,
     assertion(C == [a=123]).
 
@@ -403,3 +432,20 @@ test(separate_enums, [setup((z3_new_handle(H1), z3_new_handle(H2))),
     
 
 :- end_tests(basic_enums).
+
+:- begin_tests(remove_declarations).
+
+test(remove_decl, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
+    z3_assert(H, a:int > b:int),
+    z3_remove_declaration(H,a,0),
+    z3_assert(H, a:bool > b),
+    z3_remove_declaration(H,b,0),
+    z3_declare_function(H,f(int), int),
+    z3_assert(H, f(a) > b),
+    z3_remove_declaration(H,f,1),
+    \+ z3_assert(H, f(a) > b).
+
+
+:- end_tests(remove_declarations).
+
+

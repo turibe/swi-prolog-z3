@@ -10,8 +10,8 @@
               scopes/1,
               decl/1,
               implies/1,
-              is_implied/1,
-              is_consistent/1,
+              implied/1,
+              consistent/1,
 
               save_state/1,
               read_state/1,
@@ -36,19 +36,21 @@ Remembers asserted formulas and declarations from one query to the next.
                   z3_assert/2,
                   z3_declarations/2,
                   z3_free_handle/1,
-                  z3_model_map/2,
+                  z3_model_lists/2,
                   z3_new_handle/1,
                   z3_remove_declaration/3,
                   z3_check/2,
                   z3_solver_pop/3,
                   z3_solver_push/2,
-                  z3_solver_scopes/2
+                  z3_solver_scopes/2,
+                  z3_model_assocs/2
               ]).
 
 :- use_module(z3_utils, [
                   z3_declare_types_for_symbols/3,
                   ground_version/3,
-                  remove_type_annotations/2
+                  remove_type_annotations/2,
+                  z3_expand_term/2
               ]).
 
 :- use_module(type_inference, [
@@ -59,9 +61,15 @@ Remembers asserted formulas and declarations from one query to the next.
 
 % TODO: allow adding inconsistencies, add explain/relax?
 
-z3_help :- writeln("Z3 repl help\n"),
-           writeln("add(F)\t\tAdd formula F"),
-           writeln("reset\t\tReset all declarations"),
+z3_help :- format(
+          "Z3 repl help:
+           add(F)              Add formula F
+           consistent(F)       Check if F is consistent with what has been added so far
+           implies(F)          Check if F is implied by what has been added so far
+           formulas(L)         Get list of formulas asserted so far
+           status(S)           Get solver status (l_sat, l_unsat, l_undef)
+           model(M)            Get a model for formulas added so far, if possible
+           reset               Reset all declarations"),
            true.
 
 % z3.pl shares no state between queries, except for enum declarations.
@@ -90,23 +98,24 @@ get_asserted(M) :- nb_current(asserted_formulas, M).
 % we should call reset_globals if there is a chance for the context to be invalidated
 % before we do a reset. Otherwise, we'll have an old invalid pointer as the solver.
 
-clear_handle :- nb_current(repl_handle, H), !,
+clear_globals :- nb_current(repl_handle, H), !,
                 z3_free_handle(H),
-                nb_delete(repl_handle).
-clear_handle :- true.
+                nb_delete(repl_handle),
+                set_type_map(t),
+                set_recorded_formulas([]).
+clear_globals :- true.
 
 
-reset_globals :- clear_handle,
+reset_globals :- clear_globals,
                  z3_new_handle(H),
                  nb_setval(repl_handle, H),
-                 set_type_map(t),
-                 set_recorded_formulas([]),
                  true.
 
 push_formula(Formula, NewMap, NewSymbols, Status) :-
     %% must_be(ground, Formula),
     get_type_map(OldAssoc),
-    ground_version(Formula, FG, Symbols),
+    z3_expand_term(Formula, FormulaTransformed),
+    ground_version(FormulaTransformed, FG, Symbols),
     (typecheck(FG, bool, OldAssoc, NewMap) -> true ;
      print_message(error, z3_message("Type error for %w", [FG])),
      fail
@@ -171,26 +180,31 @@ declarations(L) :- get_type_map(M),
 %! model(-Model)
 %  Get a Z3 model of formulas asserted so far.
 model(Model) :- get_repl_handle(H),
-                z3_model_map(H, Model).
+                z3_model_lists(H, Model).
 
-scopes(N) :- get_repl_handle(S),
-             z3_solver_scopes(S, N).
+model_assoc(Model) :- get_repl_handle(H),
+                      z3_model_assocs(H, Model).
+
+scopes(N) :- get_repl_handle(H),
+             z3_solver_scopes(H, N).
 
 push_check_and_pop(F, Status) :-
     push_formula(F, _NewMap, NewSymbols, Status),
-    get_repl_handle(Solver),
-    z3_solver_pop(Solver, 1, _),
+    get_repl_handle(H),
+    z3_solver_pop(H, 1, _),
     remove_declarations(NewSymbols).
 
-is_implied(F) :- push_check_and_pop(not(F), Status),
-                 Status == l_false.
+implied(F) :- push_check_and_pop(not(F), Status),
+              Status == l_false.
 
 %% todo: handle l_undef
-is_consistent(F) :- push_check_and_pop(F, Status),
-                    Status == l_true.
-    
+consistent(F) :- push_check_and_pop(F, Status),
+                 Status == l_true.
 
-implies(X) :- is_implied(X).
+implies(X) :- implied(X).
+
+status(Status) :- get_repl_handle(H),
+                  z3_check(H, Status).
     
 /****
 %% give option to pop last asserted thing? But types remain...
@@ -216,7 +230,7 @@ read_state(Filename) :-
     maplist(add, L).
 
 :- begin_tests(repl_tests,
-               [setup(reset), cleanup(clear_handle)]
+               [setup(reset), cleanup(clear_globals)]
               ).
 
 test(instantiate_type) :-

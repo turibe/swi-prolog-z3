@@ -1,18 +1,19 @@
 %%% -*- Mode: Prolog; Module: quickexplain; -*-
 
 :- module(quickexplain, [
+              % These assume that Base+Constraints is unsatisfiable:
               qexplain/4, % +AssertPredicate, +Base, +Constraints, -Result
               qexplain/3, % +AssertPredicate, +Constraints, -Result   (empty Base)
               
               qrelax/4,   % +AssertPredicate, +Base, +Constraints, -Result
               qrelax/3,   % +AssertPredicate, +Constraints, -Result   (empty Base)
 
-              % use these if you want a consistency check at the start:
-              top_explain/4,   % +AssertPredicate, +Base, +Constraints, -Result
-              top_explain/3,   % +AssertPredicate, +Constraints, -Result   (empty Base)
+              % Use these if you want a consistency check at the start:
+              check_explain/4,   % +AssertPredicate, +Base, +Constraints, -Result
+              check_explain/3,   % +AssertPredicate, +Constraints, -Result   (empty Base)
 
-              top_relax/4,   % +AssertPredicate, +Base, +Constraints, -Result
-              top_relax/3    % +AssertPredicate, +Constraints, -Result   (empty Base)
+              check_relax/4,   % +AssertPredicate, +Base, +Constraints, -Result
+              check_relax/3    % +AssertPredicate, +Constraints, -Result   (empty Base)
 
           ]).
 
@@ -30,10 +31,10 @@ for finding minimally unsatisfiable subsets, and maximally satisfiable ones.
 :- meta_predicate qrelax(1, ?, ?).
 :- meta_predicate qrelax(1, ?, ?, ?).
 
-:- meta_predicate top_explain(1, ?, ?).
-:- meta_predicate top_explain(1, ?, ?, ?).
-:- meta_predicate top_relax(1, ?, ?).
-:- meta_predicate top_relax(1, ?, ?, ?).
+:- meta_predicate check_explain(1, ?, ?).
+:- meta_predicate check_explain(1, ?, ?, ?).
+:- meta_predicate check_relax(1, ?, ?).
+:- meta_predicate check_relax(1, ?, ?, ?).
 
 :- use_module(utils).
 
@@ -44,7 +45,7 @@ debuginfo(_X, _Y) :- true.
 
 %% Both explain and relax assume that Base + Constraints are, together, inconsistent;
 %% if they are not, Output = Constraints, which is fine for relax but confusing for explain.
-%% use the "top_" procedures to check consistency first.
+%% use the "check_" procedures to check consistency first.
 
 qexplain(_Assert, _Base, [], Output) :- !, Output = [].
 qexplain(Assert, Base, Constraints, Output) :-
@@ -65,9 +66,9 @@ rec_qexplain(Assert, B, Delta, C, Output) :-
         )
      )).
 
-top_explain(Assert, Base, Constraints, Output) :-
+check_explain(Assert, Base, Constraints, Output) :-
     consistent(Assert, Base, Constraints) -> Output = "consistent"; qexplain(Assert, Base, Constraints, Output).
-top_explain(Assert, Constraints, Output) :- top_explain(Assert, [], Constraints, Output).
+check_explain(Assert, Constraints, Output) :- check_explain(Assert, [], Constraints, Output).
 
 qrelax(_Assert, _B, [], Result) :- !, Result = [].
 qrelax(Assert, B, Constraints, Result) :-
@@ -87,9 +88,9 @@ rec_qrelax(Assert, B, C, Result) :-
         append(Delta1, Delta2, Result)
      )))).
 
-top_relax(Assert, Base, Constraints, Output) :-
+check_relax(Assert, Base, Constraints, Output) :-
     consistent(Assert, Base, Constraints) -> Output = "consistent"; qrelax(Assert, Base, Constraints, Output).
-top_relax(Assert, Constraints, Output) :- top_relax(Assert, [], Constraints, Output).
+check_relax(Assert, Constraints, Output) :- check_relax(Assert, [], Constraints, Output).
 
 
 inconsistent(Assert, L) :- \+ checksat(Assert, L).
@@ -150,18 +151,18 @@ test(explain6) :-
     qexplain(call, [(X + Y) #>= 10], [X#<5, Y#<5, X#>2, X#>4], R),
     R =@= [X#<5, Y#<5].
 
-test(topexplain1) :-
-    top_explain(call, [(X + Y) #>= 10], [X#<5, Y#<5, X#>2, X#>4], R),
+test(check_explain1) :-
+    check_explain(call, [(X + Y) #>= 10], [X#<5, Y#<5, X#>2, X#>4], R),
     R =@= [X#<5, Y#<5].
 
-test(topexplain2, [true(R == "consistent")]) :-
-    top_explain(call, [Y #> 0], [X#<5, Y#<5, X#>2], R).
+test(check_explain2, [true(R == "consistent")]) :-
+    check_explain(call, [Y #> 0], [X#<5, Y#<5, X#>2], R).
 
-test(toprelax, true(R == [(X #> 2), (X#>4), (Y#<5)])) :-
-    top_relax(call, [(X + Y) #>= 10], [X#<5, Y#<5, X#>2, X#>4], R).
+test(check_relax, true(R == [(X #> 2), (X#>4), (Y#<5)])) :-
+    check_relax(call, [(X + Y) #>= 10], [X#<5, Y#<5, X#>2, X#>4], R).
 
-test(toprelax2, [true(R == "consistent")]) :-
-    top_relax(call, [Y #> 0], [X#<5, Y#<5, X#>2], R).
+test(check_relax2, [true(R == "consistent")]) :-
+    check_relax(call, [Y #> 0], [X#<5, Y#<5, X#>2], R).
 
 
 :- end_tests(quickexplain_tests).

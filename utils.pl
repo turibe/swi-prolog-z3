@@ -4,7 +4,8 @@
 	      split_list/3,
 	      subterm_list/2,
               repeat_string/3,
-              readable_bytes/2
+              readable_bytes/2,
+              pair_list_to_assoc/2
     ] ).
 
 /** <module> Basic utils
@@ -42,6 +43,19 @@ readable_bytes(Bytes, Output) :- meg(M), Bytes =< M, !, kilo(K), Kilos is Bytes/
 readable_bytes(Bytes, Output) :- gig(G), Bytes =< G, !, meg(M), Megs is Bytes/M, swritef(Output, "%w Megs", [Megs]).
 readable_bytes(Bytes, Output) :- gig(G), assertion(Bytes > G), !, Gigs is Bytes/G, swritef(Output, "%w Gigs", [Gigs]).
 
+
+add_pair(Pair, A1, A2) :-
+    Pair =.. [_, K, V],
+    put_assoc(K,A1,V,A2).
+
+/**
+pair_list_to_assoc([], t).
+pair_list_to_assoc([X|Rest], M) :- % TODO: better recursion here.
+    pair_list_to_assoc(Rest, M1),
+    add_pair(X, M1, M).
+**/
+
+pair_list_to_assoc(L, R) :- foldl(add_pair, L, t, R).
 
 :- begin_tests(util_tests).
 
