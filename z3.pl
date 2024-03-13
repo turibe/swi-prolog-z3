@@ -339,7 +339,7 @@ z3_push(Foriginal, Status) :-
 
 %! z3_push(+Formula)
 %  Fails if solver reports inconsistency or type error.
-%  `l_type_error` is the only one that does not push onto the solver.
+%  Pushes the formula onto the solver unless there was a type error.
 z3_push(F) :- z3_push(F, R), (R == l_true ; R == l_undef), !.
 
 solve(L, M) :- maplist(z3_push, L), z3_model(M).

@@ -157,7 +157,7 @@ add_formula(F) :- push_formula(F, NewMap, NewSymbols, Status),
                   )).
 
 %! decl(-M)
-%  Get all declarations
+%  Get all declarations, in both prolog and Z3 versions.
 decl(M) :-
     get_repl_handle(H),
     z3_declarations(H, Z),
@@ -182,8 +182,8 @@ formulas(L) :- get_recorded_formulas(L).
 %  Clear all asserted formulas and declarations.
 reset :- reset_globals.
 
-%! declarations(-L)
-%  Get all declarations, both at the Prolog and Z3 levels.
+%! declarations(-List)
+%  Get all Prolog declarations, constructed by the type checker, as a list of `term-type` pairs.
 declarations(L) :- get_type_map(M),
                    assoc_to_list(M, L).
 
@@ -242,7 +242,8 @@ z3_pop(Formula) :-
 ****/
 
 %! save_formulas(+Filename)
-%  Save set of added formulas to the given filename.
+%  Saves the set of added formulas to the given Filename (an atom or a string).
+%  Fails if the file exists.
 save_formulas(Filename) :-
     (exists_file(Filename) -> (write("File exists"), fail) ; true),
     open(Filename, write, Output, [create([all])] ),

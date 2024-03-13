@@ -32,7 +32,6 @@
               z3_declarations_string/2,    %% +handle, -string
               z3_enums_string/2,           %% +handle, -string
 
-
               %% estimates of Z3's memory use:
               z3_alloc_bytes/1,            %% -num_bytes
               z3_alloc/1,                  %% -string
@@ -66,7 +65,8 @@ prolog:message(z3_message(F,L)) --> {swritef(S, F, L)}, [S].
 
 
 %! z3_assert(+Handle, +Formula)
-%  Adds formula to the handle's solver. Fails if declarations are missing.
+%  Adds formula to the handle's solver. Fails if needed declarations are missing.
+%  Does not do a solver check.
 %  (Defined in `z3_swi_foreign.c`.)
 
 %! z3_alloc_bytes(-Bytes)
@@ -74,11 +74,11 @@ prolog:message(z3_message(F,L)) --> {swritef(S, F, L)}, [S].
 %  (Defined in `z3_swi_foreign.c`.)
 
 %! z3_check(+Handle, -Status)
-%  Does a z3_check for Handle's solver, and returns the status.
+%  Does a z3_check for Handle's solver, and returns Status.
 %  (Defined in `z3_swi_foreign.c`.)
 
 %! z3_check_and_print(+Handle, -Status)
-%  Does a z3_check for Handle's solver, printing a model if possible, and returns the status.
+%  Does a z3_check for Handle's solver, printing a model if possible, and returns Status.
 %  (Defined in `z3_swi_foreign.c`.)
 
 %! z3_declarations_string(+Handle, -String)

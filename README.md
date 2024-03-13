@@ -93,7 +93,7 @@ The z3.pl module offers a high-level, user-friendly API, with:
 
 The type inference at this level also uses a backtrackable type map, so
 both types and assertions start afresh from one query to the next.
-(If you don't want this, see `stateful_repl.pl`.)
+(If you don't want this, see stateful_repl.pl.)
 
 The basic operations are:
 
@@ -104,7 +104,7 @@ z3_push(f(a:int) = b and b = 3, Status). %% Status = l_true
 ```
 
 Status will be one of `{l_true, l_false, l_undef, l_type_error}`.
-One can also use `push/1`, which will fails if status is `l_false` or `l_type_error`.
+One can also use `z3_push/1`, which fails if status is `l_false` or `l_type_error`.
 
 - `z3_is_consistent(+Formula)`: Tests whether `Formula` is consistent with what has been pushed so far.
 
