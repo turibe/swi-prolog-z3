@@ -70,11 +70,12 @@ M1 = model{constants:[a-2, b-1], functions:[f/1-else-2, f(4)-5, f(2)-4]}.
 ?- add(a:int > 1).
 ?- add(a > b).
 ?- model(M).
+M = model{constants:[a=2, b=0], functions:[]}.
 ```
 
 ## Testing
 
-Unit tests can be run with `?- run_tests.` , or running
+Unit tests can be run from the PL prompt with `?- run_tests.` , or running
 
 ```bash
 swipl -g run_tests -t halt z3.pl stateful_repl.pl z3_swi_foreign.pl
@@ -182,6 +183,7 @@ with `z3_reset_context` (low-level), `z3_reset` (for `z3.pl`), or `reset` (for `
 ### Utilities/shortcuts
 
 For convenience, we expand `isoneof(a,v1,...,vn)` to `or(a=v1, ... a=vn)`.
+
 `alldifferent` is an alias for Z3's `distinct`.
 
 ### Explanations and Relaxation
