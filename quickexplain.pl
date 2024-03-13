@@ -172,13 +172,13 @@ test(check_explain1) :-
     check_explain(call, [(X + Y) #>= 10], [X#<5, Y#<5, X#>2, X#>4], R),
     R =@= [X#<5, Y#<5].
 
-test(check_explain2, [true(R == "consistent")]) :-
+test(check_explain2, [true(R == consistent)]) :-
     check_explain(call, [Y #> 0], [X#<5, Y#<5, X#>2], R).
 
 test(check_relax, true(R == [(X #> 2), (X#>4), (Y#<5)])) :-
     check_relax(call, [(X + Y) #>= 10], [X#<5, Y#<5, X#>2, X#>4], R).
 
-test(check_relax2, [true(R == "consistent")]) :-
+test(check_relax2, [true(R == consistent)]) :-
     check_relax(call, [Y #> 0], [X#<5, Y#<5, X#>2], R).
 
 

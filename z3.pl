@@ -179,7 +179,7 @@ attr_unify_hook(Attr, Var) :- get_attr(Var, z3, Other), !,
                               z3_push(==(Attr, Other), R),
                               \+ R = l_false.
 attr_unify_hook(Attr, Var) :- var(Var), !,
-                              add_attribute(Var, Attr).
+                              add_z3_attribute(Var, Attr).
 attr_unify_hook(Attr, Formula) :-
     %% report(informational, status("Hook got", Attr, Formula)),
     z3_push(==(Attr, Formula), R), \+ (R = l_false).
@@ -387,8 +387,7 @@ replace_var_attributes(X, R) :- compound(X),
 %% But Z3 does not let us change types, so this case is not handled. (Ideally, we would equate them, adding "uninterpreted = int").
 
 get_term_for_var(X, T) :- var(X),
-                          add_attribute(X, T).
-
+                          add_z3_attribute(X, T).
 
 
 /*
