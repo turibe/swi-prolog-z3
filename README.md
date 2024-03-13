@@ -1,6 +1,6 @@
 # swi-prolog-z3
 
-Code to use Z3 as a constraint solver inside SWI Prolog, for a basic CLP(CC) implementation.
+Code to use Z3 as a constraint solver inside SWI Prolog, for a CLP(CC) implementation.
 Currently supports a subset of Z3's capabilities,
 including propositional logic, equality, arithmetic, bit-vectors, and uninterpreted function symbols.
 
@@ -40,10 +40,9 @@ See [https://github.com/Z3Prover/z3](https://github.com/Z3Prover/z3).
 swipl-ld -I/<path-to-z3>/z3/src/api/ -L. -o z3_swi_foreign -shared z3_swi_foreign.c -lz3
 ```
 
-This creates a `z3_swi_foreign.so` binary that is loaded into SWI Prolog when `use_module(z3)` is executed.
+This creates a `z3_swi_foreign.so` binary that is loaded into SWI Prolog when `use_module(z3_swi_foreign)` is executed.
 
-
-5. Start `swipl`, import the `z3.pl` module with `use_module(z3)`, and you're done!
+5. Start `swipl`, import the `z3.pl` or `stateful_repl.pl` module (e.g. `use_module(z3)`), and you're done!
 
 ```bash
 swipl
@@ -204,7 +203,8 @@ and navigate to [http://localhost:8080/pldoc/](http://localhost:8080/pldoc/) to 
 
 ## Future Work
 
-- The current version handles only the basic Z3 capabilities: {int,real,bool} types, propositional logic, equality, arithmetic, bit vectors, and uninterpreted function symbols.
-Features such as arrays, sets and quantifiers are future work.
+- The current version handles the following Z3 capabilities:
+{int,real,bool} types, propositional logic, equality, arithmetic, bit vectors, and uninterpreted function symbols.
+Other Z3 features such as arrays, sets and quantifiers are future work.
 
 
