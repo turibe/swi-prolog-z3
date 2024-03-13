@@ -64,40 +64,92 @@ It has no global variables except for those in the C code.
 prolog:message(z3_message(S)) --> {}, [S].
 prolog:message(z3_message(F,L)) --> {swritef(S, F, L)}, [S].
 
-% Docs for predicates defined in the C interface:
-
-%! z3_solver_scopes(+Handle, -Scopes)
-%  Get the number of solver scopes for the handle's solver.
-
-%! z3_reset_declarations(+Handle)
-%  Resets all declarations for the given handle, except for the enum declarations.
-%  (To reset the enum declarations, get a new handle.)
-
-%! z3_get_model(+Handle, -ModelPointer)
-%  Low-level: gets a model for the given handle/context. The model should be freed with z3_free_model/2.
-
-%! z3_free_model(+Handle, +ModelPointer)
-%  Low-level: frees the model for the given handle/context.
-
-%! z3_free_handle(+Handle)
-%  Low-level: frees the handle and all associated resources (context, solver, declarations).
 
 %! z3_assert(+Handle, +Formula)
 %  Adds formula to the handle's solver. Fails if declarations are missing.
+%  (Defined in `z3_swi_foreign.c`.)
 
 %! z3_alloc_bytes(-Bytes)
 %  Get approximate memory usage, in bytes, from Z3.
+%  (Defined in `z3_swi_foreign.c`.)
 
-%! z3_simplify(+Handle, +Formula, -Formula)
-%  Apply Z3's simplify to the given formula.
+%! z3_check(+Handle, -Status)
+%  Does a z3_check for Handle's solver, and returns the status.
+%  (Defined in `z3_swi_foreign.c`.)
+
+%! z3_check_and_print(+Handle, -Status)
+%  Does a z3_check for Handle's solver, printing a model if possible, and returns the status.
+%  (Defined in `z3_swi_foreign.c`.)
+
+%! z3_declarations_string(+Handle, -String)
+%  Gets a string representation of the declarations for Handle.
+%  (Defined in `z3_swi_foreign.c`.)
+
+%! z3_declare_enum(+Handle, +EnumName, +ValueList)
+%  Declares an enumeration type EnumName with values in ValueList.
+%  Example: `z3_declare_enum(H, color, [black, white, red])`.
+%  (Defined in `z3_swi_foreign.c`.)
+
+%! z3_enums_string(+Handle, -String)
+%  Gets a string describing the enum declarations for Handle.
+%  (Defined in `z3_swi_foreign.c`).
 
 %! z3_new_handle(+Handle)
 %  Creates a new handle. Should be freed with z3_free_handle/1.
+%  (Defined in `z3_swi_foreign.c`.)
+
+%! z3_free_handle(+Handle)
+%  Low-level: frees Handle and all associated resources (context, solver, declarations).
+%  (Defined in `z3_swi_foreign.c`.)
+
+%! z3_free_model(+Handle, +ModelPointer)
+%  Low-level: frees ModelPointer, a model for the given Handle/context.
+%  (Defined in `z3_swi_foreign.c`.)
+
+%! z3_get_model(+Handle, -ModelPointer)
+%  Low-level: gets a model for the given Handle/context. The model should be freed with z3_free_model/2.
+%  (Defined in `z3_swi_foreign.c`.)
+
+%! z3_model_eval(+Handle, +ModelPointer, +Formula, +CompletionFlag, -Result)
+%  Given a model for Handle, evaluates Formula, using the given CompletionFlag (`true/false`).
+%  (Defined in `z3_swi_foreign.c`.)
+
+%! z3_remove_declaration(+Handle, +Name, +Arity)
+%  Removes the declaration for the given function or constant `Name/Arity`.
+%  (Defined in `z3_swi_foreign.c`.)
+
+%! z3_reset_declarations(+Handle)
+%  Resets all declarations for Handle, except for the enum declarations.
+%  (To reset the enum declarations, free Handle and make a new one.)
+%  (Defined in `z3_swi_foreign.c`.)
+
+%! z3_simplify(+Handle, +Formula, -FormulaOut)
+%  Apply Z3's simplify to Formula.
+%  (Defined in `z3_swi_foreign.c`.)
+
+%! z3_solver_assertions(+Handle, -Assertions)
+%  Get the assertions that have been added to Handle's solver.
+%  (Defined in `z3_swi_foreign.c`.)
+
+%! z3_solver_push(+Handle, -Scopes)
+%  Does a z3_push for Handle's solver, and reports the new number of Scopes.
+%  (Defined in `z3_swi_foreign.c`.)
+
+%! z3_solver_pop(+Handle, +N, -Scopes)
+%  Pops Handle's solver `N` times, and reports the new number of Scopes.
+%  (Defined in `z3_swi_foreign.c`.)
+
+%! z3_solver_scopes(+Handle, -Scopes)
+%  Get the number of solver scopes for Handle's solver, in Scopes.
+%  (Defined in `z3_swi_foreign.c`.)
+
+%%%%%%%%%%%%%%%%%%%%%%%%%% End docs for predicates defined in the C interface.
+
 
 %! z3_declare_function(+Handle, +Formula, +Type)
-%  Declares term Formula to have sort Type, adding the declaration to the handle's map.
+%  Declares term Formula to have sort Type, adding the declaration to Handle's map.
 %  New declarations don't override old ones --- fails if there is a conflict.
-%  examples: z3_declare_function(H, a, int) ; z3_declare_function(H, f(int, int), real).
+%  Examples: z3_declare_function(H, a, int) ; z3_declare_function(H, f(int, int), real).
 z3_declare_function(H, F, T) :- F == A/0, z3_declare_function(H, A, T).
 z3_declare_function(H, F, T) :- z3_declare_function(H, F, T, _C).
 % (Returned pointer is only useful for debugging, so we hide it here)
@@ -116,7 +168,7 @@ z3_model_assocs(H, M, Map) :- z3_model_functions(H, M, F),
                               Map = model{functions:Fmap, constants:Cmap}.
 
 %! z3_model_assocs(+Handle, -Model)
-%  Gets a Prolog term representing a model for the given solver S, using assoc maps.
+%  Gets a Prolog term representing a model for Handle's solver, using assoc maps.
 z3_model_assocs(H, Model) :-
     must_be(ground, H),
     setup_call_cleanup(z3_get_model(H, M),
@@ -126,7 +178,7 @@ z3_model_assocs(H, Model) :-
 
 
 %! z3_model_lists(+Handle, -Model)
-%  Gets a Prolog term representing a model for the given solver S, using lists.
+%  Gets a Prolog term representing a model for Handle's solver, using lists.
 z3_model_lists(H, Model) :-
     setup_call_cleanup(z3_get_model(H, M),
                        z3_model_lists(H, M, Model),
