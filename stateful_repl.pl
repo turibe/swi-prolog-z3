@@ -12,9 +12,11 @@
               implies/1,
               implied/1,
               consistent/1,
+              status/1,
+              show_status/0,
 
-              save_state/1,
-              read_state/1,
+              save_formulas/1,
+              add_formulas/1,
 
               z3_help/0,
 
@@ -28,7 +30,7 @@
     
 /** <module> Stateful REPL for Z3
 
-Remembers asserted formulas and declarations from one query to the next.
+Remembers asserted Z3 formulas and declarations from one query to the next.
 
 */
 
@@ -61,13 +63,15 @@ Remembers asserted formulas and declarations from one query to the next.
 
 % TODO: allow adding inconsistencies, add explain/relax?
 
+%! z3_help
+%  Print help.
 z3_help :- format(
           "Z3 repl help:
            add(F)              Add formula F
            consistent(F)       Check if F is consistent with what has been added so far
            implies(F)          Check if F is implied by what has been added so far
            formulas(L)         Get list of formulas asserted so far
-           status(S)           Get solver status (l_sat, l_unsat, l_undef)
+           status(S)           Get solver status (l_true, l_false, l_undef)
            model(M)            Get a model for formulas added so far, if possible
            reset               Reset all declarations"),
            true.
@@ -90,7 +94,7 @@ get_recorded_formulas(L) :- nb_current(recorded_formulas, L).
 set_recorded_formulas(L) :- nb_setval(recorded_formulas, L).
 
 record_formula(F) :- get_recorded_formulas(L),
-                     append([[F], L], New),
+                     ord_add_element(L, F, New),
                      set_recorded_formulas(New).
 
 get_asserted(M) :- nb_current(asserted_formulas, M).
@@ -98,12 +102,13 @@ get_asserted(M) :- nb_current(asserted_formulas, M).
 % we should call reset_globals if there is a chance for the context to be invalidated
 % before we do a reset. Otherwise, we'll have an old invalid pointer as the solver.
 
-clear_globals :- nb_current(repl_handle, H), !,
-                z3_free_handle(H),
-                nb_delete(repl_handle),
-                set_type_map(t),
-                set_recorded_formulas([]).
-clear_globals :- true.
+clear_globals :- (nb_current(repl_handle, H) -> (
+                                                    z3_free_handle(H),
+                                                    nb_delete(repl_handle)
+                                                )
+                 ; true),
+                 set_type_map(t),
+                 set_recorded_formulas([]).
 
 
 reset_globals :- clear_globals,
@@ -137,6 +142,8 @@ remove_declarations(L) :-
 
 %! add_formula(+F)
 %  Adds Z3 formula F. Typechecks and adds resulting declarations as well.
+%  If the formula is inconsistent with other formulas so far, fails,
+%  and the context is unchanged.
 add_formula(F) :- push_formula(F, NewMap, NewSymbols, Status),
                   (member(Status, [l_false, l_type_error])  -> (
                                            get_repl_handle(Handle),
@@ -150,7 +157,7 @@ add_formula(F) :- push_formula(F, NewMap, NewSymbols, Status),
                   )).
 
 %! decl(-M)
-%  Get all declarations
+%  Get all declarations, in both prolog and Z3 versions.
 decl(M) :-
     get_repl_handle(H),
     z3_declarations(H, Z),
@@ -166,25 +173,33 @@ add(F) :- add_formula(F).
 %! asserted(-List)
 %  Get list of asserted formulas.
 asserted(L) :- get_recorded_formulas(L).
+
+%! formulas(-List)
+%  Get list of asserted formulas (alias for `asserted`).
 formulas(L) :- get_recorded_formulas(L).
 
 %! reset
-%  Clear all formulas and declarations.
+%  Clear all asserted formulas and declarations.
 reset :- reset_globals.
 
-%! declarations(-L)
-%  Get declarations, both at the Prolog and Z3 levels.
+%! declarations(-List)
+%  Get all Prolog declarations, constructed by the type checker, as a list of `term-type` pairs.
 declarations(L) :- get_type_map(M),
                    assoc_to_list(M, L).
 
 %! model(-Model)
-%  Get a Z3 model of formulas asserted so far.
+%  Get a Z3 model for the formulas asserted so far.
+% Note that Z3 can return "uncertain" models if the status is `l_undef`.
 model(Model) :- get_repl_handle(H),
+                status(_),
                 z3_model_lists(H, Model).
 
 model_assoc(Model) :- get_repl_handle(H),
                       z3_model_assocs(H, Model).
 
+%! scopes(-N)
+%  Get the number of scopes for the (implicit) solver.
+%  Should be generally equal to the number of formulas asserted so far.
 scopes(N) :- get_repl_handle(H),
              z3_solver_scopes(H, N).
 
@@ -194,15 +209,25 @@ push_check_and_pop(F, Status) :-
     z3_solver_pop(H, 1, _),
     remove_declarations(NewSymbols).
 
+%! implied(+Formula)
+%  Succeeds iff `Formula` is known to be implied by the current asserted formulas. Fails if this can't be proved.
 implied(F) :- push_check_and_pop(not(F), Status),
               Status == l_false.
 
 %% todo: handle l_undef
+
+%! consistent(+Formula)
+%  Succeeds iff `Formula` is known to be consistent with the current asserted formulas, that is, check status is `l_true`. Fails if this can't be proved.
 consistent(F) :- push_check_and_pop(F, Status),
                  Status == l_true.
 
+%! implies(+Formula)
+%  Alias for implied.
 implies(X) :- implied(X).
 
+%! status(-Status)
+%  Does a z3_check for the formulas asserted so far, returning the
+%  status, one of (`l_true`, `l_false`, `l_undef`).
 status(Status) :- get_repl_handle(H),
                   z3_check(H, Status).
     
@@ -216,18 +241,39 @@ z3_pop(Formula) :-
     z3_solver_pop(S).               
 ****/
 
-save_state(Filename) :-
+%! save_formulas(+Filename)
+%  Saves the set of added formulas to the given Filename (an atom or a string).
+%  Fails if the file exists.
+save_formulas(Filename) :-
+    (exists_file(Filename) -> (write("File exists"), fail) ; true),
     open(Filename, write, Output, [create([all])] ),
     formulas(L),
     write_canonical(Output, L), %% fast_write fails?
     writeln(Output, "."),
     close(Output).
 
-read_state(Filename) :-
+%! add_formulas(+Filename)
+%  Reads formulas from the given filename, adds them to the current set.
+add_formulas(Filename) :-
     open(Filename, read, Input),
     read(Input, L),
     close(Input),
-    maplist(add, L).
+    maplist(add, L),
+    show_status.
+
+%! show_status
+%  Prints summary of current status.
+show_status :-
+    formulas(L),
+    length(L, Len),
+    print_message(informational, z3_message("There are %w added formulas", [Len])),
+    status(Status),
+    print_message(informational, z3_message("Status is %w", [Status])),
+    get_type_map(M),
+    assoc_to_list(M, ML),
+    length(ML, NumDecl),
+    print_message(informational, z3_message("Type map has %w declarations", [NumDecl])),
+    true.
 
 :- begin_tests(repl_tests,
                [setup(reset), cleanup(clear_globals)]
@@ -244,11 +290,11 @@ test(clear_types) :-
      (add((b:real = c:real) and (1 = 2)) -> true ;
       add(b:int = c:int)).
 
-%% test(implied_and_consistent, [blocked(memtest)] ) :-
-%%     reset,
-%%     add(a > 10),
-%%     is_implied(a > 1),
-%%     \+ is_consistent(a < 5),
-%%     \+ is_implied(a > 20).
+test(implied_and_consistent) :-
+     reset,
+     add(a > 10),
+     implied(a > 1),
+     \+ consistent(a < 5),
+     \+ implied(a > 20).
 
 :- end_tests(repl_tests).

@@ -218,6 +218,8 @@ compound_mappable(X, N) :- compound(X),
                            functor(X, F, N),
                            \+ declared(F).
 
+%! mappable_symbol(+Atom)
+%  True iff the type for Atom should be inferred, that is, it is not a pre-declared constant or function.
 mappable_symbol(X) :- must_be(atom,X), \+ declared(X). %% note that declared applies to true and false
 
 check_length(all(_), _) :- !, true.
@@ -227,6 +229,8 @@ check_length(L, Arity) :- length(L, Arity).
 
 %%%%%%%% main predicate: typecheck/4 : +Expression, ~Type, +Environment, -NewEnvironment:
 
+%! typecheck(+Expression, -Type, +InputMap, +OutputMap)
+%  Given the types in InputMap, check/infer Type for Expression, and let OutputMap be the resulting type map.
 typecheck(F, _, _, _) :- var(F), !, instantiation_error(F).
 typecheck(Term:Type, T, Envin, Envout) :- !, Type = T,
                                           typecheck(Term, Type, Envin, Envout).
@@ -318,18 +322,21 @@ check_signature([], [], E, E).
 check_signature([Arg|Rest], [T|TRest], Ein, Eout) :- typecheck(Arg, T, Ein, E2),
                                                      check_signature(Rest, TRest, E2, Eout).
 
-%! typecheck(+Term, -Type, -Out:assoc_list) is nondet.
+%! typecheck(+Term, -Type, -OutputMap) is nondet.
+%  Checks/infers that Term has Type, starting from an empty map.
 typecheck(Term, Type, Eout) :- empty_assoc(Empty), typecheck(Term, Type, Empty, Eout).
 
 
 % Convenience:
 
-% assumes that the list represents a conjunction:
+%! typecheck_formula_list(+FormulaList, +MapIn, -MapOut)
+%  Convenience, assumes that FormulaList represents a conjunction (all boolean formulas).
 typecheck_formula_list([F|R], Ein, Eout) :- typecheck(F, bool, Ein, Enext),
                                             typecheck_formula_list(R, Enext, Eout).
 typecheck_formula_list([], E, E) :- true.
 
-% returns a list instead of an assoc map:
+%! typecheck_to_list(+Term, -Type, -List)
+%  Like typecheck/3 but returns a list instead of an assoc map:
 typecheck_to_list(Term, Type, Result) :- empty_assoc(Empty), typecheck(Term, Type, Empty, Eout), assoc_to_list(Eout, Result).
 
 

@@ -5,7 +5,7 @@
 #include <ctype.h>
 #include <assert.h>
 
-#include <pthread.h>
+// #include <pthread.h>
 
 // /opt/homebrew/Cellar/gmp/6.3.0/include/gmp.h
 // #include <gmp.h>
@@ -120,7 +120,7 @@ typedef Z3_ast_map sort_map;
 // ***************************** GLOBAL VARIABLES ********************************************
 
 
-static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+// static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static long handle_counter = 0;
 
@@ -158,8 +158,6 @@ void z3_swi_error_handler(Z3_context ctx, Z3_error_code e) {
 void initialize_handle(handle handle) {
   DEBUG("Initializing handle %p\n", handle);
 
-  pthread_mutex_lock(&mutex);
-  
   Z3_config config = Z3_mk_config();  
   handle->ctx = Z3_mk_context(config);
   Z3_context ctx = handle->ctx;
@@ -186,7 +184,6 @@ void initialize_handle(handle handle) {
   handle->bool_sort = Z3_mk_bool_sort(ctx);
   handle->real_sort = Z3_mk_real_sort(ctx);
 
-  pthread_mutex_unlock(&mutex);
 }
 
 // TODO: Z3_solver_get_statistics
@@ -238,10 +235,8 @@ foreign_t z3_free_handle_foreign(term_t handle_term) {
   int rval = PL_get_pointer_ex(handle_term, (void **) &h);
   if (!rval) return rval;
   DEBUG("Freeing handle %p\n", h);
-  pthread_mutex_lock(&mutex);
   free_handle_contents(h);
   free(h);
-  pthread_mutex_unlock(&mutex);
   return TRUE;
 }
 
@@ -1665,7 +1660,6 @@ Z3_ast term_to_ast(const handle h, decl_map declaration_map, const term_t formul
     ************/
     break;
   case PL_RATIONAL:
-    ERROR("Got PL_RATIONAL. Use z3_utils:expand\n");
     term_t trefs = PL_new_term_refs(3);
     if (!PL_unify(trefs, formula)) {
       ERROR("PL_unify failed for PL_RATIONAL\n");

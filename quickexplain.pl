@@ -47,10 +47,14 @@ debuginfo(_X, _Y) :- true.
 %% if they are not, Output = Constraints, which is fine for relax but confusing for explain.
 %% use the "check_" procedures to check consistency first.
 
+%! qexplain(:Assert, +Base, +Constraints, -Result)
+%  Assuming Base + Constraints is unsat, Result is a minimal unsat subset of Constraints.
 qexplain(_Assert, _Base, [], Output) :- !, Output = [].
 qexplain(Assert, Base, Constraints, Output) :-
     rec_qexplain(Assert, Base, Base, Constraints, Output).
 
+%! qexplain(:Assert, +Constraints, -Result)
+%  Assuming Constraints is unsat, Result is a minimal unsat subset of Constraints.
 qexplain(Assert, Constraints, Result) :- qexplain(Assert, [], Constraints, Result).
 
 %% non_empty(Delta) is there to avoid an extra consistency check at the start.
@@ -66,14 +70,23 @@ rec_qexplain(Assert, B, Delta, C, Output) :-
         )
      )).
 
+%! check_explain(:Assert, +Base, +Constraints, -Result)
+%  Checks whether Base + Constraints is unsat. If so, calls qexplain; otherwise, Result is `consistent`.
 check_explain(Assert, Base, Constraints, Output) :-
-    consistent(Assert, Base, Constraints) -> Output = "consistent"; qexplain(Assert, Base, Constraints, Output).
+    consistent(Assert, Base, Constraints) -> Output = consistent; qexplain(Assert, Base, Constraints, Output).
+
+%! check_explain(:Assert, +Constraints, -Result)
+%  Checks whether Constraints is unsat. If so, calls qexplain; otherwise, Result is `consistent`.
 check_explain(Assert, Constraints, Output) :- check_explain(Assert, [], Constraints, Output).
 
+%! qrelax(:Assert, +Base, +Constraints, -Result)
+%  Assuming Base + Constraints is unsat, Result is a maximal satisfiable subset of Constraints, given Base.
 qrelax(_Assert, _B, [], Result) :- !, Result = [].
 qrelax(Assert, B, Constraints, Result) :-
     rec_qrelax(Assert, B, Constraints, Result).
 
+%! qrelax(:Assert, +Constraints, -Result)
+%  Assuming Constraints is unsat, Result is a maximal satisfiable subset of Constraints.
 qrelax(Assert, Constraints, Result) :- qrelax(Assert, [], Constraints, Result).
 
 rec_qrelax(Assert, B, C, Result) :-
@@ -88,10 +101,14 @@ rec_qrelax(Assert, B, C, Result) :-
         append(Delta1, Delta2, Result)
      )))).
 
+%! check_relax(:Assert, +Base, +Constraints, -Result)
+%  Assuming Base + Constraints is unsat, Result is a maximal satisfiable subset of Constraints, given Base.
 check_relax(Assert, Base, Constraints, Output) :-
-    consistent(Assert, Base, Constraints) -> Output = "consistent"; qrelax(Assert, Base, Constraints, Output).
-check_relax(Assert, Constraints, Output) :- check_relax(Assert, [], Constraints, Output).
+    consistent(Assert, Base, Constraints) -> Output = consistent; qrelax(Assert, Base, Constraints, Output).
 
+%! check_relax(:Assert, +Constraints, -Result)
+%  Assuming Constraints is unsat, Result is a maximal satisfiable subset of Constraints.
+check_relax(Assert, Constraints, Output) :- check_relax(Assert, [], Constraints, Output).
 
 inconsistent(Assert, L) :- \+ checksat(Assert, L).
 consistent(Assert,L) :- \+ \+ checksat(Assert, L).
@@ -155,13 +172,13 @@ test(check_explain1) :-
     check_explain(call, [(X + Y) #>= 10], [X#<5, Y#<5, X#>2, X#>4], R),
     R =@= [X#<5, Y#<5].
 
-test(check_explain2, [true(R == "consistent")]) :-
+test(check_explain2, [true(R == consistent)]) :-
     check_explain(call, [Y #> 0], [X#<5, Y#<5, X#>2], R).
 
 test(check_relax, true(R == [(X #> 2), (X#>4), (Y#<5)])) :-
     check_relax(call, [(X + Y) #>= 10], [X#<5, Y#<5, X#>2, X#>4], R).
 
-test(check_relax2, [true(R == "consistent")]) :-
+test(check_relax2, [true(R == consistent)]) :-
     check_relax(call, [Y #> 0], [X#<5, Y#<5, X#>2], R).
 
 
