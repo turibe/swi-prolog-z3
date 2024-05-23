@@ -113,7 +113,7 @@ One can also use `z3_push/1`, which fails if status is `l_false` or `l_type_erro
 ?- z3_push(a > b:int), z3_is_consistent(a < c and c < b). %% fails
 ```
 
-- `z3_is_implied(+Formula)`: Tests whether `Formula` is implied with what has been pushed so far.
+- `z3_is_implied(+Formula)`: Tests whether `Formula` is implied by what has been pushed so far.
 
 ```prolog
 ?- z3_push(a > b:int and b > c), z3_is_implied(a > c). %% succeeds
@@ -171,13 +171,13 @@ The `z3_swi_foreign.c` file has the C code that glues things together, to be com
 
 ### Enumerated types
 
-Finite-domain enumerated types are "sticky", and are declared with
+Finite-domain enumerated types are "sticky" in Z3, and are declared with
 ```
 z3_declare_enum(+enum_name, +values_list)
 ```
 For example, `z3_declare_enum(fruit, [apple, banana, pear])`.
 The associated declarations can be listed with `z3_enum_declarations`.
-To clear them, we have to reset the entire Z3 context,
+To clear them, we must reset the entire Z3 context,
 with `z3_reset_context` (low-level), `z3_reset` (for `z3.pl`), or `reset` (for `stateful_repl.pl`).
 
 ### Utilities/shortcuts

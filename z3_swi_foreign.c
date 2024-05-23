@@ -18,16 +18,16 @@
      This is a C foreign interface between SWI Prolog and the Z3 prover. It exposes the basic Z3 functionality
      as Prolog predicates, leaving the implementation of more complex applications to Prolog code and libraries.
 
-     The main decision is how to handle state -- context, declarations and solvers.
+     The main decision is how to handle Z3 state: context, declarations and solvers.
 
-     It would be nice to embed all the function declarations in the context object; for this, we define a "HandleStruct" object
-     that has the Z3 context, plus the function declarations.
+     It seems nice to embed all the function declarations in the context object.
+     For this, we define a "HandleStruct" object that has the Z3 context, plus all the Z3 function declarations.
 
-     This includes enums and enum sorts. However, while normal declarations can be reset without having to create a new context,
-     enums can't be reset without resetting the context too.
+     This includes enums and enum sorts. However, note that while normal declarations can be reset without having
+     to create a new context, enums can't be reset without resetting the context too.
 
      We now dynamically allocate HandleStruct objects, for greater flexibility at the app level.
-     The solver is bundled in the handler. They could be separated, but would be more error prone at the PL level.
+     The solver is bundled in the handler. They could be separated, but this would be more error-prone at the Prolog level.
 
 *****/
 
@@ -377,7 +377,7 @@ foreign_t z3_make_solver_foreign(term_t handle_term, term_t solver_term) {
    In Prolog, we can use setup_call_cleanup to do this automatically.
 **/
 
-/*
+/**
 foreign_t z3_free_solver_foreign(term_t handle_term, term_t u) {
   handle h;
   int rval = PL_get_pointer_ex(handle_term, (void **) &h);
