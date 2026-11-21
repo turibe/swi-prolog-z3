@@ -61,6 +61,7 @@ iteration(I) :-
     z3_assert(H, f(a) = (b:int) + 1),
     z3_assert(H, c:color <> red),
     z3_assert(H, bv:bv(8) = int2bv(8, 5)),
+    z3_assert(H, (r:real) * (r:real) = 2.0),       % an irrational value in the model
     z3_solver_push(H, _),
     z3_assert(H, between(d:int, 1, 3)),
     z3_assert(H, d:int <> e:real),

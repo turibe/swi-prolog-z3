@@ -87,6 +87,17 @@ true.
 M = model{constants:[a=2, b=1], functions:[f(2)=4, f(4)=5, (f/1=else)=2]}.
 ```
 
+With nonlinear real arithmetic, a model can contain irrational values. These appear as
+`algebraic(Approx, root(Coefficients, Index))`: `Approx` is a float, and the exact value is the
+`Index`-th smallest real root of the polynomial with integer `Coefficients`, lowest degree first:
+
+```bash
+?- z3_push(x:real * x:real = 2.0 and x > 0.0), z3_model(M).
+M = model{constants:[x=algebraic(1.4142135623730951, root([-2, 0, 1], 2))], functions:[]}.
+```
+
+Here `[-2, 0, 1]` is x^2 - 2, and index 2 picks its larger root, the positive square root of 2.
+
 6. If you prefer, run `use_module(stateful_repl)` and add assertions interactively:
 ```bash
 ?- add(a:int > 1).

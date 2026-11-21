@@ -1076,3 +1076,61 @@ test(counts_until_collected) :-
     assertion(N2 =:= N0).
 
 :- end_tests(finalize_memory).
+
+% Irrational values from nonlinear real arithmetic used to come back as the atom 'RootObject'.
+% They are now algebraic(Approx, root(Coefficients, Index)): a float, and the exact value as
+% the Index-th smallest real root of the polynomial with Coefficients, lowest degree first.
+
+:- begin_tests(algebraic_numbers).
+
+algebraic_model(Formulas, Constants) :-
+    setup_call_cleanup(z3_new_handle(H),
+                       ( maplist(z3_assert(H), Formulas),
+                         z3_check(H, l_true),
+                         z3_model_lists(H, Model),
+                         Constants = Model.constants ),
+                       z3_free_handle(H)).
+
+test(sqrt2_positive) :-
+    algebraic_model([(x:real) * (x:real) = 2.0, (x:real) > 0.0], C),
+    C = [x = algebraic(F, Root)],
+    assertion(Root == root([-2, 0, 1], 2)),
+    assertion(F =:= sqrt(2.0)).
+
+test(sqrt2_negative) :-
+    algebraic_model([(x:real) * (x:real) = 2.0, (x:real) < 0.0], C),
+    C = [x = algebraic(F, Root)],
+    assertion(Root == root([-2, 0, 1], 1)),
+    assertion(F =:= -sqrt(2.0)).
+
+test(cube_root) :-
+    algebraic_model([(y:real) * (y:real) * (y:real) = 3.0], C),
+    C = [y = algebraic(F, Root)],
+    assertion(Root == root([-3, 0, 0, 1], 1)),
+    assertion(abs(F - 3.0 ** (1/3)) < 1.0e-15).
+
+% x^5 = x + 1 has a real root with no formula in radicals.
+test(quintic) :-
+    algebraic_model([(u:real) * (u:real) * (u:real) * (u:real) * (u:real) = (u:real) + 1.0], C),
+    C = [u = algebraic(F, Root)],
+    assertion(Root == root([-1, -1, 0, 0, 0, 1], 1)),
+    assertion(abs(F ** 5 - F - 1) < 1.0e-12).
+
+% Rational values in the same model are unchanged.
+test(mixed_with_rational) :-
+    algebraic_model([(z:real) * (z:real) = 2.0, (w:real) = (z:real) * (z:real)], C),
+    assertion(memberchk(w = 2, C)),
+    assertion(memberchk(z = algebraic(_, root([-2, 0, 1], _)), C)).   % either root of x^2 - 2
+
+test(model_eval, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
+    z3_assert(H, (x:real) * (x:real) = 2.0),
+    z3_assert(H, (x:real) > 0.0),
+    z3_check(H, l_true),
+    z3_get_model(H, M),
+    z3_model_eval(H, M, x, false, V),
+    z3_free_model(H, M),
+    V = algebraic(F, Root),
+    assertion(Root == root([-2, 0, 1], 2)),
+    assertion(F =:= sqrt(2.0)).
+
+:- end_tests(algebraic_numbers).

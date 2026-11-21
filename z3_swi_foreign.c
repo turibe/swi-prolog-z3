@@ -1326,7 +1326,61 @@ static foreign_t z3_solver_assertions_foreign_locked(handle h, term_t handle_ter
   TODO: could make more general.
 */
 
+/*
+  Converts an irrational algebraic number, which Z3 produces in models of nonlinear real arithmetic,
+  to algebraic(Approx, root(Coefficients, Index)):
+    - Approx is a Prolog float close to the value;
+    - Coefficients lists the integer coefficients of its defining polynomial, lowest degree first,
+      so [-2, 0, 1] is x^2 - 2;
+    - Index says which real root of that polynomial it is, counting from 1 in increasing order.
+  For example, the positive square root of 2 is algebraic(1.4142135623730951, root([-2, 0, 1], 2)).
+*/
+#define ALGEBRAIC_DECIMAL_PLACES 20 // more than a double holds, so the float is correctly rounded
+
+static int algebraic_to_term(const Z3_context ctx, Z3_ast ast, term_t term) {
+  // Z3 marks a decimal approximation with a trailing '?'; strip it before parsing.
+  Z3_string decimal = Z3_get_numeral_decimal_string(ctx, ast, ALGEBRAIC_DECIMAL_PLACES);
+  size_t len = strlen(decimal);
+  char *digits = malloc(len + 1);
+  if (digits == NULL) return PL_resource_error("memory");
+  memcpy(digits, decimal, len + 1);
+  if (len > 0 && digits[len - 1] == '?') digits[len - 1] = '\0';
+  term_t parsed = PL_new_term_ref();
+  double approx;
+  int ok = PL_chars_to_term(digits, parsed) && PL_get_float(parsed, &approx);
+  if (!ok) ERROR("could not parse algebraic number approximation %s\n", digits);
+  free(digits);
+  if (!ok) return FALSE;
+
+  Z3_ast_vector poly = Z3_algebraic_get_poly(ctx, ast);
+  if (poly == NULL) return FALSE;
+  Z3_ast_vector_inc_ref(ctx, poly);
+  term_t coeffs = PL_new_term_ref();
+  PL_put_nil(coeffs);
+  term_t coeff = PL_new_term_ref();
+  for (unsigned i = Z3_ast_vector_size(ctx, poly); ok && i > 0; i--) { // build the list from the end
+    ok = PL_put_variable(coeff)
+      && z3_ast_to_term_internal(ctx, Z3_ast_vector_get(ctx, poly, i - 1), coeff)
+      && PL_cons_list(coeffs, coeff, coeffs);
+  }
+  Z3_ast_vector_dec_ref(ctx, poly);
+  if (!ok) return FALSE;
+
+  unsigned index = Z3_algebraic_get_i(ctx, ast);
+  term_t result = PL_new_term_ref();
+  return PL_unify_term(result,
+                       PL_FUNCTOR_CHARS, "algebraic", 2,
+                         PL_FLOAT, approx,
+                         PL_FUNCTOR_CHARS, "root", 2,
+                           PL_TERM, coeffs,
+                           PL_INT, (int) index)
+    && PL_unify(term, result);
+}
+
 foreign_t z3_ast_to_term_internal(const Z3_context ctx, Z3_ast ast, term_t term) {
+  if (Z3_is_algebraic_number(ctx, ast)) {
+    return algebraic_to_term(ctx, ast, term);
+  }
   if (Z3_is_numeral_ast(ctx, ast)) {
     int64_t i;
     if (Z3_get_numeral_int64(ctx, ast, &i)) {
