@@ -749,6 +749,17 @@ test(rationals_test) :-
     z3_model_assocs(M),
     get_assoc(x, M.constants, 3/5).
 
+% An irrational model value, algebraic(Approx, root(Coefficients, Index)), can be pushed back.
+test(algebraic_round_trip) :-
+    z3_push(x:real * x:real = 2.0 and x > 0.0),
+    z3_model(M),
+    memberchk(x = V, M.constants),
+    assertion(V = algebraic(_, root([-2, 0, 1], 2))),
+    z3_reset,
+    z3_push(y:real = V),
+    assertion(z3_is_implied(y * y = 2.0)),
+    assertion(\+ z3_is_consistent(y > 1.5)).
+
 :- end_tests(large_numbers).
 
 

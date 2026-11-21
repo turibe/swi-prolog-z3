@@ -98,6 +98,16 @@ M = model{constants:[x=algebraic(1.4142135623730951, root([-2, 0, 1], 2))], func
 
 Here `[-2, 0, 1]` is x^2 - 2, and index 2 picks its larger root, the positive square root of 2.
 
+Such terms can also be used in formulas, where they denote the exact root; `Approx` is ignored,
+so a value from one model can be pushed into another query:
+
+```bash
+?- z3_push(y:real = algebraic(1.4142135623730951, root([-2, 0, 1], 2))), z3_is_implied(y * y = 2.0).
+true.
+```
+
+This makes `algebraic/2` a reserved name, like the other built-in operations.
+
 6. If you prefer, run `use_module(stateful_repl)` and add assertions interactively:
 ```bash
 ?- add(a:int > 1).

@@ -62,6 +62,7 @@ iteration(I) :-
     z3_assert(H, c:color <> red),
     z3_assert(H, bv:bv(8) = int2bv(8, 5)),
     z3_assert(H, (r:real) * (r:real) = 2.0),       % an irrational value in the model
+    z3_assert(H, (sqrt2:real) = algebraic(0.0, root([-2, 0, 1], 1))),   % and one given to Z3
     z3_solver_push(H, _),
     z3_assert(H, between(d:int, 1, 3)),
     z3_assert(H, d:int <> e:real),
@@ -100,6 +101,7 @@ bad_formula(bv_numeral([1, foo])).                   % bad bit
 bad_formula(bv2int(undeclared_fn(x), true)).         % bad subterm in a special case
 bad_formula(mk_unsigned_int64(-1, int)).             % out of range
 bad_formula(atleast(p:bool, q:bool, notanint)).      % bad bound
+bad_formula(algebraic(0.0, root([-2, 0, 1], 3))).     % no such root
 
 % ---------------------------------------------------------------------------- leaks report
 

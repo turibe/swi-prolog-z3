@@ -5,7 +5,8 @@
               typecheck/4,
               typecheck_formula_list/3, % convenience
               typecheck_to_list/3, % convenience
-              mappable_symbol/1 % true if arg is not a pre-declared atom or function symbol
+              mappable_symbol/1, % true if arg is not a pre-declared atom or function symbol
+              algebraic_value/1  % true for an algebraic(Approx, root(Coefficients, Index)) number
           ]).
 
 /** <module> Type inference for Z3 expressions.
@@ -227,6 +228,14 @@ check_length(allthen(_,_), _) :- !, true.
 check_length(L, Arity) :- length(L, Arity).
 
 
+%! algebraic_value(@Term) is semidet.
+%  True if Term has the form of an algebraic number, algebraic(Approx, root(Coefficients, Index)),
+%  as Z3 models return for irrational values. It denotes the Index-th smallest real root of the
+%  polynomial with integer Coefficients, lowest degree first; Approx is ignored when the term is
+%  given to Z3. Such terms are real constants, not function applications, so their arguments are
+%  neither typechecked nor declared. Their contents are checked when they are converted for Z3.
+algebraic_value(T) :- compound(T), T = algebraic(_Approx, Root), compound(Root), Root = root(_, _).
+
 %%%%%%%% main predicate: typecheck/4 : +Expression, ~Type, +Environment, -NewEnvironment:
 
 %! typecheck(+Expression, -Type, +InputMap, +OutputMap)
@@ -244,6 +253,7 @@ typecheck(X, real, E, E) :- float(X), !.
 %% introduce a rational type?
 typecheck(X, real, E, E) :- rational(X), \+ integer(X), !.
 typecheck(X, string, E, E) :- string(X), !.
+typecheck(X, real, E, E) :- algebraic_value(X), !.
 typecheck(T, bv(N), E, E) :- functor(T, int2bv, _), !,
                              T = int2bv(N, I),
                              integer(N),

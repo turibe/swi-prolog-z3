@@ -1133,4 +1133,41 @@ test(model_eval, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
     assertion(Root == root([-2, 0, 1], 2)),
     assertion(F =:= sqrt(2.0)).
 
+% Algebraic terms can also be given to Z3, as the exact root they denote; Approx is ignored.
+test(round_trip, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
+    algebraic_model([(x:real) * (x:real) = 2.0, (x:real) > 0.0], [x = V]),
+    z3_assert(H, (y:real) = V),
+    z3_solver_push(H, _),
+    z3_assert(H, (y:real) * (y:real) = 2.0),
+    z3_check(H, l_true),
+    z3_solver_pop(H, 1, _),
+    z3_assert(H, (y:real) > 1.5),
+    z3_check(H, l_false).
+
+test(simplify_product, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
+    z3_simplify(H, algebraic(0.0, root([-2, 0, 1], 2)) * algebraic(0.0, root([-2, 0, 1], 2)), S),
+    assertion(S =:= 2).
+
+denoted(algebraic(0.0, root([-2, 0, 1], 1)), (w:real) < 0.0).            % the smaller root
+denoted(algebraic(0.0, root([-1, -1, 0, 0, 0, 1], 1)), (w:real) > 1.16). % the real root of x^5 - x - 1
+denoted(algebraic(0.0, root([-1, 2], 1)), (w:real) = 0.5).               % a rational root
+
+test(denotes_root, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)),
+                    forall(denoted(A, Property))] ) :-
+    z3_assert(H, (w:real) = A),
+    z3_assert(H, not(Property)),
+    z3_check(H, l_false).
+
+% Like other malformed values in a formula, these fail.
+malformed_algebraic(algebraic(0.0, root([-2, 0, 1], 3))).   % x^2 - 2 has only 2 real roots
+malformed_algebraic(algebraic(0.0, root([-2, 0, 1], 0))).   % roots count from 1
+malformed_algebraic(algebraic(0.0, root([-2, 0, 0], 1))).   % leading coefficient zero
+malformed_algebraic(algebraic(0.0, root([-2, x, 1], 1))).   % non-integer coefficient
+malformed_algebraic(algebraic(0.0, root([1], 1))).          % constant polynomial
+malformed_algebraic(algebraic(foo, root([-2, 0, 1], 1))).   % approximation not a number
+
+test(malformed, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)),
+                 forall(malformed_algebraic(A))] ) :-
+    \+ z3_assert(H, (w:real) = A).
+
 :- end_tests(algebraic_numbers).
