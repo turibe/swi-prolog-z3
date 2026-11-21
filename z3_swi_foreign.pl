@@ -149,8 +149,11 @@ prolog:message(z3_message(F,L)) --> {swritef(S, F, L)}, [S].
 %  Does a z3_push for Handle's solver, and reports the new number of Scopes.
 %  (Defined in `z3_swi_foreign.c`.)
 
-%! z3_solver_pop(+Handle, +N, -Scopes)
+%! z3_solver_pop(+Handle, +N, -Scopes) is det.
 %  Pops Handle's solver `N` times, and reports the new number of Scopes.
+%  Raises `domain_error(not_less_than_zero, N)` if N is negative, and
+%  `domain_error(between(0, Current), N)` if N is more than the Current number of scopes;
+%  the solver is unchanged in both cases.
 %  (Defined in `z3_swi_foreign.c`.)
 
 %! z3_solver_scopes(+Handle, -Scopes)
@@ -339,9 +342,33 @@ test(solver_push_pop, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
     z3_solver_pop(H, 1, New_scopes),
     assertion(New_scopes == 1).
 
-test(solver_pop, [ fail, setup(z3_new_handle(S)), cleanup(z3_free_handle(S)) ]) :-
+test(solver_pop, [ setup(z3_new_handle(S)), cleanup(z3_free_handle(S)),
+                   throws(error(domain_error(between(0, 1), 10), _)) ]) :-
     z3_solver_push(S, 1),
     z3_solver_pop(S, 10, _X).
+
+% Popping more scopes than exist used to fail silently; now it raises, leaving the solver unchanged.
+test(solver_pop_too_many_unchanged, [ setup(z3_new_handle(S)), cleanup(z3_free_handle(S)) ]) :-
+    z3_solver_push(S, 1),
+    z3_assert(S, a:int > 1),
+    z3_solver_push(S, 2),
+    catch(z3_solver_pop(S, 3, _), E, true),
+    assertion(E = error(domain_error(between(0, 2), 3), _)),
+    z3_solver_scopes(S, N),
+    assertion(N == 2),
+    z3_solver_assertions(S, L),
+    assertion(L == [a > 1]).
+
+test(solver_pop_no_scopes, [ setup(z3_new_handle(S)), cleanup(z3_free_handle(S)),
+                             throws(error(domain_error(between(0, 0), 1), _)) ]) :-
+    z3_solver_pop(S, 1, _).
+
+test(solver_pop_all, [ setup(z3_new_handle(S)), cleanup(z3_free_handle(S)) ]) :-
+    z3_solver_push(S, _), z3_solver_push(S, _),
+    z3_solver_pop(S, 2, N),            % exactly the number of scopes is fine
+    assertion(N == 0),
+    z3_solver_pop(S, 0, N0),           % and so is zero
+    assertion(N0 == 0).
 
 :- set_prolog_flag(plunit_output, always).
 
