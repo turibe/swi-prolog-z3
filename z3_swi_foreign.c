@@ -928,8 +928,11 @@ foreign_t z3_solver_pop_foreign(const term_t handle_term, const term_t npops, te
   Z3_solver solver = h->solver;
 
   int nbacktrack;
-  rval = PL_get_integer(npops, &nbacktrack);
+  rval = PL_get_integer_ex(npops, &nbacktrack);
   if (!rval) return rval;
+  if (nbacktrack < 0) {
+    return PL_domain_error("not_less_than_zero", npops);
+  }
 
   const Z3_context ctx = h->ctx;
   const int scopes = Z3_solver_get_num_scopes(ctx, solver);
@@ -1570,19 +1573,17 @@ Z3_ast term_to_ast(const handle h, decl_map declaration_map, const term_t formul
 
   // ********************************************* atom, string, integer cases ****************************************/
   case PL_ATOM: {
-    int bval;
-    if (PL_get_bool(formula, &bval)) {
-      DEBUG("term_to_ast, boolean\n");
-      if (bval) {
-        return Z3_mk_true(ctx);
-      }
-      return Z3_mk_false(ctx);
-    }
-
     char *atom_string;
     int res = PL_get_atom_chars(formula, &atom_string);
     if (!res) {
       return NULL;
+    }
+    // Only the atoms true and false are Boolean constants. (PL_get_bool would also accept on, off, and fail.)
+    if (strcmp(atom_string, "true") == 0) {
+      return Z3_mk_true(ctx);
+    }
+    if (strcmp(atom_string, "false") == 0) {
+      return Z3_mk_false(ctx);
     }
     DEBUG("term_to_ast, atom %s\n", atom_string);
 
@@ -2138,7 +2139,7 @@ Z3_ast term_to_ast(const handle h, decl_map declaration_map, const term_t formul
     }
     else if (strcmp(name_string, "bvnand") == 0) {
       CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_bvand(ctx, subterms[0], subterms[1]);
+      result = Z3_mk_bvnand(ctx, subterms[0], subterms[1]);
     }
     else if (strcmp(name_string, "bvneg") == 0) {
       CHECK_ARITY(name_string, 1, arity);
