@@ -385,6 +385,95 @@ static int get_model(term_t t, handle h, Z3_model *model) {
   return TRUE;
 }
 
+/*
+  AST and symbol blobs, used by the debugging predicates (term_to_z3_ast/3, z3_ast_to_term/3,
+  z3_ast_string/3, z3_symbol/3) and for the declaration returned by z3_declare_function/4.
+
+  The handle's context is created with Z3_mk_context (not Z3_mk_context_rc), which keeps every AST it
+  creates until the context is deleted, so these need no Z3 reference counting. A blob only has to keep
+  its handle's struct alive, and be used with that handle: once lock_handle has checked the handle is
+  live, an object belonging to it is valid.
+
+  The blob data is copied (no PL_BLOB_NOCOPY) and unique, so the same object for the same handle is
+  always the same atom; for example, z3_symbol(H, a, S1), z3_symbol(H, a, S2) gives S1 == S2.
+  Because a unique blob can be found again instead of created, the handle reference is taken in the
+  acquire hook, which runs once per new atom, rather than when the blob is put.
+*/
+
+struct ObjStruct {
+  void *ptr; // a Z3_ast (also used for function declarations) or a Z3_symbol
+  handle h;
+};
+
+static void acquire_obj_blob(atom_t a) {
+  struct ObjStruct *o = PL_blob_data(a, NULL, NULL);
+  atomic_fetch_add(&o->h->refcount, 1);
+}
+
+static int release_obj_blob(atom_t a) {
+  struct ObjStruct *o = PL_blob_data(a, NULL, NULL);
+  handle_release_ref(o->h);
+  return TRUE;
+}
+
+static int write_obj_blob(IOSTREAM *s, atom_t a, int flags) {
+  (void) flags;
+  PL_blob_t *type;
+  struct ObjStruct *o = PL_blob_data(a, NULL, &type);
+  // Printing the AST itself would need the handle's lock, which the write hook cannot take safely.
+  Sfprintf(s, "<%s>(%p,handle=%ld)", type->name, o->ptr, o->h->handle_id);
+  return TRUE;
+}
+
+static PL_blob_t z3_ast_blob = {
+  .magic = PL_BLOB_MAGIC,
+  .flags = PL_BLOB_UNIQUE,
+  .name = "z3_ast",
+  .acquire = acquire_obj_blob,
+  .release = release_obj_blob,
+  .write = write_obj_blob,
+};
+
+static PL_blob_t z3_symbol_blob = {
+  .magic = PL_BLOB_MAGIC,
+  .flags = PL_BLOB_UNIQUE,
+  .name = "z3_symbol",
+  .acquire = acquire_obj_blob,
+  .release = release_obj_blob,
+  .write = write_obj_blob,
+};
+
+// Unifies t with the blob of the given type for ptr, which belongs to h. The caller holds h->lock.
+static int unify_obj(term_t t, PL_blob_t *type, handle h, void *ptr) {
+  struct ObjStruct o;
+  memset(&o, 0, sizeof(o)); // the bytes are compared for uniqueness
+  o.ptr = ptr;
+  o.h = h;
+  // PL_unify_blob, not PL_put_blob: PL_put_blob's return value says whether the blob is new
+  // (which for a unique blob is not an error), not whether it succeeded.
+  return PL_unify_blob(t, &o, sizeof(o), type);
+}
+
+/*
+  Gets the object in a blob of the given type, which must belong to h (already locked and live).
+  Raises instantiation_error, type_error(TypeName, T), or permission_error(access, TypeName, T)
+  for an object of another handle.
+*/
+static int get_obj(term_t t, PL_blob_t *type, handle h, void **ptr) {
+  void *data;
+  PL_blob_t *actual;
+  if (!PL_get_blob(t, &data, NULL, &actual) || actual != type) {
+    if (PL_is_variable(t)) return PL_instantiation_error(t);
+    return PL_type_error(type->name, t);
+  }
+  struct ObjStruct *o = data;
+  if (o->h != h) {
+    return PL_permission_error("access", type->name, t);
+  }
+  *ptr = o->ptr;
+  return TRUE;
+}
+
 // ***************************** END BLOBS ********************************************
 
 
@@ -448,15 +537,9 @@ foreign_t z3_new_handle_foreign(term_t handle_term) {
   pthread_mutex_init(&h->pending_lock, NULL);
   initialize_handle(h);
 
-  term_t blob = PL_new_term_ref();
-  if (!PL_put_blob(blob, h, sizeof(*h), &z3_handle_blob)) {
-    destroy_context(h);
-    handle_release_ref(h);
-    return FALSE;
-  }
-  // From here the blob owns h; if the unification fails, garbage collection releases it.
+  // The blob owns h from here; if the unification fails, garbage collection releases it.
   DEBUG("Made new handle %p\n", h);
-  return PL_unify(handle_term, blob);
+  return PL_unify_blob(handle_term, h, sizeof(*h), &z3_handle_blob);
 }
 
 /*
@@ -725,15 +808,8 @@ static foreign_t z3_get_model_foreign_locked(handle h, term_t handle_term, term_
   m->h = h;
   atomic_fetch_add(&h->refcount, 1);
 
-  term_t blob = PL_new_term_ref();
-  if (!PL_put_blob(blob, m, sizeof(*m), &z3_model_blob)) {
-    Z3_model_dec_ref(h->ctx, model);
-    handle_release_ref(h);
-    free(m);
-    return FALSE;
-  }
-  // From here the blob owns m; if the unification fails, garbage collection releases it.
-  return PL_unify(model_term, blob);
+  // The blob owns m from here; if the unification fails, garbage collection releases it.
+  return PL_unify_blob(model_term, m, sizeof(*m), &z3_model_blob);
 }
 
 
@@ -1113,7 +1189,7 @@ static foreign_t z3_symbol_foreign_locked(handle h, term_t handle_term, term_t i
     // return PL_warning("z3_symbol/2: should specify an int, atom, or string");
     return FALSE;
   }
-  return PL_unify_pointer(symbol, s);
+  return unify_obj(symbol, &z3_symbol_blob, h, s);
 }
 
 
@@ -1133,7 +1209,7 @@ int z3_lbool_to_atom(const Z3_lbool status, term_t plterm) {
   return FALSE;
 }
 
-/* For debugging only, easy to crash the system :-) */
+/* For debugging: converts a z3_ast blob (from term_to_z3_ast/3) back to a Prolog term. */
 
 static foreign_t z3_ast_to_term_foreign_locked(handle h, term_t handle_term, term_t ast_term, term_t term);
 
@@ -1149,7 +1225,7 @@ static foreign_t z3_ast_to_term_foreign_locked(handle h, term_t handle_term, ter
   int rval = TRUE;
   (void) rval; (void) handle_term;
   Z3_ast ast;
-  rval = PL_get_pointer_ex(ast_term, (void**) &ast);
+  rval = get_obj(ast_term, &z3_ast_blob, h, (void **) &ast);
   if (!rval) {
     return rval;
   }
@@ -1297,7 +1373,7 @@ static foreign_t term_to_z3_ast_foreign_locked(handle h, term_t handle_term, ter
   if (z3_ast == NULL) {
     return FALSE;
   }
-  return PL_unify_pointer(result, z3_ast);
+  return unify_obj(result, &z3_ast_blob, h, z3_ast);
 }
 
 
@@ -1319,7 +1395,7 @@ static foreign_t z3_ast_string_foreign_locked(handle h, term_t handle_term, term
   int rval = TRUE;
   (void) rval; (void) handle_term;
   Z3_ast z3_form;
-  rval = PL_get_pointer_ex(formula, (void **) &z3_form);
+  rval = get_obj(formula, &z3_ast_blob, h, (void **) &z3_form);
   if (!rval) {
     return rval;
   }
@@ -1393,7 +1469,6 @@ static foreign_t z3_solver_pop_foreign_locked(handle h, const term_t npops, term
 
 /*
  Assert formula for solver.
- unsafe: can crash SWI Prolog by putting in a random int as the handle pointer
 */
 
 static foreign_t z3_assert_foreign_locked(handle h, term_t handle_term, term_t formula);
@@ -1664,7 +1739,7 @@ static foreign_t z3_declare_function_foreign_locked(handle h, term_t handle_term
     DEBUG("failing, mk_func_decl is NULL\n");
     return FALSE;
   }
-  return PL_unify_pointer(result, decl);
+  return unify_obj(result, &z3_ast_blob, h, Z3_func_decl_to_ast(h->ctx, decl));
 }
 
 
@@ -2941,12 +3016,12 @@ install_t install_z3_swi_foreign(void)
   PRED("z3_assert", 2, z3_assert_foreign, 0); // +handle, +formula
 
   // for debugging and unit tests, testing round-trips between Prolog and Z3:
-  PRED("term_to_z3_ast", 3, term_to_z3_ast_foreign, 0); // +handle, +formula, -z3_ast_pointer
+  PRED("term_to_z3_ast", 3, term_to_z3_ast_foreign, 0); // +handle, +formula, -z3_ast
   PRED("z3_ast_string", 3, z3_ast_string_foreign, 0); // +handle, +formula, -string
   PRED("z3_ast_to_term", 3, z3_ast_to_term_foreign, 0); // +handle, +ast, -formula
-  PRED("z3_symbol", 3, z3_symbol_foreign, 0); // +handle, +formula, -symbol_pointer
+  PRED("z3_symbol", 3, z3_symbol_foreign, 0); // +handle, +formula, -z3_symbol
 
-  PRED("z3_declare_function", 4, z3_declare_function_foreign, 0); // +handle_term, +pl_term, +range_atom, -declaration_pointer
+  PRED("z3_declare_function", 4, z3_declare_function_foreign, 0); // +handle_term, +pl_term, +range_atom, -z3_ast (the declaration)
   PRED("z3_declare_enum", 3, z3_declare_enum_foreign, 0);
 
   PRED("z3_solver_push", 2, z3_solver_push_foreign, 0); // +handle, -num_scopes
@@ -2956,15 +3031,15 @@ install_t install_z3_swi_foreign(void)
   PRED("z3_check", 2, z3_check_foreign, 0); // +handle, -status
   PRED("z3_check_and_print", 2, z3_check_and_print_foreign, 0); // +handle, -status
 
-  PRED("z3_get_model", 2, z3_get_model_foreign, 0); // +handle, -model_pointer
-  PRED("z3_model_eval", 5, z3_model_eval_foreign, 0); // +handle, +model_pointer, +formula, +completion_flag, -value
+  PRED("z3_get_model", 2, z3_get_model_foreign, 0); // +handle, -model
+  PRED("z3_model_eval", 5, z3_model_eval_foreign, 0); // +handle, +model, +formula, +completion_flag, -value
   PRED("z3_free_model", 2, z3_free_model_foreign, 0); // +handle, +model
 
   PRED("z3_simplify", 3, z3_simplify_foreign, 0); // +handle, +term, -simplified_term
-  PRED("z3_solver_assertions", 2, z3_solver_assertions_foreign, 0); // +handle_pointer, -assertion_list
+  PRED("z3_solver_assertions", 2, z3_solver_assertions_foreign, 0); // +handle, -assertion_list
 
-  PRED("z3_model_functions", 3, z3_model_functions_foreign, 0); // +handle, +model_pointer, -functions_term
-  PRED("z3_model_constants", 3, z3_model_constants_foreign, 0); // +handle, +model_pointer, -constants_term
+  PRED("z3_model_functions", 3, z3_model_functions_foreign, 0); // +handle, +model, -functions_term
+  PRED("z3_model_constants", 3, z3_model_constants_foreign, 0); // +handle, +model, -constants_term
 
   PRED("z3_reset_declarations", 1, z3_reset_declarations_foreign, 0); // +handle // clears non-enum declarations, keeps enums and the Z3 context
   PRED("z3_get_enum_declarations", 2, z3_get_enum_declarations_foreign, 0); // +handle, -term
