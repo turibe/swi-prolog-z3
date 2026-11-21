@@ -54,9 +54,16 @@
 
 // *************************************************************************
 
+// Sorts Z3 accepts in arithmetic comparisons such as <; Bool is converted with (ite b 1 0).
 bool numeric_sort(Z3_context ctx, Z3_sort s) {
   Z3_sort_kind k = Z3_get_sort_kind(ctx, s);
   return (k == Z3_BOOL_SORT || k == Z3_INT_SORT || k == Z3_REAL_SORT);
+}
+
+// Sorts Z3 lets mix in an equality: Int and Real only (Bool = Int is a sort error).
+bool arith_sort(Z3_context ctx, Z3_sort s) {
+  Z3_sort_kind k = Z3_get_sort_kind(ctx, s);
+  return (k == Z3_INT_SORT || k == Z3_REAL_SORT);
 }
 
 Z3_ast mk_int_var(Z3_context ctx, const char * name) {
@@ -152,7 +159,7 @@ void free_handle_contents(handle h);
 
 void z3_swi_error_handler(Z3_context ctx, Z3_error_code e) {
   Z3_string msg = Z3_get_error_msg(ctx, e);
-  fprintf(stderr, "Z3 ERROR: code %ul %s\n", e, msg);
+  fprintf(stderr, "Z3 ERROR: code %d %s\n", (int) e, msg);
 }
 
 void initialize_handle(handle handle) {
@@ -499,10 +506,13 @@ Z3_symbol mk_symbol(Z3_context ctx, term_t pl_term) {
     break;
   }
   case PL_INTEGER: {
-    long lval;
-    int res = PL_get_long(pl_term, &lval);
-    if (!res) return NULL;
-    Z3_symbol s = Z3_mk_int_symbol(ctx, lval);
+    int ival; // Z3_mk_int_symbol takes an int, so fail on anything larger.
+    int res = PL_get_integer(pl_term, &ival);
+    if (!res) {
+      ERROR("integer symbol out of range\n");
+      return NULL;
+    }
+    Z3_symbol s = Z3_mk_int_symbol(ctx, ival);
     return s;
     break;
   }
@@ -539,7 +549,7 @@ bool z3_sort_to_term(Z3_context ctx, Z3_sort sort, term_t result) {
     {
       Z3_string sname_string = Z3_get_symbol_string(ctx, sname);
       int res = PL_put_atom_chars(cons_term, sname_string);
-      if (!res) return NULL;
+      if (!res) return FALSE;
     }
 
   } // end switch
@@ -560,7 +570,11 @@ foreign_t z3_declaration_map_to_term(Z3_context ctx, decl_map declaration_map, t
   for (unsigned i = 0; i < size; i++) {
     Z3_ast key = Z3_ast_vector_get(ctx, keys, i);
     term_t key_term = PL_new_term_ref();
-    z3_ast_to_term_internal(ctx, key, key_term);
+    if (!z3_ast_to_term_internal(ctx, key, key_term)) {
+      ERROR("could not convert declaration key %s\n", Z3_ast_to_string(ctx, key));
+      Z3_ast_vector_dec_ref(ctx, keys);
+      return FALSE;
+    }
 
     Z3_func_decl value = (Z3_func_decl) Z3_ast_map_find(ctx, declaration_map, key);
     term_t value_term = PL_new_term_ref();
@@ -569,6 +583,7 @@ foreign_t z3_declaration_map_to_term(Z3_context ctx, decl_map declaration_map, t
     bool res = z3_sort_to_term(ctx, sort, value_term);
     if (!res) {
       ERROR("error in z3_sort_to_term\n");
+      Z3_ast_vector_dec_ref(ctx, keys);
       return FALSE;
     }
 
@@ -756,6 +771,8 @@ int z3_lbool_to_atom(const Z3_lbool status, term_t plterm) {
     return PL_unify_atom_chars(plterm, "l_undef");
     break;
   }
+  ERROR("unexpected Z3_lbool value %d\n", (int) status);
+  return FALSE;
 }
 
 /* For debugging only, easy to crash the system :-) */
@@ -783,14 +800,18 @@ foreign_t z3_solver_assertions_foreign(term_t handle_term, term_t list) {
   Z3_context ctx = h->ctx;
   Z3_ast_vector v = Z3_solver_get_assertions(ctx, solver);
   Z3_ast_vector_inc_ref(ctx, v);
-  int size = Z3_ast_vector_size(ctx, v);
-  DEBUG("Vector size is %d\n", size);
+  unsigned size = Z3_ast_vector_size(ctx, v);
+  DEBUG("Vector size is %u\n", size);
   term_t l = PL_new_term_ref();
   PL_put_nil(l);
   for (unsigned i = 0; i < size; ++i) {
     term_t a = PL_new_term_ref(); // putting this outside the loop does not work.
     Z3_ast termi = Z3_ast_vector_get(ctx, v, i);
-    z3_ast_to_term_internal(ctx, termi, a);
+    if (!z3_ast_to_term_internal(ctx, termi, a)) {
+      ERROR("could not convert assertion %s\n", Z3_ast_to_string(ctx, termi));
+      Z3_ast_vector_dec_ref(ctx, v);
+      return FALSE;
+    }
     int res = PL_cons_list(l, a, l);
     if (!res) {
       Z3_ast_vector_dec_ref(ctx, v);
@@ -836,7 +857,7 @@ foreign_t z3_ast_to_term_internal(const Z3_context ctx, Z3_ast ast, term_t term)
       return FALSE;
     }
     Z3_string str = Z3_get_numeral_string(ctx, ast);
-    fprintf(stderr, "Handling numeral term %s\n", str);
+    DEBUG("Handling numeral term %s\n", str);
     term_t t = PL_new_term_ref();
     if (!PL_chars_to_term(str, t)) {
       ERROR("PL_chars_to_term failed for %s\n", str);
@@ -1017,7 +1038,7 @@ foreign_t z3_solver_scopes_foreign(term_t handle_term, term_t result) {
 
 foreign_t z3_check_foreign(term_t handle_term, term_t status_arg) {
   handle h;
-  int rval = PL_get_pointer(handle_term, (void **) &h);
+  int rval = PL_get_pointer_ex(handle_term, (void **) &h);
   if (!rval) return rval;
   Z3_solver solver = h->solver;
   const Z3_context ctx = h->ctx;
@@ -1500,6 +1521,10 @@ Z3_sort mk_sort(handle h, term_t expression) {
       int width;
       res = PL_get_integer_ex(a, &width);
       if (!res) return NULL;
+      if (width <= 0) {
+        ERROR("bit-vector width should be positive, got %d\n", width);
+        return NULL;
+      }
       DEBUG("Making bit vector sort of width %d\n", width);
       return Z3_mk_bv_sort(ctx, width);
     }
@@ -1633,7 +1658,7 @@ static Z3_ast compound_to_ast(const handle h, decl_map declaration_map, const ch
     // Check that types are compatible; otherwise Z3 quits/crashes
     Z3_sort s1 = Z3_get_sort(ctx, subterms[0]);
     Z3_sort s2 = Z3_get_sort(ctx, subterms[1]);
-    if ((!numeric_sort(ctx, s1)) && (!numeric_sort(ctx, s2)) && (s1 != s2)) // equalities between some expressions of numeric sorts are OK for Z3:
+    if (s1 != s2 && !(arith_sort(ctx, s1) && arith_sort(ctx, s2))) // Z3 allows mixing Int and Real only
       {
         ERROR("different types for equals, failing\n");
         ERROR("sort1: %s\n", Z3_sort_to_string(ctx, s1)); // as with ast_to_string, one sort_to_string invaliates the previous one, so we use two statements.
@@ -2150,23 +2175,28 @@ Z3_ast term_to_ast(const handle h, decl_map declaration_map, const term_t formul
         return NULL;
       }
       size_t width;
-      PL_skip_list(list_term, 0, &width); // gets list length
+      if (PL_skip_list(list_term, 0, &width) != PL_LIST || width == 0) { // also gets list length
+        ERROR("Argument to bv_numeral should be a non-empty proper list of booleans\n");
+        return NULL;
+      }
       bool * bits = malloc(width * sizeof(bool));
       term_t head = PL_new_term_ref();   // the elements
       term_t tail = PL_copy_term_ref(list_term); // copy (we modify tail)
-      int rc = TRUE;
-      int i = 0;
-      while( rc && PL_get_list_ex(tail, head, tail) )
-        {
-          int b;
-          rc = PL_get_bool_ex(head, &b);
-          if (rc) {
-            assert(i < width);
-            bits[i] = b;
-            i++;
-          }
+      size_t i = 0;
+      while (PL_get_list(tail, head, tail)) {
+        int b;
+        if (!PL_get_bool(head, &b)) {
+          char *elem_string = NULL;
+          if (!PL_get_chars(head, &elem_string, CVT_WRITE)) elem_string = "?";
+          ERROR("bv_numeral: %s is not a boolean\n", elem_string);
+          free(bits);
+          return NULL;
         }
-      
+        assert(i < width);
+        bits[i] = b;
+        i++;
+      }
+
       result = Z3_mk_bv_numeral(ctx, width, bits);
       free(bits);
       return result;
@@ -2234,8 +2264,8 @@ Z3_ast term_to_ast(const handle h, decl_map declaration_map, const term_t formul
       res = PL_get_arg(1, formula, sub1);
       res = PL_get_arg(2, formula, sub2);
       int width;
-      if (!PL_get_integer(sub1, &width)) {
-        ERROR("First argument to int2bv should be an integer");
+      if (!PL_get_integer(sub1, &width) || width <= 0) {
+        ERROR("First argument to int2bv should be a positive integer\n");
         return NULL;
       }
       Z3_ast arg = term_to_ast(h, declaration_map, sub2);
@@ -2397,10 +2427,10 @@ foreign_t z3_alloc_bytes_foreign(term_t size_term) {
 #define PRED(name, arity, func, attr) \
   PL_register_foreign_in_module("z3_swi_foreign", name, arity, func, attr)
 
-install_t install()
+install_t install_z3_swi_foreign(void)
 {
-  fprintf(stderr, "Installing Z3 package\n");
-  
+  DEBUG("Installing Z3 package\n");
+
   Z3_string version = Z3_get_full_version();
   fprintf(stderr, "Using Z3 version %s\n", version);
 
@@ -2442,7 +2472,7 @@ install_t install()
   PRED("z3_model_functions", 3, z3_model_functions_foreign, 0); // +handle, +model_pointer, -functions_term
   PRED("z3_model_constants", 3, z3_model_constants_foreign, 0); // +handle, +model_pointer, -constants_term
 
-  PRED("z3_reset_declarations", 1, z3_reset_declarations_foreign, 0); // +handle // clears declarations, including enums, keeps Z3 context
+  PRED("z3_reset_declarations", 1, z3_reset_declarations_foreign, 0); // +handle // clears non-enum declarations, keeps enums and the Z3 context
   PRED("z3_get_enum_declarations", 2, z3_get_enum_declarations_foreign, 0); // +handle, -term
   PRED("z3_get_declarations", 2, z3_get_declarations_foreign, 0); // +handle, -term
 

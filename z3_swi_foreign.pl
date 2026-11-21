@@ -669,6 +669,44 @@ test(enum_redeclare_fails, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))]
     z3_assert(H, x:c <> red),
     z3_check(H, l_true).
 
+% bv_numeral used to keep going on a non-boolean element, using uninitialized bits.
+test(bv_numeral_bad_lists, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)),
+                            forall(member(L, [[1, foo], [1|_], [1|x], []]))] ) :-
+    \+ term_to_z3_ast(H, bv_numeral(L), _).
+
+% Non-positive bit-vector widths used to reach Z3 as huge unsigned values.
+test(bad_bv_widths, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)),
+                     forall(member(T, [int2bv(0, 5), int2bv(-1, 5), a:bv(0) = a, b:bv(-3) = b]))] ) :-
+    \+ term_to_z3_ast(H, T, _).
+
+% The = check now only lets Int and Real mix.
+test(eq_sort_mismatches, [setup((z3_new_handle(H), z3_declare_enum(H, color, [red, blue]))),
+                          cleanup(z3_free_handle(H)),
+                          forall(member(T, [a:bool = b:int, c:int = d:color, e:bool = f:color]))] ) :-
+    \+ term_to_z3_ast(H, T, _).
+
+test(eq_int_real_mix, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
+    z3_assert(H, x:int = y:real),
+    z3_assert(H, y = 2.0),
+    z3_check(H, l_true).
+
+% <> still treats Bool as numeric, as Z3 does in arithmetic.
+test(neq_bool_real, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
+    z3_assert(H, c:bool <> d:real),
+    z3_check(H, l_true).
+
+% Integer symbols used to be truncated from long to int.
+test(int_symbol_range, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
+    z3_symbol(H, 5, S1),
+    z3_symbol(H, 5, S2),
+    assertion(S1 == S2),
+    Big is 2^40,
+    \+ z3_symbol(H, Big, _).
+
+% z3_check/2 used PL_get_pointer instead of PL_get_pointer_ex.
+test(check_bad_handle, [throws(error(type_error(_, foo), _))] ) :-
+    z3_check(foo, _).
+
 :- end_tests(c_wrapper_fixes).
 
 
