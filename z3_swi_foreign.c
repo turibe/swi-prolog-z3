@@ -6,6 +6,7 @@
 #include <assert.h>
 #include <stdatomic.h>
 #include <pthread.h>
+#include <time.h>
 
 // /opt/homebrew/Cellar/gmp/6.3.0/include/gmp.h
 // #include <gmp.h>
@@ -148,8 +149,10 @@ static atomic_long handle_counter = 0;
 
   Threads: a handle may be shared between Prolog threads. Every predicate that takes a handle holds
   h->lock for its whole run (see lock_handle and the *_locked functions), so calls on one handle are
-  serialized; calls on different handles run in parallel. A thread waiting for the lock cannot be
-  interrupted until the call holding it (for example a long z3_check) returns.
+  serialized; calls on different handles run in parallel. A thread waiting for the lock still handles
+  Prolog signals (see wait_for_handle_lock), so a time limit, thread_signal/2 or Ctrl-C reaches it.
+  The call holding the lock cannot be interrupted that way: a running z3_check, for example, only
+  sees signals after Z3 returns.
   Lock order: h->lock before h->pending_lock. Blob release hooks only take pending_lock.
 */
 
@@ -329,6 +332,24 @@ static PL_blob_t z3_model_blob = {
 };
 
 /*
+  Locks h->lock. While another thread holds it, polls instead of blocking, handling Prolog signals
+  between attempts, so a waiting thread can still be interrupted. Returns FALSE, without the lock,
+  if a signal handler raised an exception (time_limit_exceeded, for example); the caller returns
+  FALSE so the exception propagates. The poll interval starts at 0.1 ms and doubles up to 10 ms.
+  (macOS has no pthread_mutex_timedlock, hence trylock and a sleep.)
+*/
+static int wait_for_handle_lock(handle h) {
+  if (pthread_mutex_trylock(&h->lock) == 0) return TRUE; // the usual, uncontended case
+  struct timespec delay = { 0, 100000 };
+  for (;;) {
+    if (PL_handle_signals() < 0) return FALSE;
+    nanosleep(&delay, NULL);
+    if (pthread_mutex_trylock(&h->lock) == 0) return TRUE;
+    if (delay.tv_nsec < 10000000) delay.tv_nsec *= 2;
+  }
+}
+
+/*
   Gets a live handle from a Prolog term and locks it; the caller must call unlock_handle(h) after.
   Raises instantiation_error, type_error(z3_handle, T), or existence_error(z3_handle, T) for a
   handle whose context has been freed (nothing is locked in those cases).
@@ -341,7 +362,7 @@ static int lock_handle(term_t t, handle *hp) {
     return PL_type_error("z3_handle", t);
   }
   handle h = data; // the term keeps the blob, and so h, alive for the whole call
-  pthread_mutex_lock(&h->lock);
+  if (!wait_for_handle_lock(h)) return FALSE;
   if (h->ctx == NULL) {
     pthread_mutex_unlock(&h->lock);
     return PL_existence_error("z3_handle", t);
