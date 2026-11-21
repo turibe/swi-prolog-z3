@@ -18,27 +18,46 @@ Github: [https://github.com/turibe/swi-prolog-z3](https://github.com/turibe/swi-
 
 ## Installation:
 
-Tested on MacOS Sonoma,
- with Z3 version 4.12.6.0 and SWI-Prolog version 9.1.21 for arm64-darwin.
- 
+Tested on macOS (arm64) with SWI-Prolog 9.1.21 and Z3 5.4.2 (built from source with CMake),
+Z3 5.4.1 (Homebrew), and Z3 4.12.6.
+
 1. Install swi-prolog. This can be done via brew, macports, or download. See [https://www.swi-prolog.org/](https://www.swi-prolog.org/).
 
    After this, you should have `swipl` and `swipl-ld` executables.
 
-2. Install and build Z3, including `libz3.dylib` . This can also be done via brew, macports, or download.
-See [https://github.com/Z3Prover/z3](https://github.com/Z3Prover/z3).
+2. Get Z3, either from Homebrew or by building it from source. See [https://github.com/Z3Prover/z3](https://github.com/Z3Prover/z3).
 
+   - Homebrew: `brew install z3`. The headers are then in `/opt/homebrew/include` and the library in `/opt/homebrew/lib`.
+   - From source, with CMake (this needs `cmake` and `ninja`, for example from Homebrew):
 
+     ```bash
+     git clone https://github.com/Z3Prover/z3.git ~/git/z3
+     cd ~/git/z3
+     cmake -S . -B build-cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DZ3_BUILD_TEST_EXECUTABLES=OFF
+     ninja -C build-cmake libz3
+     ```
 
-3. Add a symbolic link to the `libz3.dylib` file in this directory (or copy it over).
+     This creates `build-cmake/libz3.dylib`; the headers are in `src/api`.
+     If an older build with Z3's Python script left generated `*.hpp` files in the source tree
+     (such as `src/sat/sat_params.hpp` or `src/smt/params/smt_params_helper.hpp`), delete them first:
+     they shadow newer headers and break the build.
+
+3. Tell the build where Z3 is. Either add a symbolic link to `libz3.dylib` in this directory:
+
+   ```bash
+   ln -s ~/git/z3/build-cmake/libz3.dylib libz3.dylib
+   ```
+
+   or set `Z3_LIBDIR` to the directory holding `libz3.dylib` in the next step.
+   After switching to a different Z3, run `make clean` before `make`, so the library is relinked against it.
 
 4. Compile the C code for the Prolog-Z3 interface with `make`.
 By default it looks for the Z3 headers in `~/git/z3/src/api` and for `libz3.dylib` in this directory;
 set `Z3_INCLUDE` and `Z3_LIBDIR` to point elsewhere:
 
 ```bash
-make
-make Z3_INCLUDE=/<path-to-z3>/z3/src/api Z3_LIBDIR=.
+make                                                               # Z3 source in ~/git/z3, symlink here
+make Z3_INCLUDE=/opt/homebrew/include Z3_LIBDIR=/opt/homebrew/lib  # Homebrew
 ```
 
 This runs `swipl-ld` and creates a `z3_swi_foreign.so` binary that is loaded into SWI Prolog when `use_module(z3_swi_foreign)` is executed.
@@ -51,7 +70,7 @@ and with Homebrew's Z3, which already records an absolute path.
 ```bash
 swipl
 ?- use_module(z3).
-Using Z3 version Z3 4.12.6.0
+Using Z3 version 5.4.2.0 ...
 true.
 ```
 
@@ -65,7 +84,7 @@ false.
 true.
 
 ?- z3_push(a:int=f(b) and b = 1 and f(a) > 3), z3_push(f(f(a)) = 5), z3_model(M).
-M1 = model{constants:[a-2, b-1], functions:[f/1-else-2, f(4)-5, f(2)-4]}.
+M = model{constants:[a=2, b=1], functions:[f(2)=4, f(4)=5, (f/1=else)=2]}.
 ```
 
 6. If you prefer, run `use_module(stateful_repl)` and add assertions interactively:
