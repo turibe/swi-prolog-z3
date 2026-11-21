@@ -2,6 +2,7 @@
 #
 #   make            build z3_swi_foreign.so
 #   make test       build, then run the unit tests
+#   make einstein   build, then solve the Einstein puzzle in examples/einstein.pl
 #   make clean      remove the built library
 #
 # Point the build at your Z3 install by overriding these, for example:
@@ -20,7 +21,7 @@ LIB        = z3_swi_foreign.so
 SRC        = z3_swi_foreign.c
 TEST_FILES = z3.pl stateful_repl.pl z3_swi_foreign.pl
 
-.PHONY: all test clean
+.PHONY: all test einstein clean
 
 all: $(LIB)
 
@@ -29,6 +30,9 @@ $(LIB): $(SRC)
 
 test: $(LIB)
 	$(SWIPL) -g run_tests -t halt $(TEST_FILES)
+
+einstein: $(LIB)
+	$(SWIPL) -q examples/einstein.pl
 
 clean:
 	rm -f $(LIB)

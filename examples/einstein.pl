@@ -1,12 +1,22 @@
+#!/usr/bin/env -S swipl -q
 %%% -*- Mode: Prolog; Module: einstein; -A*-
 
+%% Run from the repository root with ./examples/einstein.pl or make einstein,
+%% or load it with consult(examples/einstein).
 
 :- module(einstein, [
               solve/1,
               solve_enums/1,
-              declare_enums/0
+              declare_enums/0,
+              print_solution/0
               ]).
-              
+
+% Run main only when this file is the script swipl was started with, not when it is consulted.
+:- prolog_load_context(source, This),
+   (   current_prolog_flag(associated_file, This)
+   ->  initialization(main, main)
+   ;   true
+   ).
 
 %% The so-called "Einstein puzzle":
 %% From, e.g., https://www.freecodecamp.org/news/einsteins-riddle/
@@ -36,7 +46,7 @@ Now to solve, tell me who owns the fish?
 
 %% load from parent directoryy, with consult(examples/einstein).
 
-:- use_module(z3).
+:- use_module('../z3').
 
 %% functions people->X : pet, owns, drinks, smokes
 
@@ -159,6 +169,38 @@ assert_puzzle(M) :- all_assertions(All), push_assertions(All), z3_model(M).
 
 solve(M) :- must_be(var, M), z3:reset_globals, assert_puzzle(M), print_model(M).
 solve_enums(M) :- must_be(var, M), z3:reset_globals, declare_enums, assert_puzzle(M), print_model(M).
+
+%% Solves the puzzle with enums and prints one row per house, then who owns the fish.
+%% Values are read with z3_eval/3 (with completion), so entries the model folds into a
+%% function's "else" case are still shown.
+
+nationality(N) :- member(N, [brit, swede, dane, norwegian, german]).
+house_color(C, Const) :- member(C-Const, [red-redhouse, green-greenhouse, white-whitehouse,
+                                          yellow-yellowhouse, blue-bluehouse]).
+
+house_row(H, row(H, Color, Nat, Drink, Smoke, Pet)) :-
+    once((house_color(Color, Const), z3_eval(Const, true, H))),
+    once((nationality(Nat), z3_eval(Nat, true, H))),
+    z3_eval(drinks(H), true, Drink),
+    z3_eval(smokes(H), true, Smoke),
+    z3_eval(pet(H), true, Pet).
+
+print_solution :-
+    z3:reset_globals,
+    declare_enums,
+    all_assertions(A),
+    push_assertions(A),
+    findall(Row, (between(1, 5, H), house_row(H, Row)), Rows),
+    format("~w~t~8|~w~t~16|~w~t~28|~w~t~38|~w~t~50|~w~n",
+           ['House', 'Color', 'Nationality', 'Drinks', 'Smokes', 'Pet']),
+    forall(member(row(H, C, N, D, S, P), Rows),
+           format("~w~t~8|~w~t~16|~w~t~28|~w~t~38|~w~t~50|~w~n", [H, C, N, D, S, P])),
+    memberchk(row(_, _, Owner, _, _, fish), Rows),
+    format("~nThe ~w owns the fish.~n", [Owner]).
+
+main :-
+    print_solution,
+    z3:free_globals.
 
 implies_test1 :- all_assertions(A), push_assertions(A),
                  z3_is_implied(norwegian = 1 and dane = 2 and brit = 3 and german = 4 and swede = 5).
