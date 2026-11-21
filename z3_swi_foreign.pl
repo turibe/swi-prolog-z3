@@ -851,6 +851,32 @@ test(freed_in_other_thread, [setup(z3_new_handle(H)), throws(error(existence_err
     thread_join(T, true),
     z3_check(H, _).
 
+% pigeonhole(H, 9) is unsatisfiable and slow to prove (about 1.3 s on an M-series Mac),
+% so it keeps the handle busy for a while.
+:- use_module(examples/pigeonhole).
+
+% A thread waiting for a busy handle used to ignore time limits and thread signals until the call
+% holding the handle returned. Requires the pigeonhole check to outlast the waits (about 0.3 s).
+test(interrupt_waiting_thread, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
+    pigeonhole(H, 9),
+    thread_create(z3_check(H, _), Busy),
+    sleep(0.1),
+    thread_create(catch(z3_check(H, _), stop, true), Signalled),
+    get_time(T0),
+    catch(call_with_time_limit(0.2, z3_check(H, _)), E, true),
+    get_time(T1),
+    thread_signal(Signalled, throw(stop)),
+    thread_join(Signalled, SignalledStatus),
+    get_time(T2),
+    assertion(thread_property(Busy, status(running))),   % both waits ended while it was busy
+    thread_join(Busy, BusyStatus),
+    assertion(E == time_limit_exceeded),
+    assertion(T1 - T0 < 0.5),
+    assertion(SignalledStatus == true),
+    assertion(T2 - T1 < 0.3),
+    assertion(BusyStatus == true),
+    z3_solver_scopes(H, 0).                                % the handle still works
+
 :- end_tests(handle_threads).
 
 % Argument errors raise ISO errors; formulas that are valid Prolog but not valid Z3 still fail.
