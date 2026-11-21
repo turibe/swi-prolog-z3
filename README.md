@@ -43,7 +43,8 @@ make Z3_INCLUDE=/<path-to-z3>/z3/src/api Z3_LIBDIR=.
 
 This runs `swipl-ld` and creates a `z3_swi_foreign.so` binary that is loaded into SWI Prolog when `use_module(z3_swi_foreign)` is executed.
 On macOS, `make` also records where `libz3.dylib` is (next to `z3_swi_foreign.so` for the default `Z3_LIBDIR`),
-so the library loads from any working directory. (`make.sh` does not do this; with it, run from this directory.)
+so the library loads from any working directory. This works with Z3 built by its Python script or by CMake,
+and with Homebrew's Z3, which already records an absolute path.
 
 5. Start `swipl`, import the `z3.pl` or `stateful_repl.pl` module (e.g. `use_module(z3)`), and you're done!
 
@@ -210,5 +211,17 @@ and navigate to [http://localhost:8080/pldoc/](http://localhost:8080/pldoc/) to 
 - The current version handles the following Z3 capabilities:
 {int,real,bool} types, propositional logic, equality, arithmetic, bit vectors, and uninterpreted function symbols.
 Other Z3 features such as arrays, sets and quantifiers are future work.
+
+- Big integers and rationals could be passed between Prolog and Z3 using [GMP](https://gmplib.org/),
+the arbitrary-precision library SWI-Prolog uses for them, instead of going through text.
+Currently, an integer that does not fit in 64 bits is converted to a decimal string and given to `Z3_mk_numeral`,
+a Prolog rational is split into numerator and denominator with `rational/3`,
+and large numbers coming back from Z3 are parsed from Z3's string form.
+With GMP, the C code could read them directly with `PL_get_mpz`/`PL_get_mpq` and build terms with `PL_unify_mpz`/`PL_unify_mpq`.
+This would avoid the string round trips, though Z3's C API itself takes numerals as strings,
+so the gain would mostly be on the way back to Prolog.
+It would also add a build dependency on GMP: its headers on the include path
+(for Homebrew, `-I/opt/homebrew/include`) and `-lgmp` when linking.
+There is commented-out code for this in `z3_swi_foreign.c`.
 
 
