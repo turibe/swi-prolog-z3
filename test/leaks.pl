@@ -89,7 +89,8 @@ error_paths(H) :-
     ignore(catch(z3_declare_enum(H, bad, [a|_]), _, true)),
     ignore(catch(z3_assert(H, _ > 1), _, true)),
     ignore(z3_remove_declaration(H, nosuch, 0)),
-    ignore(catch(z3_solver_pop(H, -1, _), _, true)).
+    ignore(catch(z3_solver_pop(H, -1, _), _, true)),
+    ignore(catch(z3_solver_pop(H, 99, _), _, true)).
 
 bad_formula(between(x, 1)).                          % wrong arity
 bad_formula(undeclared_fn(x)).                       % missing declaration

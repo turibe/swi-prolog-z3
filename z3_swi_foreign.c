@@ -1504,8 +1504,16 @@ static foreign_t z3_solver_pop_foreign_locked(handle h, const term_t npops, term
   const Z3_context ctx = h->ctx;
   const int scopes = Z3_solver_get_num_scopes(ctx, solver);
   if (nbacktrack > scopes) {
-    ERROR("Cannot pop %d since scopes is %d\n", nbacktrack, scopes);
-    return FALSE;
+    // Like must_be(between(0, Scopes), N): error(domain_error(between(0, Scopes), N), _).
+    term_t ex = PL_new_term_ref();
+    if (!PL_unify_term(ex, PL_FUNCTOR_CHARS, "error", 2,
+                             PL_FUNCTOR_CHARS, "domain_error", 2,
+                               PL_FUNCTOR_CHARS, "between", 2, PL_INT, 0, PL_INT, scopes,
+                               PL_TERM, npops,
+                             PL_VARIABLE)) {
+      return FALSE;
+    }
+    return PL_raise_exception(ex);
   }
   Z3_solver_pop(ctx, solver, nbacktrack);
   const int new_scopes = Z3_solver_get_num_scopes(ctx, solver);
