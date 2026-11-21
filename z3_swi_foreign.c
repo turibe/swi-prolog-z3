@@ -130,6 +130,12 @@ typedef Z3_ast_map sort_map;
 
 static atomic_long handle_counter = 0;
 
+// Z3 contexts that exist right now, counted so z3_finalize_memory/0 can refuse to run while any do:
+// Z3_finalize_memory frees memory that every context relies on. contexts_lock makes creating a
+// context and finalizing mutually exclusive. The count goes down only after Z3_del_context returns.
+static atomic_long live_contexts = 0;
+static pthread_mutex_t contexts_lock = PTHREAD_MUTEX_INITIALIZER;
+
 // The HandleStruct has the objects needed to typecheck and convert Prolog terms to Z3.
 // Solver and Model objects are separate, and we can do push and pop on solvers from Prolog.
 
@@ -256,6 +262,7 @@ static void destroy_context(handle h) {
     h->num_pending = 0; // Z3_del_context frees these models too
     free_handle_contents(h);
     h->ctx = NULL;
+    atomic_fetch_sub(&live_contexts, 1);
   }
   pthread_mutex_unlock(&h->pending_lock);
 }
@@ -535,7 +542,10 @@ foreign_t z3_new_handle_foreign(term_t handle_term) {
   atomic_init(&h->refcount, 1); // owned by the blob
   pthread_mutex_init(&h->lock, NULL);
   pthread_mutex_init(&h->pending_lock, NULL);
+  pthread_mutex_lock(&contexts_lock);
   initialize_handle(h);
+  atomic_fetch_add(&live_contexts, 1);
+  pthread_mutex_unlock(&contexts_lock);
 
   // The blob owns h from here; if the unification fails, garbage collection releases it.
   DEBUG("Made new handle %p\n", h);
@@ -564,8 +574,23 @@ static foreign_t z3_free_handle_foreign_locked(handle h, term_t handle_term) {
   return TRUE;
 }
 
-foreign_t z3_finalize_memory_foreign() {
+/*
+  Frees Z3's global memory (Z3_finalize_memory), for leak checking. Z3 needs that memory for every
+  context, so this raises permission_error(finalize, z3_memory, live_handles(N)) instead while any
+  handle's context exists. That includes handles that are no longer referenced but not yet garbage
+  collected; call garbage_collect_atoms/0 first. Z3 can be used again afterwards.
+*/
+foreign_t z3_finalize_memory_foreign(void) {
+  pthread_mutex_lock(&contexts_lock);
+  long live = atomic_load(&live_contexts);
+  if (live > 0) {
+    pthread_mutex_unlock(&contexts_lock);
+    term_t culprit = PL_new_term_ref();
+    if (!PL_unify_term(culprit, PL_FUNCTOR_CHARS, "live_handles", 1, PL_LONG, live)) return FALSE;
+    return PL_permission_error("finalize", "z3_memory", culprit);
+  }
   Z3_finalize_memory();
+  pthread_mutex_unlock(&contexts_lock);
   return TRUE;
 }
 
@@ -3058,7 +3083,7 @@ install_t install_z3_swi_foreign(void)
   PRED("z3_free_handle", 1, z3_free_handle_foreign, 0); // +handle
 
   PRED("z3_alloc_bytes", 1, z3_alloc_bytes_foreign, 0); // +size
-  PRED("z3_finalize_memory", 0, z3_finalize_memory_foreign, 0); // +size // debugging only, dangerous.
+  PRED("z3_finalize_memory", 0, z3_finalize_memory_foreign, 0); // raises permission_error while any handle's context exists
 
   PRED("handle_stats", 4, handle_stats_foreign, 0); // +handle, -A, -B, -C
   

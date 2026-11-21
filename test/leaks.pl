@@ -31,8 +31,17 @@ main(Argv) :-
     ),
     format("Running leak workload, ~D iterations...~n", [N]),
     workload(N),
+    % If the last iteration dropped a handle, a stale reference on Prolog's stacks can keep atom
+    % garbage collection from reclaiming it; one more explicitly freed handle clears that.
+    z3_new_handle(Flush), z3_free_handle(Flush),
     garbage_collect,
     garbage_collect_atoms,
+    % Every handle is now freed or collected, so Z3's global memory can be freed too. This also
+    % checks that z3_finalize_memory/0 succeeds when no handle is alive.
+    catch(z3_swi_foreign:z3_finalize_memory, E,
+          ( print_message(error, E),
+            format(user_error, "z3_finalize_memory refused: some handle is still alive.~n", []),
+            halt(2) )),
     run_leaks(Report),
     check_report(Report).
 
