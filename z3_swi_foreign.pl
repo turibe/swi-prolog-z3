@@ -1008,3 +1008,44 @@ test(repeated_objects_and_gc) :-
     garbage_collect_atoms.
 
 :- end_tests(object_blobs).
+
+% z3_finalize_memory/0 frees memory every Z3 context needs, so it refuses while any exists.
+% (z3.pl, loaded by the test suite, keeps a global handle, so finalizing always refuses here;
+% make leaks exercises the successful case.)
+
+:- begin_tests(finalize_memory).
+
+live_handles(N) :-
+    catch(z3_swi_foreign:z3_finalize_memory, error(permission_error(finalize, z3_memory, live_handles(N)), _), true),
+    assertion(integer(N)).
+
+test(refuses_with_live_handle, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
+    catch(z3_swi_foreign:z3_finalize_memory, E, true),
+    assertion(E = error(permission_error(finalize, z3_memory, live_handles(_)), _)),
+    z3_assert(H, a:int > 1),           % the handle still works
+    z3_check(H, l_true).
+
+test(counts_handles) :-
+    garbage_collect_atoms,
+    live_handles(N0),
+    z3_new_handle(H),
+    live_handles(N1),
+    assertion(N1 =:= N0 + 1),
+    z3_free_handle(H),
+    live_handles(N2),
+    assertion(N2 =:= N0).
+
+unreferenced_handle :- z3_new_handle(_).
+
+test(counts_until_collected) :-
+    garbage_collect_atoms,
+    live_handles(N0),
+    unreferenced_handle,
+    live_handles(N1),
+    assertion(N1 =:= N0 + 1),          % still counted until garbage collected
+    z3_new_handle(Flush), z3_free_handle(Flush),   % clears stale stack references (see test/leaks.pl)
+    garbage_collect_atoms,
+    live_handles(N2),
+    assertion(N2 =:= N0).
+
+:- end_tests(finalize_memory).
