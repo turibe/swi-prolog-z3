@@ -166,7 +166,7 @@ prolog:message(z3_message(F,L)) --> {swritef(S, F, L)}, [S].
 %  Examples: z3_declare_function(H, a, int) ; z3_declare_function(H, f(int, int), real).
 z3_declare_function(H, F, T) :- F == A/0, z3_declare_function(H, A, T).
 z3_declare_function(H, F, T) :- z3_declare_function(H, F, T, _C).
-% (Returned pointer is only useful for debugging, so we hide it here)
+% (The returned declaration, a z3_ast blob, is only useful for debugging, so we hide it here.)
 
 z3_model_lists(H, M, Map) :- z3_model_functions(H, M, F),
                              z3_model_constants(H, M, C),
@@ -918,3 +918,67 @@ test(malformed_formulas_fail, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H
     \+ z3_assert(H, F).
 
 :- end_tests(argument_errors).
+
+% ASTs, declarations and symbols handed to Prolog are blobs tied to their handle,
+% so a made-up or stale one raises an error instead of crashing.
+
+:- begin_tests(object_blobs).
+
+test(ast_is_blob, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
+    term_to_z3_ast(H, 1 + 2, A),
+    assertion(blob(A, z3_ast)),
+    term_to_z3_ast(H, 1 + 2, A2),
+    assertion(A == A2),                 % the same AST gives the same blob
+    z3_ast_string(H, A, S),
+    assertion(S == "(+ 1 2)").
+
+test(symbol_is_blob, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
+    z3_symbol(H, a, S),
+    assertion(blob(S, z3_symbol)).
+
+test(declaration_is_ast, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
+    z3_declare_function(H, f(int), bool, D),
+    assertion(blob(D, z3_ast)),
+    z3_ast_string(H, D, S),
+    assertion(S == "(declare-fun f (Int) Bool)").
+
+% These used to dereference an arbitrary integer as a pointer.
+test(integer_as_ast, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)),
+                      forall(member(Goal, [z3_ast_to_term(H, 12345, _), z3_ast_string(H, 12345, _)]))] ) :-
+    catch(Goal, error(E, _), true),
+    assertion(E == type_error(z3_ast, 12345)).
+
+test(symbol_as_ast, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
+    z3_symbol(H, a, S),
+    catch(z3_ast_string(H, S, _), error(E, _), true),
+    assertion(E == type_error(z3_ast, S)).
+
+test(unbound_ast, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)),
+                   throws(error(instantiation_error, _))] ) :-
+    z3_ast_to_term(H, _, _).
+
+test(ast_wrong_handle, [setup((z3_new_handle(H1), z3_new_handle(H2))),
+                        cleanup((z3_free_handle(H1), z3_free_handle(H2)))] ) :-
+    term_to_z3_ast(H1, 1 + 2, A),
+    catch(z3_ast_to_term(H2, A, _), error(E, _), true),
+    assertion(E == permission_error(access, z3_ast, A)).
+
+test(ast_after_free, [setup(z3_new_handle(H)), throws(error(existence_error(z3_handle, H), _))] ) :-
+    term_to_z3_ast(H, 1 + 2, A),
+    z3_free_handle(H),
+    z3_ast_to_term(H, A, _).
+
+repeated_symbol(H) :- z3_symbol(H, a, _), term_to_z3_ast(H, x > 1, _).
+
+% Repeated objects reuse one blob; each blob must hold exactly one handle reference,
+% or freeing and collecting below would release the handle too early or never.
+test(repeated_objects_and_gc) :-
+    z3_new_handle(H),
+    forall(between(1, 1000, _), repeated_symbol(H)),
+    z3_symbol(H, a, S),
+    z3_free_handle(H),
+    garbage_collect_atoms,
+    assertion(blob(S, z3_symbol)),
+    garbage_collect_atoms.
+
+:- end_tests(object_blobs).
