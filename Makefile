@@ -3,6 +3,7 @@
 #   make            build z3_swi_foreign.so
 #   make test       build, then run the unit tests
 #   make einstein   build, then solve the Einstein puzzle in examples/einstein.pl
+#   make leaks      build, then check the C code for memory leaks (macOS only; see test/leaks.pl)
 #   make clean      remove the built library
 #
 # Point the build at your Z3 install by overriding these, for example:
@@ -47,7 +48,7 @@ else
   FIX_Z3_PATH = true
 endif
 
-.PHONY: all test einstein clean
+.PHONY: all test einstein leaks clean
 
 all: $(LIB)
 
@@ -60,6 +61,16 @@ test: $(LIB)
 
 einstein: $(LIB)
 	$(SWIPL) -q examples/einstein.pl
+
+# Runs a workload under macOS's leaks tool and fails if any leaked block was allocated with
+# z3_swi_foreign.so on its call stack. The workload's expected error messages go to LEAKS_LOG.
+LEAK_ITERATIONS ?= 2000
+LEAKS_LOG       ?= $(or $(TMPDIR),/tmp/)z3-leaks-stderr.log
+
+leaks: $(LIB)
+	@if [ "$$(uname -s)" != Darwin ]; then echo "make leaks needs macOS's leaks tool"; exit 1; fi
+	@MallocStackLogging=1 $(SWIPL) -q test/leaks.pl $(LEAK_ITERATIONS) 2>"$(LEAKS_LOG)" \
+	  || { echo "(messages from the workload are in $(LEAKS_LOG))"; exit 1; }
 
 clean:
 	rm -f $(LIB)
