@@ -11,18 +11,18 @@
               z3_assert/2,                 %% +handle, +formula  Asserts the formula, but does not do a solver check yet.
               z3_declarations/2,           %% +handle, -declarations
               z3_enum_declarations/2,      %% +handle, -declarations
-              z3_free_model/2,             %% +handle, +model_pointer
+              z3_free_model/2,             %% +handle, +model
               z3_declare_function/3,       %% +handle, +formula_schema, +type
               z3_remove_declaration/3,     %% +handle, +name, +arity
               z3_declare_enum/3,           %% +handle, +name, +list_of_values
-              z3_model_eval/5,             %% +handle, +model_pointer, +formula, +completion_flag, -value
+              z3_model_eval/5,             %% +handle, +model, +formula, +completion_flag, -value
               z3_model_lists/2,            %% +handle, -map with lists for constants and functions
               z3_model_assocs/2,           %% +handle, -map with assocs for constants and functions
               z3_reset_declarations/1,     %% +handle  Resets all declarations, does not clear solvers.
               z3_solver_assertions/2,      %% +handle, -assertions
               z3_check/2,                  %% +handle, -status
               z3_check_and_print/2,        %% calls Z3_model_to_string
-              z3_get_model/2,              %% +handle, -model_pointer
+              z3_get_model/2,              %% +handle, -model
               z3_solver_pop/3,             %% +handle, +N, -new_scopes pop the solver N times
               z3_solver_push/2,            %% +handle, -new_scopes     push the solver one time
               z3_simplify/3,               %% +handle, +term, -term
@@ -94,23 +94,29 @@ prolog:message(z3_message(F,L)) --> {swritef(S, F, L)}, [S].
 %  Gets a string describing the enum declarations for Handle.
 %  (Defined in `z3_swi_foreign.c`).
 
-%! z3_new_handle(+Handle)
-%  Creates a new handle. Should be freed with z3_free_handle/1.
+%! z3_new_handle(-Handle) is det.
+%  Creates a new handle, a `z3_handle` blob that prints as `<z3_handle>(Id)`.
+%  Its Z3 context is freed by z3_free_handle/1, or when the blob is garbage collected.
+%  Freeing explicitly is recommended, since contexts are large and atom garbage collection may not run soon.
 %  (Defined in `z3_swi_foreign.c`.)
 
-%! z3_free_handle(+Handle)
-%  Low-level: frees Handle and all associated resources (context, solver, declarations).
+%! z3_free_handle(+Handle) is det.
+%  Low-level: frees the resources of Handle (context, solver, declarations) and of its models.
+%  Using Handle afterwards, including freeing it again, raises `existence_error(z3_handle, Handle)`.
 %  (Defined in `z3_swi_foreign.c`.)
 
-%! z3_free_model(+Handle, +ModelPointer)
-%  Low-level: frees ModelPointer, a model for the given Handle/context.
+%! z3_free_model(+Handle, +Model) is det.
+%  Low-level: frees Model, a model for the given Handle/context.
+%  Using Model afterwards raises `existence_error(z3_model, Model)`.
 %  (Defined in `z3_swi_foreign.c`.)
 
-%! z3_get_model(+Handle, -ModelPointer)
-%  Low-level: gets a model for the given Handle/context. The model should be freed with z3_free_model/2.
+%! z3_get_model(+Handle, -Model) is semidet.
+%  Low-level: gets a model for the given Handle/context, as a `z3_model` blob. Fails if there is no model.
+%  The model can be freed with z3_free_model/2; otherwise it is freed when garbage collected.
+%  Using a model with a handle other than its own raises `permission_error(access, z3_model, Model)`.
 %  (Defined in `z3_swi_foreign.c`.)
 
-%! z3_model_eval(+Handle, +ModelPointer, +Formula, +CompletionFlag, -Result)
+%! z3_model_eval(+Handle, +Model, +Formula, +CompletionFlag, -Result)
 %  Given a model for Handle, evaluates Formula, using the given CompletionFlag (`true/false`).
 %  (Defined in `z3_swi_foreign.c`.)
 
@@ -225,13 +231,13 @@ test(reset_declarations, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] )
     z3_declarations_string(H, S),
     assertion(S =@= "(ast-map)").
 
-is_pointer(X) :- integer(X).
+is_model(X) :- blob(X, z3_model).
 
 test(check_solver, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
     z3_check(H, Status),
     assertion(Status == l_true),
     z3_get_model(H, M),
-    is_pointer(M),
+    is_model(M),
     z3_free_model(H, M).
 
 test(symbol_pointers, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
@@ -243,8 +249,6 @@ test(symbol_pointers, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
     assertion(S1 == S2),
     assertion(\+ (A1 == S1)).
 
-%% todo: wrap pointers in terms, for a little more typechecking:
-%% solver(S), model(M), etc.
 
 test(model_eval,  [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))])  :-
     z3_declare_function(H, a, int),
@@ -256,7 +260,6 @@ test(model_eval,  [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))])  :-
     setup_call_cleanup(
         z3_get_model(H, Model),
         (
-            % TODO: use blobs or some other method to distinguish models and solvers.
             assertion(z3_model_eval(H, Model, a+a, false, 6)),
             assertion(z3_model_eval(H, Model, a+b, false, 5)),
             assertion(z3_model_eval(H, Model, a*b, false, 6)),
@@ -710,3 +713,92 @@ test(check_bad_handle, [throws(error(type_error(_, foo), _))] ) :-
 :- end_tests(c_wrapper_fixes).
 
 
+
+% Handles and models are blobs, so stale or made-up ones raise errors instead of crashing.
+
+:- begin_tests(handle_blobs).
+
+test(handle_is_blob, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
+    assertion(blob(H, z3_handle)),
+    z3_handle_id(H, Id),
+    format(string(S), "~p", [H]),
+    format(string(Expected), "<z3_handle>(~w)", [Id]),
+    assertion(S == Expected).
+
+test(not_a_handle, [throws(error(type_error(z3_handle, 12345), _))] ) :-
+    z3_check(12345, _).
+
+test(unbound_handle, [throws(error(instantiation_error, _))] ) :-
+    z3_check(_, _).
+
+test(use_after_free, [setup(z3_new_handle(H)), throws(error(existence_error(z3_handle, H), _))] ) :-
+    z3_free_handle(H),
+    z3_check(H, _).
+
+test(double_free, [setup(z3_new_handle(H)), throws(error(existence_error(z3_handle, H), _))] ) :-
+    z3_free_handle(H),
+    z3_free_handle(H).
+
+test(model_is_blob, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
+    z3_check(H, l_true),
+    z3_get_model(H, M),
+    assertion(blob(M, z3_model)),
+    z3_free_model(H, M).
+
+test(model_use_after_free, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
+    z3_check(H, l_true),
+    z3_get_model(H, M),
+    z3_free_model(H, M),
+    catch(z3_model_eval(H, M, 1, false, _), E, true),
+    assertion(E = error(existence_error(z3_model, M), _)),
+    catch(z3_free_model(H, M), E2, true),
+    assertion(E2 = error(existence_error(z3_model, M), _)).
+
+test(model_wrong_handle, [setup((z3_new_handle(H1), z3_new_handle(H2))),
+                          cleanup((z3_free_handle(H1), z3_free_handle(H2)))] ) :-
+    z3_check(H1, l_true),
+    z3_get_model(H1, M),
+    catch(z3_model_constants(H2, M, _), E, true),
+    assertion(E = error(permission_error(access, z3_model, M), _)),
+    z3_free_model(H1, M).
+
+test(handle_as_model, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)),
+                       throws(error(type_error(z3_model, H), _))] ) :-
+    z3_free_model(H, H).
+
+% Freeing a handle invalidates its models; collecting them afterwards must not touch the dead context.
+test(model_outlives_handle) :-
+    z3_new_handle(H),
+    z3_check(H, l_true),
+    z3_get_model(H, M),
+    z3_free_handle(H),
+    catch(z3_model_constants(H, M, _), E, true),
+    assertion(E = error(existence_error(z3_handle, H), _)),
+    garbage_collect_atoms.
+
+unfreed_handle :- z3_new_handle(H), z3_assert(H, a:int > 3), z3_check(H, _).
+
+% Handles that are never freed are reclaimed by atom garbage collection.
+test(gc_reclaims_handles) :-
+    garbage_collect_atoms,
+    forall(between(1, 20, _), unfreed_handle),
+    z3_alloc_bytes(Live),
+    garbage_collect_atoms,
+    z3_alloc_bytes(After),
+    assertion(After < Live).
+
+unfreed_model(H) :- z3_get_model(H, _).
+
+% Models that are never freed are queued when collected and released on the handle's next use.
+test(gc_reclaims_models, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
+    z3_assert(H, x:int > 3),
+    z3_check(H, l_true),
+    forall(between(1, 500, _), unfreed_model(H)),
+    garbage_collect_atoms,
+    z3_check(H, l_true),
+    z3_get_model(H, M),
+    z3_model_lists(H, Model),
+    assertion(Model.constants = [x=_]),
+    z3_free_model(H, M).
+
+:- end_tests(handle_blobs).
