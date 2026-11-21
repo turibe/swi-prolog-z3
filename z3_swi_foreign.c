@@ -1326,7 +1326,61 @@ static foreign_t z3_solver_assertions_foreign_locked(handle h, term_t handle_ter
   TODO: could make more general.
 */
 
+/*
+  Converts an irrational algebraic number, which Z3 produces in models of nonlinear real arithmetic,
+  to algebraic(Approx, root(Coefficients, Index)):
+    - Approx is a Prolog float close to the value;
+    - Coefficients lists the integer coefficients of its defining polynomial, lowest degree first,
+      so [-2, 0, 1] is x^2 - 2;
+    - Index says which real root of that polynomial it is, counting from 1 in increasing order.
+  For example, the positive square root of 2 is algebraic(1.4142135623730951, root([-2, 0, 1], 2)).
+*/
+#define ALGEBRAIC_DECIMAL_PLACES 20 // more than a double holds, so the float is correctly rounded
+
+static int algebraic_to_term(const Z3_context ctx, Z3_ast ast, term_t term) {
+  // Z3 marks a decimal approximation with a trailing '?'; strip it before parsing.
+  Z3_string decimal = Z3_get_numeral_decimal_string(ctx, ast, ALGEBRAIC_DECIMAL_PLACES);
+  size_t len = strlen(decimal);
+  char *digits = malloc(len + 1);
+  if (digits == NULL) return PL_resource_error("memory");
+  memcpy(digits, decimal, len + 1);
+  if (len > 0 && digits[len - 1] == '?') digits[len - 1] = '\0';
+  term_t parsed = PL_new_term_ref();
+  double approx;
+  int ok = PL_chars_to_term(digits, parsed) && PL_get_float(parsed, &approx);
+  if (!ok) ERROR("could not parse algebraic number approximation %s\n", digits);
+  free(digits);
+  if (!ok) return FALSE;
+
+  Z3_ast_vector poly = Z3_algebraic_get_poly(ctx, ast);
+  if (poly == NULL) return FALSE;
+  Z3_ast_vector_inc_ref(ctx, poly);
+  term_t coeffs = PL_new_term_ref();
+  PL_put_nil(coeffs);
+  term_t coeff = PL_new_term_ref();
+  for (unsigned i = Z3_ast_vector_size(ctx, poly); ok && i > 0; i--) { // build the list from the end
+    ok = PL_put_variable(coeff)
+      && z3_ast_to_term_internal(ctx, Z3_ast_vector_get(ctx, poly, i - 1), coeff)
+      && PL_cons_list(coeffs, coeff, coeffs);
+  }
+  Z3_ast_vector_dec_ref(ctx, poly);
+  if (!ok) return FALSE;
+
+  unsigned index = Z3_algebraic_get_i(ctx, ast);
+  term_t result = PL_new_term_ref();
+  return PL_unify_term(result,
+                       PL_FUNCTOR_CHARS, "algebraic", 2,
+                         PL_FLOAT, approx,
+                         PL_FUNCTOR_CHARS, "root", 2,
+                           PL_TERM, coeffs,
+                           PL_INT, (int) index)
+    && PL_unify(term, result);
+}
+
 foreign_t z3_ast_to_term_internal(const Z3_context ctx, Z3_ast ast, term_t term) {
+  if (Z3_is_algebraic_number(ctx, ast)) {
+    return algebraic_to_term(ctx, ast, term);
+  }
   if (Z3_is_numeral_ast(ctx, ast)) {
     int64_t i;
     if (Z3_get_numeral_int64(ctx, ast, &i)) {
@@ -2254,7 +2308,8 @@ static Z3_ast compound_to_ast(const handle h, decl_map declaration_map, const ch
     CHECK_ARITY(name_string, 1, arity);
     result = Z3_mk_real2int(ctx, subterms[0]);
   }
-  else if (strcmp(name_string, "=") == 0 || strcmp(name_string, "==") == 0 || strcmp(name_string, "equals") == 0 ) {
+  else if (strcmp(name_string, "=") == 0 || strcmp(name_string, "==") == 0 || strcmp(name_string, "equals") == 0
+           || strcmp(name_string, "equal") == 0) {
     DEBUG("making equals\n");
     CHECK_ARITY(name_string, 2, arity);
     // Check that types are compatible; otherwise Z3 quits/crashes
@@ -2544,6 +2599,107 @@ bool split_rational(term_t terms) {
 }
 
 /*
+  Converts algebraic(Approx, root(Coefficients, Index)), as algebraic_to_term produces, back to Z3:
+  the Index-th smallest real root (counting from 1) of the polynomial with integer Coefficients,
+  lowest degree first. Approx, a float approximation, is ignored. The formula is already ground.
+  Like other malformed values inside a formula, a malformed term fails with a message: Coefficients
+  must be a proper list of integers whose last (leading) one is not zero, and the polynomial must
+  have at least Index real roots.
+*/
+static Z3_ast algebraic_from_term(const handle h, const term_t formula) {
+  const Z3_context ctx = h->ctx;
+  term_t approx = PL_new_term_ref(), root = PL_new_term_ref();
+  term_t coeffs = PL_new_term_ref(), index_term = PL_new_term_ref();
+  atom_t root_name;
+  size_t root_arity;
+  if (!PL_get_arg(1, formula, approx) || !PL_get_arg(2, formula, root)
+      || !PL_get_name_arity(root, &root_name, &root_arity)
+      || root_arity != 2 || strcmp(PL_atom_nchars(root_name, NULL), "root") != 0
+      || !PL_get_arg(1, root, coeffs) || !PL_get_arg(2, root, index_term)) {
+    ERROR("algebraic/2: expected algebraic(Approx, root(Coefficients, Index))\n");
+    return NULL;
+  }
+  if (!PL_is_number(approx)) {
+    ERROR("algebraic/2: the approximation should be a number\n");
+    return NULL;
+  }
+  int index;
+  if (!PL_get_integer(index_term, &index) || index < 1) {
+    ERROR("algebraic/2: the root index should be a positive integer\n");
+    return NULL;
+  }
+  size_t n;
+  if (PL_skip_list(coeffs, 0, &n) != PL_LIST || n < 2) {
+    ERROR("algebraic/2: the coefficients should be a list of at least two integers\n");
+    return NULL;
+  }
+
+  // Build sum(c_k * x^k), where x is bound variable 0: Z3_algebraic_roots only accepts polynomials
+  // in bound variables, not in constants.
+  const Z3_sort real = h->real_sort;
+  const Z3_ast x = Z3_mk_bound(ctx, 0, real);
+  Z3_ast *terms = malloc(n * sizeof(Z3_ast));
+  Z3_ast *powers = malloc(n * sizeof(Z3_ast)); // x repeated, for the products
+  if (terms == NULL || powers == NULL) {
+    free(terms); free(powers);
+    PL_resource_error("memory");
+    return NULL;
+  }
+  for (size_t k = 0; k < n; k++) powers[k] = x;
+  term_t head = PL_new_term_ref(), tail = PL_copy_term_ref(coeffs);
+  size_t nterms = 0;
+  int leading_zero = FALSE;
+  for (size_t k = 0; PL_get_list(tail, head, tail); k++) {
+    char *digits;
+    if (!PL_is_integer(head) || !PL_get_chars(head, &digits, CVT_INTEGER)) {
+      ERROR("algebraic/2: the coefficients should be integers\n");
+      free(terms); free(powers);
+      return NULL;
+    }
+    int zero = strcmp(digits, "0") == 0;
+    if (k == n - 1) leading_zero = zero;
+    if (zero) continue;
+    Z3_ast c = Z3_mk_numeral(ctx, digits, real);
+    if (k == 0) {
+      terms[nterms++] = c;
+    }
+    else {
+      Z3_ast xk = k == 1 ? x : Z3_mk_mul(ctx, (unsigned) k, powers);
+      Z3_ast factors[2] = { c, xk };
+      terms[nterms++] = Z3_mk_mul(ctx, 2, factors);
+    }
+  }
+  free(powers);
+  if (leading_zero) {
+    ERROR("algebraic/2: the last (leading) coefficient should not be zero\n");
+    free(terms);
+    return NULL;
+  }
+  Z3_ast poly = nterms == 1 ? terms[0] : Z3_mk_add(ctx, (unsigned) nterms, terms);
+  free(terms);
+
+  Z3_ast_vector roots = Z3_algebraic_roots(ctx, poly, 0, NULL);
+  if (roots == NULL) {
+    ERROR("algebraic/2: Z3 could not find the roots of the polynomial\n");
+    return NULL;
+  }
+  Z3_ast_vector_inc_ref(ctx, roots);
+  unsigned nroots = Z3_ast_vector_size(ctx, roots);
+  Z3_ast result = NULL;
+  if ((unsigned) index > nroots) {
+    ERROR("algebraic/2: root %d requested, but the polynomial has %u real roots\n", index, nroots);
+  }
+  else {
+    result = Z3_ast_vector_get(ctx, roots, (unsigned) index - 1);
+    // The vector holds the only reference to the root; keep one so it outlives the vector. Like every
+    // AST in this (not reference counted) context, it is then freed when the context is deleted.
+    Z3_inc_ref(ctx, result);
+  }
+  Z3_ast_vector_dec_ref(ctx, roots);
+  return result;
+}
+
+/*
   Converts the Prolog term "formula" to a Z3 AST.
   Returns NULL if it fails:
 */
@@ -2768,6 +2924,10 @@ Z3_ast term_to_ast(const handle h, decl_map declaration_map, const term_t formul
 
     // See also prolog's getbit/2.
     // replace by int2bv, have bv_numeral take a list of bools?
+
+    if (strcmp(name_string, "algebraic") == 0 && arity == 2) { // an algebraic number from a model
+      return algebraic_from_term(h, formula);
+    }
 
     if (strcmp(name_string, "bv_numeral")==0) {
       CHECK_ARITY(name_string, 1, arity); // a list of booleans

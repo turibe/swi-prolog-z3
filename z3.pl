@@ -749,7 +749,54 @@ test(rationals_test) :-
     z3_model_assocs(M),
     get_assoc(x, M.constants, 3/5).
 
+% An irrational model value, algebraic(Approx, root(Coefficients, Index)), can be pushed back.
+test(algebraic_round_trip) :-
+    z3_push(x:real * x:real = 2.0 and x > 0.0),
+    z3_model(M),
+    memberchk(x = V, M.constants),
+    assertion(V = algebraic(_, root([-2, 0, 1], 2))),
+    z3_reset,
+    z3_push(y:real = V),
+    assertion(z3_is_implied(y * y = 2.0)),
+    assertion(\+ z3_is_consistent(y > 1.5)).
+
 :- end_tests(large_numbers).
+
+% Built-in names that the type inference and the C code used to disagree about.
+
+:- begin_tests(builtin_names, [setup(reset_globals), cleanup(free_globals)]).
+
+% equal/2 was accepted by type inference but unknown to the C code.
+test(equal) :-
+    z3_push(equal(a:int, 3)),
+    assertion(z3_is_implied(a = 3)).
+
+% equals, minus and mod were unknown to type inference, so they were declared as
+% uninterpreted functions as well as being handled as built-ins.
+builtin_formula(equals(b:int, 4), b = 4).
+builtin_formula(minus(c:int, 1) = 2, c = 3).
+builtin_formula(mod(d:int, 3) = 1 and d > 0 and d < 3, d = 1).
+
+test(no_function_declared, [forall(builtin_formula(F, Implied))]) :-
+    z3_reset,
+    z3_push(F),
+    assertion(z3_is_implied(Implied)),
+    z3_declarations(Ds),
+    forall(member(D, Ds), assertion(D = ((_/0):_))).     % constants only
+
+test(mod_is_integer_only, [fail]) :-
+    z3_push(mod(e:real, 2.0) = 1.0).
+
+% Type inference had these as bv2sub_..., both with three arguments.
+test(bvsub_no_overflow) :-
+    z3_push(bvsub_no_overflow(x:bv(8), y:bv(8))),
+    z3_declarations(Ds),
+    assertion(Ds == [(x/0):bv(8), (y/0):bv(8)]).
+
+test(bvsub_no_underflow) :-
+    z3_push(bvsub_no_underflow(x:bv(8), y:bv(8), true)).
+
+:- end_tests(builtin_names).
 
 
 :- begin_tests(enums).

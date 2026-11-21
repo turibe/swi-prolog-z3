@@ -87,6 +87,27 @@ true.
 M = model{constants:[a=2, b=1], functions:[f(2)=4, f(4)=5, (f/1=else)=2]}.
 ```
 
+With nonlinear real arithmetic, a model can contain irrational values. These appear as
+`algebraic(Approx, root(Coefficients, Index))`: `Approx` is a float, and the exact value is the
+`Index`-th smallest real root of the polynomial with integer `Coefficients`, lowest degree first:
+
+```bash
+?- z3_push(x:real * x:real = 2.0 and x > 0.0), z3_model(M).
+M = model{constants:[x=algebraic(1.4142135623730951, root([-2, 0, 1], 2))], functions:[]}.
+```
+
+Here `[-2, 0, 1]` is x^2 - 2, and index 2 picks its larger root, the positive square root of 2.
+
+Such terms can also be used in formulas, where they denote the exact root; `Approx` is ignored,
+so a value from one model can be pushed into another query:
+
+```bash
+?- z3_push(y:real = algebraic(1.4142135623730951, root([-2, 0, 1], 2))), z3_is_implied(y * y = 2.0).
+true.
+```
+
+This makes `algebraic/2` a reserved name, like the other built-in operations.
+
 6. If you prefer, run `use_module(stateful_repl)` and add assertions interactively:
 ```bash
 ?- add(a:int > 1).
@@ -213,6 +234,41 @@ with `z3_reset_context` (low-level), `z3_reset` (for `z3.pl`), or `reset` (for `
 For convenience, we expand `isoneof(a,v1,...,vn)` to `or(a=v1, ... a=vn)`.
 
 `alldifferent` is an alias for Z3's `distinct`.
+
+### Reserved names
+
+These names have a built-in meaning in formulas, so they cannot be used as names of your own
+constants or functions (with the arities shown, where they matter).
+
+- Special forms:
+  - `Term:Sort`, a type annotation;
+  - `algebraic/2`, an algebraic number, `algebraic(Approx, root(Coefficients, Index))` (every `algebraic/2` term is read as one);
+  - `bv_numeral/1`, a bit vector from a list of bits;
+  - `mk_numeral/2` and `mk_unsigned_int64/2`, a numeral of a given sort;
+  - `int2bv/2` and `bv2int/2`, conversions between integers and bit vectors;
+  - `mk_rational/2`, a rational from a numerator and a denominator;
+  - `isoneof/N` and `alldifferent/N`, macros (see above).
+- Constants: `true`, `false`.
+- Sort names, in `Term:Sort` and declarations: `int` or `integer`, `real`, `float` or `double`
+  (all three are Z3's reals), `bool` or `boolean`, `bv(N)`, and the names of declared enumeration sorts.
+  Any other atom names an uninterpreted sort.
+- Logic: `and`, `or`, `not`, `implies`, `iff`, `xor`, `ite`, and the operators `,`, `;`, `->`, `<=>`.
+- Equality and comparison: `=`, `==`, `equal`, `equals`, `<>`, `distinct`, `<`, `>`, `=<`, `>=`,
+  `leq`, `geq`, `between`.
+- Arithmetic: `+`, `-`, `minus`, `*`, `/`, `div`, `mod`, `rem`, `divides`, `power`, `**`, `^`,
+  `is_int`, `int2real`, `real2int`.
+- Pseudo-Boolean: `atleast`, `atmost`.
+- Bit vectors:
+  - arithmetic: `bvadd`, `bvsub`, `bvmul`, `bvudiv`, `bvsdiv`, `bvurem`, `bvsrem`, `bvsmod`, `bvneg`;
+  - bitwise: `bvand`, `bvor`, `bvxor`, `bvnand`, `bvnor`, `bvxnor`, `bvnot`, `bvredand`, `bvredor`;
+  - shifts: `bvshl`, `bvlshr`, `bvashr`;
+  - comparisons: `bvult`, `bvule`, `bvugt`, `bvuge`, `bvslt`, `bvsle`, `bvsgt`, `bvsge`;
+  - overflow checks: `bvadd_no_overflow/3`, `bvadd_no_underflow/2`, `bvsub_no_overflow/2`,
+    `bvsub_no_underflow/3`, `bvmul_no_overflow/3`, `bvmul_no_underflow/2`, `bvneg_no_overflow/1`,
+    `bvsdiv_no_overflow/2` (in the three-argument forms, the last argument says whether the check is signed).
+
+Two places know these names: `type_inference.pl`, which types formulas for `z3.pl`, and the conversion in
+`z3_swi_foreign.c`. A name added to one should be added to the other.
 
 ### Explanations and Relaxation
 

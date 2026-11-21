@@ -26,7 +26,8 @@ Utilities shared by z3.pl and stateful_repl.pl
 
 :- use_module(type_inference, [
                   typecheck/4,
-                  mappable_symbol/1
+                  mappable_symbol/1,
+                  algebraic_value/1
                   ]).
 
 :- initialization(reset_var_counts).
@@ -101,6 +102,7 @@ ground_version(X, Attr, [Attr/0]) :- var(X), !, add_z3_attribute(X, Attr).
 ground_version(X, X, S) :- number(X), !, ord_empty(S).
 ground_version(X, X, [X/0]) :- atom(X), mappable_symbol(X), !, true.
 ground_version(X, X, S) :- atomic(X), !, ord_empty(S).
+ground_version(X, X, S) :- algebraic_value(X), !, ord_empty(S).   % a number, not a function application
 ground_version(C, XG:T, Result) :- compound(C), C = X:T, !,
                                    %% type checking can instantiate the types, so we don't require them to be ground at this point.
                                    %% (ground(T) -> true ; type_error(ground, T)),
