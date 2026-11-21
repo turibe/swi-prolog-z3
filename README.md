@@ -32,23 +32,23 @@ See [https://github.com/Z3Prover/z3](https://github.com/Z3Prover/z3).
 
 3. Add a symbolic link to the `libz3.dylib` file in this directory (or copy it over).
 
-3. Compile the C code for the Prolog-Z3 interface, using the `swipl-ld` tool.
-
-(Adapt the `-I` and `-L` paths accordingly.)
+4. Compile the C code for the Prolog-Z3 interface with `make`.
+By default it looks for the Z3 headers in `~/git/z3/src/api` and for `libz3.dylib` in this directory;
+set `Z3_INCLUDE` and `Z3_LIBDIR` to point elsewhere:
 
 ```bash
-swipl-ld -I/<path-to-z3>/z3/src/api/ -L. -o z3_swi_foreign -shared z3_swi_foreign.c -lz3
+make
+make Z3_INCLUDE=/<path-to-z3>/z3/src/api Z3_LIBDIR=.
 ```
 
-This creates a `z3_swi_foreign.so` binary that is loaded into SWI Prolog when `use_module(z3_swi_foreign)` is executed.
+This runs `swipl-ld` and creates a `z3_swi_foreign.so` binary that is loaded into SWI Prolog when `use_module(z3_swi_foreign)` is executed.
 
 5. Start `swipl`, import the `z3.pl` or `stateful_repl.pl` module (e.g. `use_module(z3)`), and you're done!
 
 ```bash
 swipl
 ?- use_module(z3).
-Installing Z3 package
-Using Z3 version Z3 4.12.5.0
+Using Z3 version Z3 4.12.6.0
 true.
 ```
 
@@ -75,7 +75,7 @@ M = model{constants:[a=2, b=0], functions:[]}.
 
 ## Testing
 
-Unit tests can be run from the PL prompt with `?- run_tests.` , or running
+Unit tests can be run from the PL prompt with `?- run_tests.` , or with `make test`, which rebuilds the library if needed and then runs
 
 ```bash
 swipl -g run_tests -t halt z3.pl stateful_repl.pl z3_swi_foreign.pl
