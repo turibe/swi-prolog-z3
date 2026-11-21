@@ -802,3 +802,41 @@ test(gc_reclaims_models, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] )
     z3_free_model(H, M).
 
 :- end_tests(handle_blobs).
+
+% A handle shared between threads: calls on it are serialized by a per-handle lock.
+
+:- begin_tests(handle_threads).
+
+shared_handle_work(H, I) :-
+    forall(between(1, 100, J),
+           ( format(atom(X), "x~w_~w", [I, J]),
+             z3_solver_push(H, _),
+             z3_assert(H, X:int > J),
+             z3_check(H, l_true),
+             ( z3_get_model(H, M) -> z3_free_model(H, M) ; true ),
+             z3_simplify(H, X + X, _),
+             z3_solver_pop(H, 1, _) )).
+
+% Without the lock this crashed the process.
+test(shared_handle, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
+    findall(T, (between(1, 4, I), thread_create(shared_handle_work(H, I), T)), Ts),
+    maplist(thread_join, Ts, Statuses),
+    assertion(Statuses == [true, true, true, true]),
+    z3_solver_scopes(H, N),
+    assertion(N == 0).
+
+test(handle_per_thread) :-
+    findall(T, (between(1, 4, _),
+                thread_create(setup_call_cleanup(z3_new_handle(H),
+                                                 (z3_assert(H, a:int > 1), z3_check(H, l_true)),
+                                                 z3_free_handle(H)), T)),
+            Ts),
+    maplist(thread_join, Ts, Statuses),
+    assertion(Statuses == [true, true, true, true]).
+
+test(freed_in_other_thread, [setup(z3_new_handle(H)), throws(error(existence_error(z3_handle, H), _))] ) :-
+    thread_create(z3_free_handle(H), T),
+    thread_join(T, true),
+    z3_check(H, _).
+
+:- end_tests(handle_threads).
