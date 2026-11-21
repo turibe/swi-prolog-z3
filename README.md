@@ -45,7 +45,6 @@ This runs `swipl-ld` and creates a `z3_swi_foreign.so` binary that is loaded int
 On macOS, `make` also records where `libz3.dylib` is (next to `z3_swi_foreign.so` for the default `Z3_LIBDIR`),
 so the library loads from any working directory. This works with Z3 built by its Python script or by CMake,
 and with Homebrew's Z3, which already records an absolute path.
-(`make.sh` does not do this; with it, run from this directory, and a CMake-built Z3 will not load.)
 
 5. Start `swipl`, import the `z3.pl` or `stateful_repl.pl` module (e.g. `use_module(z3)`), and you're done!
 
