@@ -235,6 +235,41 @@ For convenience, we expand `isoneof(a,v1,...,vn)` to `or(a=v1, ... a=vn)`.
 
 `alldifferent` is an alias for Z3's `distinct`.
 
+### Reserved names
+
+These names have a built-in meaning in formulas, so they cannot be used as names of your own
+constants or functions (with the arities shown, where they matter).
+
+- Special forms:
+  - `Term:Sort`, a type annotation;
+  - `algebraic/2`, an algebraic number, `algebraic(Approx, root(Coefficients, Index))` (every `algebraic/2` term is read as one);
+  - `bv_numeral/1`, a bit vector from a list of bits;
+  - `mk_numeral/2` and `mk_unsigned_int64/2`, a numeral of a given sort;
+  - `int2bv/2` and `bv2int/2`, conversions between integers and bit vectors;
+  - `mk_rational/2`, a rational from a numerator and a denominator;
+  - `isoneof/N` and `alldifferent/N`, macros (see above).
+- Constants: `true`, `false`.
+- Sort names, in `Term:Sort` and declarations: `int` or `integer`, `real`, `float` or `double`
+  (all three are Z3's reals), `bool` or `boolean`, `bv(N)`, and the names of declared enumeration sorts.
+  Any other atom names an uninterpreted sort.
+- Logic: `and`, `or`, `not`, `implies`, `iff`, `xor`, `ite`, and the operators `,`, `;`, `->`, `<=>`.
+- Equality and comparison: `=`, `==`, `equal`, `equals`, `<>`, `distinct`, `<`, `>`, `=<`, `>=`,
+  `leq`, `geq`, `between`.
+- Arithmetic: `+`, `-`, `minus`, `*`, `/`, `div`, `mod`, `rem`, `divides`, `power`, `**`, `^`,
+  `is_int`, `int2real`, `real2int`.
+- Pseudo-Boolean: `atleast`, `atmost`.
+- Bit vectors:
+  - arithmetic: `bvadd`, `bvsub`, `bvmul`, `bvudiv`, `bvsdiv`, `bvurem`, `bvsrem`, `bvsmod`, `bvneg`;
+  - bitwise: `bvand`, `bvor`, `bvxor`, `bvnand`, `bvnor`, `bvxnor`, `bvnot`, `bvredand`, `bvredor`;
+  - shifts: `bvshl`, `bvlshr`, `bvashr`;
+  - comparisons: `bvult`, `bvule`, `bvugt`, `bvuge`, `bvslt`, `bvsle`, `bvsgt`, `bvsge`;
+  - overflow checks: `bvadd_no_overflow/3`, `bvadd_no_underflow/2`, `bvsub_no_overflow/2`,
+    `bvsub_no_underflow/3`, `bvmul_no_overflow/3`, `bvmul_no_underflow/2`, `bvneg_no_overflow/1`,
+    `bvsdiv_no_overflow/2` (in the three-argument forms, the last argument says whether the check is signed).
+
+Two places know these names: `type_inference.pl`, which types formulas for `z3.pl`, and the conversion in
+`z3_swi_foreign.c`. A name added to one should be added to the other.
+
 ### Explanations and Relaxation
 
 - We also include a generic Prolog implementation of Junker's QuickXplain algorithms,

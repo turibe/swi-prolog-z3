@@ -2308,7 +2308,8 @@ static Z3_ast compound_to_ast(const handle h, decl_map declaration_map, const ch
     CHECK_ARITY(name_string, 1, arity);
     result = Z3_mk_real2int(ctx, subterms[0]);
   }
-  else if (strcmp(name_string, "=") == 0 || strcmp(name_string, "==") == 0 || strcmp(name_string, "equals") == 0 ) {
+  else if (strcmp(name_string, "=") == 0 || strcmp(name_string, "==") == 0 || strcmp(name_string, "equals") == 0
+           || strcmp(name_string, "equal") == 0) {
     DEBUG("making equals\n");
     CHECK_ARITY(name_string, 2, arity);
     // Check that types are compatible; otherwise Z3 quits/crashes

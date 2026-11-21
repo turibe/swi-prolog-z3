@@ -57,6 +57,8 @@ declare(Functor, ArgTypes, Result) :-
 signature(/, A, B) :- signature(div, A, B).
 signature(==, A, B) :- signature(=, A, B).
 signature(equal, A, B) :- signature(=, A, B).
+signature(equals, A, B) :- signature(=, A, B).
+signature(minus, A, B) :- signature(-, A, B).
 signature(',', A, B) :- signature(and, A, B).
 signature(; , A, B) :- signature(or, A, B).
 signature(-> , A, B) :- signature(implies, A, B).
@@ -130,6 +132,7 @@ signature(^, A, B) :- signature(power, A, B).
 
 :- declare(divides, [int, int], bool).
 :- declare(rem, [int, int], int).
+:- declare(mod, [int, int], int).
 
 % :- declare(<, [T, T], bool).
 % :- declare(>, [T, T], bool).
@@ -180,8 +183,8 @@ signature(^, A, B) :- signature(power, A, B).
 :- declare(bvsmod, [bv(N), bv(N)], bv(N)).
 :- declare(bvsrem, [bv(N), bv(N)], bv(N)).
 :- declare(bvsub, [bv(N), bv(N)], bv(N)).
-:- declare(bv2sub_no_overflow, [bv(N),bv(N), bool], bool).
-:- declare(bv2sub_no_underflow, [bv(N),bv(N), bool], bool).
+:- declare(bvsub_no_overflow, [bv(N), bv(N)], bool).        % as Z3_mk_bvsub_no_overflow
+:- declare(bvsub_no_underflow, [bv(N), bv(N), bool], bool). % as Z3_mk_bvsub_no_underflow; bool: signed
 :- declare(bvudiv, [bv(N), bv(N)], bv(N)).
 :- declare(bvuge, [bv(N), bv(N)], bool).
 :- declare(bvugt, [bv(N), bv(N)], bool).
