@@ -919,16 +919,16 @@ foreign_t z3_solver_push_foreign(term_t handle_term, term_t output_term) {
   handle h;
   int rval = PL_get_pointer_ex(handle_term, (void **) &h);
   if (!rval) return rval;
-  if (!PL_is_variable(output_term)) {
-    ERROR("z3_solver_push: output term should be a variable.");
-    return FALSE;
-  }
   const Z3_solver solver = h->solver;
   const Z3_context ctx = h->ctx;
+  // Unify before pushing, so that a mismatched output fails without leaving an extra scope.
+  const unsigned new_scopes = Z3_solver_get_num_scopes(ctx, solver) + 1;
+  if (!PL_unify_uint64(output_term, new_scopes)) {
+    return FALSE;
+  }
   Z3_solver_push(ctx, solver);
-  unsigned scopes = Z3_solver_get_num_scopes(ctx, solver);
-
-  return PL_unify_uint64(output_term, scopes);
+  assert(Z3_solver_get_num_scopes(ctx, solver) == new_scopes);
+  return TRUE;
 }
 
 /* Pops the solver npops times. Output is the new number of scopes for the solver. */

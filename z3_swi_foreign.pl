@@ -554,7 +554,15 @@ test(pop_negative, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)),
     z3_solver_push(H, _),
     z3_solver_pop(H, -1, _).
 
-test(pop_not_integer, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)),
+% z3_solver_push/2 used to reject a bound output, so z3_solver_push(H, 1) always failed.
+test(push_bound_output, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
+    z3_solver_push(H, 1),
+    \+ z3_solver_push(H, 5),    % wrong count fails...
+    z3_solver_scopes(H, N),
+    assertion(N == 1),          % ...without pushing
+    z3_solver_push(H, 2).
+
+test(pop_not_integer,[setup(z3_new_handle(H)), cleanup(z3_free_handle(H)),
                        throws(error(type_error(integer, foo), _))] ) :-
     z3_solver_pop(H, foo, _).
 
