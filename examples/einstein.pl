@@ -1,8 +1,9 @@
 #!/usr/bin/env -S swipl -q
 %%% -*- Mode: Prolog; Module: einstein; -A*-
 
-%% Run from the repository root with ./examples/einstein.pl or make einstein,
-%% or load it with consult(examples/einstein).
+%% Run it as a script from any directory (for example ./examples/einstein.pl), or with make einstein
+%% from the repository root; or load it with consult/1, which does not run it.
+%% Running from outside the repository root needs a library built with make (see the README).
 
 :- module(einstein, [
               solve/1,

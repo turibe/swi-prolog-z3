@@ -42,6 +42,8 @@ make Z3_INCLUDE=/<path-to-z3>/z3/src/api Z3_LIBDIR=.
 ```
 
 This runs `swipl-ld` and creates a `z3_swi_foreign.so` binary that is loaded into SWI Prolog when `use_module(z3_swi_foreign)` is executed.
+On macOS, `make` also records where `libz3.dylib` is (next to `z3_swi_foreign.so` for the default `Z3_LIBDIR`),
+so the library loads from any working directory. (`make.sh` does not do this; with it, run from this directory.)
 
 5. Start `swipl`, import the `z3.pl` or `stateful_repl.pl` module (e.g. `use_module(z3)`), and you're done!
 
