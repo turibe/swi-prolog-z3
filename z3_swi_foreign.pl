@@ -47,6 +47,14 @@
 This is the lowest-level Prolog wrapper.
 It has no global variables except for those in the C code.
 
+Errors: argument errors raise ISO error terms. These include unbound arguments (an unbound variable
+anywhere in a formula raises `instantiation_error`), wrongly typed arguments, out-of-range numbers,
+and invalid handles or models (`type_error(z3_handle, _)`, `existence_error(z3_handle, _)`, and so on).
+A formula that is a valid Prolog term but not a valid Z3 formula, such as a sort mismatch, an undeclared
+function, or a built-in with the wrong arity, makes the predicate fail, printing a message.
+
+Handles may be shared between threads; calls on the same handle are serialized.
+
 @author Tomas Uribe
 @license MIT
 */
@@ -310,10 +318,10 @@ test(atmost_type, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
     \+ z3_assert(H, atmost(a:bool, b:bool, c:bool)),
     z3_assert(H, atmost(a:bool, b:bool, c:bool, 2)).
 
-test(declare_fail1, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)), fail] ) :-
+test(declare_fail1, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)), throws(error(instantiation_error, _))] ) :-
     z3_declare_function(H, _X, int).
 
-test(declare_fail2, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)), fail] ) :-
+test(declare_fail2, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)), throws(error(instantiation_error, _))] ) :-
     z3_declare_function(H, a, _Y).
 
 test(declare_fail_different_types, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)), fail] ) :-
@@ -674,8 +682,12 @@ test(enum_redeclare_fails, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))]
 
 % bv_numeral used to keep going on a non-boolean element, using uninitialized bits.
 test(bv_numeral_bad_lists, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)),
-                            forall(member(L, [[1, foo], [1|_], [1|x], []]))] ) :-
+                            forall(member(L, [[1, foo], [1|x], []]))] ) :-
     \+ term_to_z3_ast(H, bv_numeral(L), _).
+
+test(bv_numeral_partial_list, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)),
+                               throws(error(instantiation_error, _))] ) :-
+    term_to_z3_ast(H, bv_numeral([1|_]), _).
 
 % Non-positive bit-vector widths used to reach Z3 as huge unsigned values.
 test(bad_bv_widths, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)),
@@ -840,3 +852,69 @@ test(freed_in_other_thread, [setup(z3_new_handle(H)), throws(error(existence_err
     z3_check(H, _).
 
 :- end_tests(handle_threads).
+
+% Argument errors raise ISO errors; formulas that are valid Prolog but not valid Z3 still fail.
+
+:- begin_tests(argument_errors).
+
+test(new_handle_bound, [throws(error(uninstantiation_error(foo), _))] ) :-
+    z3_new_handle(foo).
+
+unbound_formula(H, z3_assert(H, _)).
+unbound_formula(H, z3_assert(H, a:int > _)).
+unbound_formula(H, z3_assert(H, a:_ > 1)).
+unbound_formula(H, z3_assert(H, bv2int(a:bv(8), _) > 1)).
+unbound_formula(H, z3_assert(H, int2bv(_, 5) = a:bv(8))).
+unbound_formula(H, z3_simplify(H, _ + 1, _)).
+unbound_formula(H, term_to_z3_ast(H, f(_), _)).
+
+test(unbound_in_formula, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)),
+                          forall(unbound_formula(H, Goal))] ) :-
+    catch(Goal, E, true),
+    assertion(nonvar(E)),
+    assertion(E = error(instantiation_error, _)).
+
+test(unbound_in_model_eval, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
+    z3_check(H, l_true),
+    z3_get_model(H, M),
+    catch(z3_model_eval(H, M, _ + 1, false, _), E, true),
+    z3_free_model(H, M),
+    assertion(E = error(instantiation_error, _)).
+
+bad_declaration(z3_declare_function(_, f(_), int),   instantiation_error).
+bad_declaration(z3_declare_function(_, a, f(_)),     instantiation_error).
+bad_declaration(z3_declare_function(_, 3, int),      type_error(callable, 3)).
+bad_declaration(z3_declare_function(_, "a", int),    type_error(callable, "a")).
+bad_declaration(z3_declare_function(_, a, 3),        type_error(callable, 3)).
+
+test(declare_function_errors, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)),
+                               forall(bad_declaration(Goal0, Expected))] ) :-
+    Goal0 =.. [Name, _ | Args],
+    Goal =.. [Name, H | Args],
+    catch(Goal, error(E, _), true),
+    assertion(E =@= Expected).
+
+bad_removal(_, 0,  instantiation_error).
+bad_removal(3, 0,  type_error(atom, 3)).
+bad_removal(a, _,  instantiation_error).
+bad_removal(a, x,  type_error(integer, x)).
+bad_removal(a, -1, domain_error(not_less_than_zero, -1)).
+
+test(remove_declaration_errors, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)),
+                                 forall(bad_removal(Name, Arity, Expected))] ) :-
+    catch(z3_remove_declaration(H, Name, Arity), error(E, _), true),
+    assertion(E =@= Expected).
+
+% These are malformed formulas, not argument errors: they still fail.
+malformed(a:foo = b:bar).
+malformed(=(a, b, c)).
+malformed(undeclared(a) > 1).
+malformed(f(a:int):int = 3).
+malformed(int2bv(0, 5) = a:bv(8)).
+malformed(mk_unsigned_int64(-1, int) = 1).
+
+test(malformed_formulas_fail, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)),
+                               forall(malformed(F))] ) :-
+    \+ z3_assert(H, F).
+
+:- end_tests(argument_errors).

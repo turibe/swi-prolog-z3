@@ -421,10 +421,22 @@ static foreign_t handle_stats_foreign_locked(handle h, term_t handle_term, term_
 }
 
 
+/*
+  Error convention: argument errors (unbound or wrongly typed arguments, bad handles or models,
+  out-of-range numbers) raise ISO error terms. A formula that is a valid Prolog term but not a valid
+  Z3 formula (sort mismatch, undeclared function, wrong arity) fails, printing a message.
+  An unbound variable anywhere in a formula is an argument error: see require_ground().
+*/
+
+// Raises instantiation_error unless t is ground.
+static int require_ground(term_t t) {
+  if (PL_is_ground(t)) return TRUE;
+  return PL_instantiation_error(t);
+}
+
 foreign_t z3_new_handle_foreign(term_t handle_term) {
   if (!PL_is_variable(handle_term)) {
-    ERROR("z3_new_handle should be called on a variable");
-    return FALSE;
+    return PL_uninstantiation_error(handle_term);
   }
   handle h = calloc(1, sizeof(struct HandleStruct));
   if (h == NULL) {
@@ -748,6 +760,7 @@ static foreign_t z3_model_eval_foreign_locked(handle h, term_t handle_term, term
   rval = PL_get_bool_ex(completion_flag, &completion);
   if (!rval) return rval;
 
+  if (!require_ground(term_to_eval)) return FALSE;
   Z3_ast to_eval = term_to_ast(h, h->declarations, term_to_eval);
   if (to_eval == NULL) {
     return FALSE; // Future: could return a status atom explaining what happened.
@@ -1063,10 +1076,15 @@ static foreign_t z3_remove_declaration_foreign_locked(handle h, term_t handle_te
   (void) rval; (void) handle_term;
   int arity;
   char *name_string;
-  rval = PL_get_atom_chars(name_term, &name_string);
+  if (!PL_get_atom_chars(name_term, &name_string)) {
+    if (PL_is_variable(name_term)) return PL_instantiation_error(name_term);
+    return PL_type_error("atom", name_term);
+  }
+  rval = PL_get_integer_ex(arity_term, &arity);
   if (!rval) return rval;
-  rval = PL_get_integer(arity_term, &arity);
-  if (!rval) return rval;
+  if (arity < 0) {
+    return PL_domain_error("not_less_than_zero", arity_term);
+  }
   DEBUG("removing declaration for %s\n", name_string);
   return remove_declaration(h->ctx, h->declarations, name_string, arity);
 }
@@ -1274,6 +1292,7 @@ static foreign_t term_to_z3_ast_foreign_locked(handle h, term_t handle_term, ter
   int rval = TRUE;
   (void) rval; (void) handle_term;
   
+  if (!require_ground(formula)) return FALSE;
   Z3_ast z3_ast = term_to_ast(h, h->declarations, formula);
   if (z3_ast == NULL) {
     return FALSE;
@@ -1391,6 +1410,7 @@ static foreign_t z3_assert_foreign_locked(handle h, term_t handle_term, term_t f
   int rval = TRUE;
   (void) rval; (void) handle_term;
   DEBUG("got handle\n");
+  if (!require_ground(formula)) return FALSE;
   Z3_ast z3_formula = term_to_ast(h, h->declarations, formula);
   DEBUG("term_to_ast succeeded\n");
 
@@ -1630,22 +1650,13 @@ static foreign_t z3_declare_function_foreign_locked(handle h, term_t handle_term
   atom_t name;
 
   size_t arity;
-  if (PL_is_variable(formula)) {
-    ERROR("should not directly declare Z3 types for variables, use attributes instead\n");
-    return FALSE;
+  // Variables should not be declared directly; z3.pl uses attributes for them.
+  if (!require_ground(formula) || !require_ground(range)) return FALSE;
+  if (!PL_get_name_arity(formula, &name, &arity)) {
+    return PL_type_error("callable", formula);
   }
-  int res = PL_get_name_arity(formula, &name, &arity);
-  if (!res) {
-    char *formula_chars = NULL;
-    char *range_chars = NULL;
-    res = PL_get_chars(formula, &formula_chars, CVT_WRITE);
-    res = PL_get_chars(range, &range_chars, CVT_WRITE);
-    ERROR("Bad declaration, term %s and range %s\n", formula_chars, range_chars);
-    return FALSE;
-  }
-  if (!PL_is_ground(formula)) {
-    ERROR("z3_declare_function should have ground arguments\n");
-    return FALSE;
+  if (!PL_is_callable(range)) {
+    return PL_type_error("callable", range);
   }
 
   Z3_func_decl decl = make_function_declaration(h, formula, range);
@@ -2017,8 +2028,8 @@ Z3_sort mk_sort(handle h, term_t expression) {
     return NULL;
     break;
   case PL_VARIABLE: {
-    // We'll do this in Prolog, rather than here, so fail:
-    ERROR("mk_sort can't take variables\n");
+    // Entry points check groundness first (require_ground), so this is a backstop.
+    PL_instantiation_error(expression);
     return NULL;
   }
   default: {
@@ -2417,7 +2428,8 @@ Z3_ast term_to_ast(const handle h, decl_map declaration_map, const term_t formul
   case PL_VARIABLE:
     // It could be nice to look at the attributes, if any, and use them instead of the variable,
     // but the foreign interface does not offer methods for doing so.
-    ERROR("Can't call term_to_ast on non-ground terms\n");
+    // Entry points check groundness first (require_ground), so this is a backstop.
+    PL_instantiation_error(formula);
     return NULL;
 
   // ********************************************* atom, string, integer cases ****************************************/
@@ -2752,8 +2764,9 @@ Z3_ast term_to_ast(const handle h, decl_map declaration_map, const term_t formul
         return NULL;
       }
       Z3_ast arg1 = term_to_ast(h, declaration_map, sub1);
+      if (arg1 == NULL) return NULL;
       Z3_ast arg2 = term_to_ast(h, declaration_map, sub2);
-      if (arg1 == NULL || arg2 == NULL) return NULL;
+      if (arg2 == NULL) return NULL;
 
       if (strcmp(name_string, "bvadd_no_overflow") == 0) {
         return Z3_mk_bvadd_no_overflow(ctx, arg1, arg2, is_signed);
@@ -2834,6 +2847,7 @@ static foreign_t z3_simplify_foreign_locked(handle h, term_t handle_term, term_t
   Z3_context ctx = h->ctx;
   decl_map declaration_map = h->declarations;
 
+  if (!require_ground(tin)) return FALSE;
   Z3_ast ast_in = term_to_ast(h, declaration_map, tin);
   if (ast_in == NULL) {
     return FALSE;
