@@ -54,9 +54,16 @@
 
 // *************************************************************************
 
+// Sorts Z3 accepts in arithmetic comparisons such as <; Bool is converted with (ite b 1 0).
 bool numeric_sort(Z3_context ctx, Z3_sort s) {
   Z3_sort_kind k = Z3_get_sort_kind(ctx, s);
   return (k == Z3_BOOL_SORT || k == Z3_INT_SORT || k == Z3_REAL_SORT);
+}
+
+// Sorts Z3 lets mix in an equality: Int and Real only (Bool = Int is a sort error).
+bool arith_sort(Z3_context ctx, Z3_sort s) {
+  Z3_sort_kind k = Z3_get_sort_kind(ctx, s);
+  return (k == Z3_INT_SORT || k == Z3_REAL_SORT);
 }
 
 Z3_ast mk_int_var(Z3_context ctx, const char * name) {
@@ -152,7 +159,7 @@ void free_handle_contents(handle h);
 
 void z3_swi_error_handler(Z3_context ctx, Z3_error_code e) {
   Z3_string msg = Z3_get_error_msg(ctx, e);
-  fprintf(stderr, "Z3 ERROR: code %ul %s\n", e, msg);
+  fprintf(stderr, "Z3 ERROR: code %d %s\n", (int) e, msg);
 }
 
 void initialize_handle(handle handle) {
@@ -499,10 +506,13 @@ Z3_symbol mk_symbol(Z3_context ctx, term_t pl_term) {
     break;
   }
   case PL_INTEGER: {
-    long lval;
-    int res = PL_get_long(pl_term, &lval);
-    if (!res) return NULL;
-    Z3_symbol s = Z3_mk_int_symbol(ctx, lval);
+    int ival; // Z3_mk_int_symbol takes an int, so fail on anything larger.
+    int res = PL_get_integer(pl_term, &ival);
+    if (!res) {
+      ERROR("integer symbol out of range\n");
+      return NULL;
+    }
+    Z3_symbol s = Z3_mk_int_symbol(ctx, ival);
     return s;
     break;
   }
@@ -539,7 +549,7 @@ bool z3_sort_to_term(Z3_context ctx, Z3_sort sort, term_t result) {
     {
       Z3_string sname_string = Z3_get_symbol_string(ctx, sname);
       int res = PL_put_atom_chars(cons_term, sname_string);
-      if (!res) return NULL;
+      if (!res) return FALSE;
     }
 
   } // end switch
@@ -560,7 +570,11 @@ foreign_t z3_declaration_map_to_term(Z3_context ctx, decl_map declaration_map, t
   for (unsigned i = 0; i < size; i++) {
     Z3_ast key = Z3_ast_vector_get(ctx, keys, i);
     term_t key_term = PL_new_term_ref();
-    z3_ast_to_term_internal(ctx, key, key_term);
+    if (!z3_ast_to_term_internal(ctx, key, key_term)) {
+      ERROR("could not convert declaration key %s\n", Z3_ast_to_string(ctx, key));
+      Z3_ast_vector_dec_ref(ctx, keys);
+      return FALSE;
+    }
 
     Z3_func_decl value = (Z3_func_decl) Z3_ast_map_find(ctx, declaration_map, key);
     term_t value_term = PL_new_term_ref();
@@ -569,6 +583,7 @@ foreign_t z3_declaration_map_to_term(Z3_context ctx, decl_map declaration_map, t
     bool res = z3_sort_to_term(ctx, sort, value_term);
     if (!res) {
       ERROR("error in z3_sort_to_term\n");
+      Z3_ast_vector_dec_ref(ctx, keys);
       return FALSE;
     }
 
@@ -615,21 +630,31 @@ foreign_t z3_declare_enum_foreign(term_t handle_term, term_t sort_name_term, ter
   if (!rval) return rval;
 
   Z3_context ctx = h->ctx;
-  const Z3_symbol sort_name = mk_symbol(ctx, sort_name_term);
-
-  if (!PL_is_atom(sort_name_term)) {
-    ERROR("z3_declare_enum name should be an atom\n");
-    return FALSE;
-  }
-  if (!PL_is_list(enum_names_list) || !PL_is_ground(enum_names_list)) {
-    ERROR("z3_declare_enum range should be a ground list\n");
-    return FALSE;
-  }
 
   char * sort_name_string;
-  int res = PL_get_atom_chars(sort_name_term, &sort_name_string);
-  if (!res) {
-    return res;
+  if (!PL_get_atom_chars(sort_name_term, &sort_name_string)) {
+    if (PL_is_variable(sort_name_term)) return PL_instantiation_error(sort_name_term);
+    return PL_type_error("atom", sort_name_term);
+  }
+  size_t n;
+  switch (PL_skip_list(enum_names_list, 0, &n)) { // also gets list length
+  case PL_LIST:
+    break;
+  case PL_PARTIAL_LIST:
+    return PL_instantiation_error(enum_names_list);
+  default:
+    return PL_type_error("list", enum_names_list);
+  }
+  if (!PL_is_ground(enum_names_list)) {
+    return PL_instantiation_error(enum_names_list);
+  }
+  if (n == 0) {
+    return PL_domain_error("non_empty_list", enum_names_list);
+  }
+
+  const Z3_symbol sort_name = mk_symbol(ctx, sort_name_term);
+  if (sort_name == NULL) {
+    return FALSE;
   }
 
   Z3_ast key = mk_ast_key(ctx, sort_name_string, 0);
@@ -641,18 +666,20 @@ foreign_t z3_declare_enum_foreign(term_t handle_term, term_t sort_name_term, ter
   else {
     DEBUG("did not find sort %s in enum_sorts map\n", sort_name_string);
   }
-  size_t n;
-  PL_skip_list(enum_names_list, 0, &n); // gets list length
   DEBUG("Names has length %lu\n", n);
   Z3_symbol *enum_names = malloc(sizeof(Z3_symbol) * n);
 
   // here we go through the names list and put them in enum_names; see https://www.swi-prolog.org/pldoc/man?section=foreign-read-list
   term_t head = PL_new_term_ref();   // the elements
   term_t tail = PL_copy_term_ref(enum_names_list); // copy (we modify tail)
-  int i = 0;
+  size_t i = 0;
   while( PL_get_list_ex(tail, head, tail) )
     {
       Z3_symbol a = mk_symbol(ctx, head);
+      if (a == NULL) {
+        free(enum_names);
+        return PL_type_error("atom", head);
+      }
       assert(i < n);
       enum_names[i] = a;
       i++;
@@ -689,7 +716,7 @@ foreign_t remove_declaration(Z3_context ctx, Z3_ast_map map, const char* name_st
   const char * keyname = Z3_ast_to_string(ctx, key);
   // when removing built-in items, like "=", get errors, so not adding them in the first place
   // INFO("made key %s\n", keyname);
-  if (!Z3_ast_map_find(ctx, map, key)) {
+  if (!Z3_ast_map_contains(ctx, map, key)) {
     ERROR("Key %s not found\n", keyname);
     return FALSE;
   }
@@ -744,6 +771,8 @@ int z3_lbool_to_atom(const Z3_lbool status, term_t plterm) {
     return PL_unify_atom_chars(plterm, "l_undef");
     break;
   }
+  ERROR("unexpected Z3_lbool value %d\n", (int) status);
+  return FALSE;
 }
 
 /* For debugging only, easy to crash the system :-) */
@@ -771,14 +800,18 @@ foreign_t z3_solver_assertions_foreign(term_t handle_term, term_t list) {
   Z3_context ctx = h->ctx;
   Z3_ast_vector v = Z3_solver_get_assertions(ctx, solver);
   Z3_ast_vector_inc_ref(ctx, v);
-  int size = Z3_ast_vector_size(ctx, v);
-  DEBUG("Vector size is %d\n", size);
+  unsigned size = Z3_ast_vector_size(ctx, v);
+  DEBUG("Vector size is %u\n", size);
   term_t l = PL_new_term_ref();
   PL_put_nil(l);
   for (unsigned i = 0; i < size; ++i) {
     term_t a = PL_new_term_ref(); // putting this outside the loop does not work.
     Z3_ast termi = Z3_ast_vector_get(ctx, v, i);
-    z3_ast_to_term_internal(ctx, termi, a);
+    if (!z3_ast_to_term_internal(ctx, termi, a)) {
+      ERROR("could not convert assertion %s\n", Z3_ast_to_string(ctx, termi));
+      Z3_ast_vector_dec_ref(ctx, v);
+      return FALSE;
+    }
     int res = PL_cons_list(l, a, l);
     if (!res) {
       Z3_ast_vector_dec_ref(ctx, v);
@@ -824,7 +857,7 @@ foreign_t z3_ast_to_term_internal(const Z3_context ctx, Z3_ast ast, term_t term)
       return FALSE;
     }
     Z3_string str = Z3_get_numeral_string(ctx, ast);
-    fprintf(stderr, "Handling numeral term %s\n", str);
+    DEBUG("Handling numeral term %s\n", str);
     term_t t = PL_new_term_ref();
     if (!PL_chars_to_term(str, t)) {
       ERROR("PL_chars_to_term failed for %s\n", str);
@@ -907,16 +940,16 @@ foreign_t z3_solver_push_foreign(term_t handle_term, term_t output_term) {
   handle h;
   int rval = PL_get_pointer_ex(handle_term, (void **) &h);
   if (!rval) return rval;
-  if (!PL_is_variable(output_term)) {
-    ERROR("z3_solver_push: output term should be a variable.");
-    return FALSE;
-  }
   const Z3_solver solver = h->solver;
   const Z3_context ctx = h->ctx;
+  // Unify before pushing, so that a mismatched output fails without leaving an extra scope.
+  const unsigned new_scopes = Z3_solver_get_num_scopes(ctx, solver) + 1;
+  if (!PL_unify_uint64(output_term, new_scopes)) {
+    return FALSE;
+  }
   Z3_solver_push(ctx, solver);
-  unsigned scopes = Z3_solver_get_num_scopes(ctx, solver);
-
-  return PL_unify_uint64(output_term, scopes);
+  assert(Z3_solver_get_num_scopes(ctx, solver) == new_scopes);
+  return TRUE;
 }
 
 /* Pops the solver npops times. Output is the new number of scopes for the solver. */
@@ -928,8 +961,11 @@ foreign_t z3_solver_pop_foreign(const term_t handle_term, const term_t npops, te
   Z3_solver solver = h->solver;
 
   int nbacktrack;
-  rval = PL_get_integer(npops, &nbacktrack);
+  rval = PL_get_integer_ex(npops, &nbacktrack);
   if (!rval) return rval;
+  if (nbacktrack < 0) {
+    return PL_domain_error("not_less_than_zero", npops);
+  }
 
   const Z3_context ctx = h->ctx;
   const int scopes = Z3_solver_get_num_scopes(ctx, solver);
@@ -1002,7 +1038,7 @@ foreign_t z3_solver_scopes_foreign(term_t handle_term, term_t result) {
 
 foreign_t z3_check_foreign(term_t handle_term, term_t status_arg) {
   handle h;
-  int rval = PL_get_pointer(handle_term, (void **) &h);
+  int rval = PL_get_pointer_ex(handle_term, (void **) &h);
   if (!rval) return rval;
   Z3_solver solver = h->solver;
   const Z3_context ctx = h->ctx;
@@ -1485,6 +1521,10 @@ Z3_sort mk_sort(handle h, term_t expression) {
       int width;
       res = PL_get_integer_ex(a, &width);
       if (!res) return NULL;
+      if (width <= 0) {
+        ERROR("bit-vector width should be positive, got %d\n", width);
+        return NULL;
+      }
       DEBUG("Making bit vector sort of width %d\n", width);
       return Z3_mk_bv_sort(ctx, width);
     }
@@ -1530,6 +1570,356 @@ Z3_sort mk_sort(handle h, term_t expression) {
 } // mk_sort
 
 
+/*
+  Builds the Z3 AST for a compound term whose arguments have already been converted to "subterms".
+  Returns NULL on failure. Does not free subterms; the caller owns them, so early returns here are safe.
+*/
+
+static Z3_ast compound_to_ast(const handle h, decl_map declaration_map, const char *name_string,
+                              const size_t arity, Z3_ast *subterms) {
+  const Z3_context ctx = h->ctx;
+  Z3_ast result = NULL;
+
+  // ********************************************* built-in compound term_to_ast  ****************************************/
+  
+  if (strcmp(name_string, "mk_rational")==0) {
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_simplify(ctx, Z3_mk_div(ctx,
+                                        Z3_mk_int2real(ctx, subterms[0]),
+                                        Z3_mk_int2real(ctx, subterms[1]))
+                         );
+  }
+  else if (strcmp(name_string, "+") == 0 ) {
+    result = Z3_mk_add(ctx, arity, subterms);
+  }
+  else if (strcmp(name_string, "*") == 0 ) {
+    result = Z3_mk_mul(ctx, arity, subterms);
+  }
+  else if (strcmp(name_string, "-") == 0 || strcmp(name_string, "minus") == 0 ) {
+    if (arity == 1) {
+      result = Z3_mk_unary_minus(ctx, subterms[0]);
+    }
+    else {
+      // we allow arities > 2
+      result = Z3_mk_sub(ctx, arity, subterms);
+    }
+  }
+  else if (strcmp(name_string, "div") == 0 || strcmp(name_string, "/") == 0) {
+    CHECK_ARITY(name_string, 2, arity);
+    DEBUG("making div\n");
+    result = Z3_mk_div(ctx, subterms[0], subterms[1]);
+    // The arguments must either both have int type or both have real type.
+    // division by 0 is allowed, can be anything
+    DEBUG("result is %s\n", Z3_ast_to_string(ctx, result));
+  }
+  else if (strcmp(name_string, "mod") == 0) {
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_mod(ctx, subterms[0], subterms[1]);
+  }
+  else if (strcmp(name_string, "rem") == 0) {
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_rem(ctx, subterms[0], subterms[1]);
+  }
+  else if (strcmp(name_string, "power") == 0 || strcmp(name_string, "**") == 0 || strcmp(name_string, "^") == 0) {
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_power(ctx, subterms[0], subterms[1]);
+  }
+  else if (strcmp(name_string, "<") == 0) {
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_lt(ctx, subterms[0], subterms[1]);
+  }
+  else if (strcmp(name_string, "=<") == 0 || strcmp(name_string, "leq") == 0) {
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_le(ctx, subterms[0], subterms[1]);
+  }
+  else if (strcmp(name_string, ">") == 0) {
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_gt(ctx, subterms[0], subterms[1]);
+  }
+  else if (strcmp(name_string, ">=") == 0 || strcmp(name_string, "geq") == 0) {
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_ge(ctx, subterms[0], subterms[1]);
+  }
+  else if (strcmp(name_string, "is_int") == 0) {
+    CHECK_ARITY(name_string, 1, arity);
+    result = Z3_mk_is_int(ctx, subterms[0]);
+  }
+  else if (strcmp(name_string, "int2real") == 0) {
+    CHECK_ARITY(name_string, 1, arity);
+    result = Z3_mk_int2real(ctx, subterms[0]);
+  }
+  else if (strcmp(name_string, "real2int") == 0) {
+    CHECK_ARITY(name_string, 1, arity);
+    result = Z3_mk_real2int(ctx, subterms[0]);
+  }
+  else if (strcmp(name_string, "=") == 0 || strcmp(name_string, "==") == 0 || strcmp(name_string, "equals") == 0 ) {
+    DEBUG("making equals\n");
+    CHECK_ARITY(name_string, 2, arity);
+    // Check that types are compatible; otherwise Z3 quits/crashes
+    Z3_sort s1 = Z3_get_sort(ctx, subterms[0]);
+    Z3_sort s2 = Z3_get_sort(ctx, subterms[1]);
+    if (s1 != s2 && !(arith_sort(ctx, s1) && arith_sort(ctx, s2))) // Z3 allows mixing Int and Real only
+      {
+        ERROR("different types for equals, failing\n");
+        ERROR("sort1: %s\n", Z3_sort_to_string(ctx, s1)); // as with ast_to_string, one sort_to_string invaliates the previous one, so we use two statements.
+        ERROR("sort2: %s\n", Z3_sort_to_string(ctx, s2));
+        // ERROR("sort kinds: %u and %u\n", Z3_get_sort_kind(ctx, s1), Z3_get_sort_kind(ctx, s2));
+        return NULL;
+    }
+    DEBUG("making equals\n");
+    result = Z3_mk_eq(ctx, subterms[0], subterms[1]);
+    DEBUG("made equals\n");
+  }
+  else if (strcmp(name_string, "distinct") == 0 ) {
+    result = Z3_mk_distinct(ctx, arity, subterms);
+  }
+  else if (strcmp(name_string, "divides") == 0) {
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_divides(ctx, subterms[0], subterms[1]);
+  }
+  else if (strcmp(name_string, "not") == 0 ) {
+    CHECK_ARITY(name_string, 1, arity);
+    result = Z3_mk_not(ctx, subterms[0]);
+  }
+  else if (strcmp(name_string, "ite") == 0 ) {
+    CHECK_ARITY(name_string, 3, arity);
+    result = Z3_mk_ite(ctx, subterms[0], subterms[1], subterms[2]);
+  }
+  else if (strcmp(name_string, "iff") == 0 || strcmp(name_string, "<=>") == 0) {
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_iff(ctx, subterms[0], subterms[1]);
+  }
+  else if (strcmp(name_string, "implies") == 0 || strcmp(name_string, "->") == 0) {
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_implies(ctx, subterms[0], subterms[1]);
+  }
+  else if (strcmp(name_string, "xor") == 0 ) {
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_xor(ctx, subterms[0], subterms[1]);
+  }
+  else if (strcmp(name_string, "<>") == 0 ) {
+    CHECK_ARITY(name_string, 2, arity);
+    Z3_sort s1 = Z3_get_sort(ctx, subterms[0]);
+    Z3_sort s2 = Z3_get_sort(ctx, subterms[1]);
+    if (numeric_sort(ctx, s1) && numeric_sort(ctx, s2) && (s1 != s2)) { // for numeric types, translate to (a<b or a>b)
+      Z3_ast dis1 = Z3_mk_lt(ctx, subterms[0], subterms[1]);
+      Z3_ast dis2 = Z3_mk_gt(ctx, subterms[0], subterms[1]);
+      if (dis1 == NULL || dis2 == NULL) return(NULL);
+      Z3_ast disjuncts[2] = {dis1, dis2};
+      return Z3_mk_or(ctx, 2, disjuncts);
+    }
+    Z3_ast equality = Z3_mk_eq(ctx, subterms[0], subterms[1]);
+    if (NULL == equality) {
+      ERROR("incompatible types for <>\n");
+      ERROR("sort1: %s\n", Z3_sort_to_string(ctx, s1));
+      ERROR("sort2: %s\n", Z3_sort_to_string(ctx, s2));
+      result = NULL;
+    }
+    else {
+      result = Z3_mk_not(ctx, equality);
+    }
+  }
+  // between, inclusive of both endpoints (as in python):
+  else if (strcmp(name_string, "between") == 0) {
+    CHECK_ARITY(name_string, 3, arity);
+    Z3_ast conj1 = Z3_mk_ge(ctx, subterms[0], subterms[1]);
+    Z3_ast conj2 = Z3_mk_le(ctx, subterms[0], subterms[2]);
+    if (conj1 == NULL || conj2 == NULL) return(NULL);
+    Z3_ast conjuncts[2] = {conj1, conj2};
+    return Z3_mk_and(ctx, 2, conjuncts);
+  }
+  else if (strcmp(name_string, "and") == 0 ) {result = Z3_mk_and(ctx, arity, subterms);}
+  else if (strcmp(name_string, ",") == 0 ) {result = Z3_mk_and(ctx, arity, subterms);}
+  else if (strcmp(name_string, "or") == 0 ) {result = Z3_mk_or(ctx, arity, subterms);}
+  else if (strcmp(name_string, ";") == 0 ) {result = Z3_mk_or(ctx, arity, subterms);}
+  else if (strcmp(name_string, "atleast") == 0) {
+    unsigned k;
+    if (!Z3_get_numeral_uint(ctx, subterms[arity-1], &k)) {
+      ERROR("last argument of atleast should be an int\n");
+      result = NULL;
+    }
+    else {
+      result = Z3_mk_atleast(ctx, arity-1, subterms, k);
+    }
+  }
+  else if (strcmp(name_string, "atmost") == 0) {
+    unsigned k;
+    if (!Z3_get_numeral_uint(ctx, subterms[arity-1], &k)) {
+      ERROR("last argument of atmost should be an int\n");
+      result = NULL;
+    }
+    else {
+      result = Z3_mk_atmost(ctx, arity-1, subterms, k);
+    }
+  }
+
+
+
+  // ********************************************* bit vectors ************************************/
+  // in order of appearance in https://z3prover.github.io/api/html/z3__api_8h.html
+
+  else if (strcmp(name_string, "bvadd") == 0) {
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_bvadd(ctx, subterms[0], subterms[1]);
+  }
+  else if (strcmp(name_string, "bvadd_no_underflow") == 0) {
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_bvadd_no_underflow(ctx, subterms[0], subterms[1]);
+  }
+
+  /***
+      special cases, because they have an extra arg:
+      (strcmp(name_string, "bvadd_no_overflow") == 0)
+      (strcmp(name_string, "bvmul_no_overflow") == 0)
+      (strcmp(name_string, "bvsub_no_underflow") == 0)
+  ***/
+
+  else if (strcmp(name_string, "bvand") == 0) {
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_bvand(ctx, subterms[0], subterms[1]);
+  }
+  else if (strcmp(name_string, "bvashr") == 0) {
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_bvashr(ctx, subterms[0], subterms[1]);
+  }
+  else if (strcmp(name_string, "bvlshr") == 0) {
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_bvlshr(ctx, subterms[0], subterms[1]);
+  }
+  else if (strcmp(name_string, "bvmul") == 0) {
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_bvmul(ctx, subterms[0], subterms[1]);
+  }
+  else if (strcmp(name_string, "bvmul_no_underflow") == 0) {
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_bvmul_no_underflow(ctx, subterms[0], subterms[1]);
+  }
+  else if (strcmp(name_string, "bvnand") == 0) {
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_bvnand(ctx, subterms[0], subterms[1]);
+  }
+  else if (strcmp(name_string, "bvneg") == 0) {
+    CHECK_ARITY(name_string, 1, arity);
+    result = Z3_mk_bvneg(ctx, subterms[0]);
+  }
+  else if (strcmp(name_string, "bvneg_no_overflow") == 0) {
+    CHECK_ARITY(name_string, 1, arity);
+    result = Z3_mk_bvneg_no_overflow(ctx, subterms[0]);
+  }
+  else if (strcmp(name_string, "bvnor") == 0) {
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_bvnor(ctx, subterms[0], subterms[1]);
+  }
+  else if (strcmp(name_string, "bvnot") == 0) { // bitwise negation
+    CHECK_ARITY(name_string, 1, arity);
+    result = Z3_mk_bvnot(ctx, subterms[0]);
+  }
+  else if (strcmp(name_string, "bvor") == 0) {
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_bvor(ctx, subterms[0], subterms[1]);
+  }
+  else if (strcmp(name_string, "bvredand") == 0) {
+    CHECK_ARITY(name_string, 1, arity);
+    result = Z3_mk_bvredand(ctx, subterms[0]);
+  }
+  else if (strcmp(name_string, "bvredor") == 0) {
+    CHECK_ARITY(name_string, 1, arity);
+    result = Z3_mk_bvredor(ctx, subterms[0]);
+  }
+  else if (strcmp(name_string, "bvsdiv") == 0) {
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_bvsdiv(ctx, subterms[0], subterms[1]);
+  }
+  else if (strcmp(name_string, "bvsdiv_no_overflow") == 0) {
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_bvsdiv_no_overflow(ctx, subterms[0], subterms[1]);
+  }
+  else if (strcmp(name_string, "bvsge") == 0) {
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_bvsge(ctx, subterms[0], subterms[1]);
+  }
+  else if (strcmp(name_string, "bvsgt") == 0) {
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_bvsgt(ctx, subterms[0], subterms[1]);
+  }
+  else if (strcmp(name_string, "bvshl") == 0) {
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_bvshl(ctx, subterms[0], subterms[1]);
+  }
+  else if (strcmp(name_string, "bvsle") == 0) {
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_bvsle(ctx, subterms[0], subterms[1]);
+  }
+  else if (strcmp(name_string, "bvslt") == 0) {
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_bvslt(ctx, subterms[0], subterms[1]);
+  }
+  else if (strcmp(name_string, "bvsmod") == 0) {
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_bvsmod(ctx, subterms[0], subterms[1]);
+  }
+  else if (strcmp(name_string, "bvsrem") == 0) {
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_bvsrem(ctx, subterms[0], subterms[1]);
+  }
+  else if (strcmp(name_string, "bvsub") == 0) {
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_bvsub(ctx, subterms[0], subterms[1]);
+  }
+  else if (strcmp(name_string, "bvsub_no_overflow") == 0) {
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_bvsub_no_overflow(ctx, subterms[0], subterms[1]);
+  }
+  else if (strcmp(name_string, "bvudiv") == 0) {
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_bvudiv(ctx, subterms[0], subterms[1]);
+  }
+  else if (strcmp(name_string, "bvuge") == 0) {
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_bvuge(ctx, subterms[0], subterms[1]);
+  }
+  else if (strcmp(name_string, "bvugt") == 0) {
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_bvugt(ctx, subterms[0], subterms[1]);
+  }
+  else if (strcmp(name_string, "bvule") == 0) {
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_bvule(ctx, subterms[0], subterms[1]);
+  }
+  else if (strcmp(name_string, "bvult") == 0) {
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_bvult(ctx, subterms[0], subterms[1]);
+  }
+  else if (strcmp(name_string, "bvurem") == 0) {
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_bvurem(ctx, subterms[0], subterms[1]);
+  }
+  else if (strcmp(name_string, "bvxnor") == 0) {
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_bvxnor(ctx, subterms[0], subterms[1]);
+  }
+  else if (strcmp(name_string, "bvxor") == 0) {
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_bvxor(ctx, subterms[0], subterms[1]);
+  }
+
+
+  // ********************************************* uninterpreted compound term_to_ast  ****************************************/
+  else { // uninterpreted function
+    DEBUG("Making uninterpreted function declaration for %s\n", name_string);
+    // no need to look in enum map because we have a compound term:
+    assert(arity > 0);
+    Z3_func_decl declaration = get_function_declaration(h->ctx, declaration_map, name_string, arity);
+    if (declaration == NULL) {
+      INFO("Could not find declaration for %s/%lu\n", name_string, arity);
+      return NULL;
+    }
+    result = Z3_mk_app(ctx, declaration, arity, subterms);
+  }
+  return result;
+}
+
+
 static predicate_t rational_pred = NULL;
 
 /* terms must be a term_t vector of size 3 */
@@ -1570,19 +1960,17 @@ Z3_ast term_to_ast(const handle h, decl_map declaration_map, const term_t formul
 
   // ********************************************* atom, string, integer cases ****************************************/
   case PL_ATOM: {
-    int bval;
-    if (PL_get_bool(formula, &bval)) {
-      DEBUG("term_to_ast, boolean\n");
-      if (bval) {
-        return Z3_mk_true(ctx);
-      }
-      return Z3_mk_false(ctx);
-    }
-
     char *atom_string;
     int res = PL_get_atom_chars(formula, &atom_string);
     if (!res) {
       return NULL;
+    }
+    // Only the atoms true and false are Boolean constants. (PL_get_bool would also accept on, off, and fail.)
+    if (strcmp(atom_string, "true") == 0) {
+      return Z3_mk_true(ctx);
+    }
+    if (strcmp(atom_string, "false") == 0) {
+      return Z3_mk_false(ctx);
     }
     DEBUG("term_to_ast, atom %s\n", atom_string);
 
@@ -1659,7 +2047,7 @@ Z3_ast term_to_ast(const handle h, decl_map declaration_map, const term_t formul
     }
     ************/
     break;
-  case PL_RATIONAL:
+  case PL_RATIONAL: {
     term_t trefs = PL_new_term_refs(3);
     if (!PL_unify(trefs, formula)) {
       ERROR("PL_unify failed for PL_RATIONAL\n");
@@ -1669,17 +2057,21 @@ Z3_ast term_to_ast(const handle h, decl_map declaration_map, const term_t formul
     term_t den = trefs + 2;
     if (split_rational(trefs)) {
       DEBUG("split_rational worked!\n");
-      result = Z3_mk_div(ctx,
-                         Z3_mk_int2real(ctx, term_to_ast(h, declaration_map, num)),
-                         Z3_mk_int2real(ctx, term_to_ast(h, declaration_map, den))
-                         );
+      Z3_ast num_ast = term_to_ast(h, declaration_map, num);
+      Z3_ast den_ast = term_to_ast(h, declaration_map, den);
+      if (num_ast == NULL || den_ast == NULL) {
+        ERROR("could not convert numerator or denominator of rational\n");
+        return NULL;
+      }
+      result = Z3_mk_div(ctx, Z3_mk_int2real(ctx, num_ast), Z3_mk_int2real(ctx, den_ast));
       return result;
     }
     else {
-      ERROR("split_rational failed\n");      
+      ERROR("split_rational failed\n");
       // Could look at PL_get_mpq; but better to handle this in Prolog with rational/3.
       return NULL;
     }
+  }
   case PL_FLOAT: {
     // double myf;
     // We don't use PL_get_float because Z3 does not make reals from floats.
@@ -1783,23 +2175,28 @@ Z3_ast term_to_ast(const handle h, decl_map declaration_map, const term_t formul
         return NULL;
       }
       size_t width;
-      PL_skip_list(list_term, 0, &width); // gets list length
+      if (PL_skip_list(list_term, 0, &width) != PL_LIST || width == 0) { // also gets list length
+        ERROR("Argument to bv_numeral should be a non-empty proper list of booleans\n");
+        return NULL;
+      }
       bool * bits = malloc(width * sizeof(bool));
       term_t head = PL_new_term_ref();   // the elements
       term_t tail = PL_copy_term_ref(list_term); // copy (we modify tail)
-      int rc = TRUE;
-      int i = 0;
-      while( rc && PL_get_list_ex(tail, head, tail) )
-        {
-          int b;
-          rc = PL_get_bool_ex(head, &b);
-          if (rc) {
-            assert(i < width);
-            bits[i] = b;
-            i++;
-          }
+      size_t i = 0;
+      while (PL_get_list(tail, head, tail)) {
+        int b;
+        if (!PL_get_bool(head, &b)) {
+          char *elem_string = NULL;
+          if (!PL_get_chars(head, &elem_string, CVT_WRITE)) elem_string = "?";
+          ERROR("bv_numeral: %s is not a boolean\n", elem_string);
+          free(bits);
+          return NULL;
         }
-      
+        assert(i < width);
+        bits[i] = b;
+        i++;
+      }
+
       result = Z3_mk_bv_numeral(ctx, width, bits);
       free(bits);
       return result;
@@ -1817,6 +2214,10 @@ Z3_ast term_to_ast(const handle h, decl_map declaration_map, const term_t formul
       res = PL_get_arg(2, formula, sort_term);
       if (!res) return NULL;
       Z3_sort sort = mk_sort(h, sort_term);
+      if (sort == NULL) {
+        ERROR("%s: could not make sort\n", name_string);
+        return NULL;
+      }
       term_t arg_term = PL_new_term_ref();
       res = PL_get_arg(1, formula, arg_term);
       if (!res) return NULL;
@@ -1828,11 +2229,14 @@ Z3_ast term_to_ast(const handle h, decl_map declaration_map, const term_t formul
         result = Z3_mk_numeral(ctx, numeral_string, sort);
         return result;
       }
-      else { // unsigned_int case:
-          uint64_t uint;
-          res = PL_get_uint64(arg_term, &uint);
-          return Z3_mk_unsigned_int(ctx, uint, sort);
+      else { // unsigned_int64 case:
+        uint64_t uint;
+        if (!PL_get_uint64(arg_term, &uint)) {
+          ERROR("First argument to mk_unsigned_int64 should be a non-negative 64-bit integer\n");
+          return NULL;
         }
+        return Z3_mk_unsigned_int64(ctx, uint, sort);
+      }
     }
     
     // special case because of the bool arg:
@@ -1848,6 +2252,7 @@ Z3_ast term_to_ast(const handle h, decl_map declaration_map, const term_t formul
         return NULL;
       }
       Z3_ast arg = term_to_ast(h, declaration_map, sub1);
+      if (arg == NULL) return NULL;
       result = Z3_mk_bv2int(ctx, arg, is_signed);
       return result;
     }
@@ -1859,11 +2264,12 @@ Z3_ast term_to_ast(const handle h, decl_map declaration_map, const term_t formul
       res = PL_get_arg(1, formula, sub1);
       res = PL_get_arg(2, formula, sub2);
       int width;
-      if (!PL_get_integer(sub1, &width)) {
-        ERROR("First argument to int2bv should be an integer");
+      if (!PL_get_integer(sub1, &width) || width <= 0) {
+        ERROR("First argument to int2bv should be a positive integer\n");
         return NULL;
       }
       Z3_ast arg = term_to_ast(h, declaration_map, sub2);
+      if (arg == NULL) return NULL;
       result = Z3_mk_int2bv(ctx, width, arg);
       return result;
     }
@@ -1885,6 +2291,7 @@ Z3_ast term_to_ast(const handle h, decl_map declaration_map, const term_t formul
       }
       Z3_ast arg1 = term_to_ast(h, declaration_map, sub1);
       Z3_ast arg2 = term_to_ast(h, declaration_map, sub2);
+      if (arg1 == NULL || arg2 == NULL) return NULL;
 
       if (strcmp(name_string, "bvadd_no_overflow") == 0) {
         return Z3_mk_bvadd_no_overflow(ctx, arg1, arg2, is_signed);
@@ -1922,342 +2329,7 @@ Z3_ast term_to_ast(const handle h, decl_map declaration_map, const term_t formul
     }
       
 
-    // ********************************************* built-in compound term_to_ast  ****************************************/
-    
-    if (strcmp(name_string, "mk_rational")==0) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_simplify(ctx, Z3_mk_div(ctx,
-                                          Z3_mk_int2real(ctx, subterms[0]),
-                                          Z3_mk_int2real(ctx, subterms[1]))
-                           );
-    }
-    else if (strcmp(name_string, "+") == 0 ) {
-      result = Z3_mk_add(ctx, arity, subterms);
-    }
-    else if (strcmp(name_string, "*") == 0 ) {
-      result = Z3_mk_mul(ctx, arity, subterms);
-    }
-    else if (strcmp(name_string, "-") == 0 || strcmp(name_string, "minus") == 0 ) {
-      if (arity == 1) {
-        result = Z3_mk_unary_minus(ctx, subterms[0]);
-      }
-      else {
-        // we allow arities > 2
-        result = Z3_mk_sub(ctx, arity, subterms);
-      }
-    }
-    else if (strcmp(name_string, "div") == 0 || strcmp(name_string, "/") == 0) {
-      CHECK_ARITY(name_string, 2, arity);
-      DEBUG("making div\n");
-      result = Z3_mk_div(ctx, subterms[0], subterms[1]);
-      // The arguments must either both have int type or both have real type.
-      // division by 0 is allowed, can be anything
-      DEBUG("result is %s\n", Z3_ast_to_string(ctx, result));
-    }
-    else if (strcmp(name_string, "mod") == 0) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_mod(ctx, subterms[0], subterms[1]);
-    }
-    else if (strcmp(name_string, "rem") == 0) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_rem(ctx, subterms[0], subterms[1]);
-    }
-    else if (strcmp(name_string, "power") == 0 || strcmp(name_string, "**") == 0 || strcmp(name_string, "^") == 0) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_power(ctx, subterms[0], subterms[1]);
-    }
-    else if (strcmp(name_string, "<") == 0) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_lt(ctx, subterms[0], subterms[1]);
-    }
-    else if (strcmp(name_string, "=<") == 0 || strcmp(name_string, "leq") == 0) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_le(ctx, subterms[0], subterms[1]);
-    }
-    else if (strcmp(name_string, ">") == 0) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_gt(ctx, subterms[0], subterms[1]);
-    }
-    else if (strcmp(name_string, ">=") == 0 || strcmp(name_string, "geq") == 0) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_ge(ctx, subterms[0], subterms[1]);
-    }
-    else if (strcmp(name_string, "is_int") == 0) {
-      CHECK_ARITY(name_string, 1, arity);
-      result = Z3_mk_is_int(ctx, subterms[0]);
-    }
-    else if (strcmp(name_string, "int2real") == 0) {
-      CHECK_ARITY(name_string, 1, arity);
-      result = Z3_mk_int2real(ctx, subterms[0]);
-    }
-    else if (strcmp(name_string, "real2int") == 0) {
-      CHECK_ARITY(name_string, 1, arity);
-      result = Z3_mk_real2int(ctx, subterms[0]);
-    }
-    else if (strcmp(name_string, "=") == 0 || strcmp(name_string, "==") == 0 || strcmp(name_string, "equals") == 0 ) {
-      DEBUG("making equals\n");
-      CHECK_ARITY(name_string, 2, arity);
-      // Check that types are compatible; otherwise Z3 quits/crashes
-      Z3_sort s1 = Z3_get_sort(ctx, subterms[0]);
-      Z3_sort s2 = Z3_get_sort(ctx, subterms[1]);
-      if ((!numeric_sort(ctx, s1)) && (!numeric_sort(ctx, s2)) && (s1 != s2)) // equalities between some expressions of numeric sorts are OK for Z3:
-        {
-          ERROR("different types for equals, failing\n");
-          ERROR("sort1: %s\n", Z3_sort_to_string(ctx, s1)); // as with ast_to_string, one sort_to_string invaliates the previous one, so we use two statements.
-          ERROR("sort2: %s\n", Z3_sort_to_string(ctx, s2));
-          // ERROR("sort kinds: %u and %u\n", Z3_get_sort_kind(ctx, s1), Z3_get_sort_kind(ctx, s2));
-          return NULL;
-      }
-      DEBUG("making equals\n");
-      result = Z3_mk_eq(ctx, subterms[0], subterms[1]);
-      DEBUG("made equals\n");
-    }
-    else if (strcmp(name_string, "distinct") == 0 ) {
-      result = Z3_mk_distinct(ctx, arity, subterms);
-    }
-    else if (strcmp(name_string, "divides") == 0) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_divides(ctx, subterms[0], subterms[1]);
-    }
-    else if (strcmp(name_string, "not") == 0 ) {
-      CHECK_ARITY(name_string, 1, arity);
-      result = Z3_mk_not(ctx, subterms[0]);
-    }
-    else if (strcmp(name_string, "ite") == 0 ) {
-      CHECK_ARITY(name_string, 3, arity);
-      result = Z3_mk_ite(ctx, subterms[0], subterms[1], subterms[2]);
-    }
-    else if (strcmp(name_string, "iff") == 0 || strcmp(name_string, "<=>") == 0) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_iff(ctx, subterms[0], subterms[1]);
-    }
-    else if (strcmp(name_string, "implies") == 0 || strcmp(name_string, "->") == 0) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_implies(ctx, subterms[0], subterms[1]);
-    }
-    else if (strcmp(name_string, "xor") == 0 ) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_xor(ctx, subterms[0], subterms[1]);
-    }
-    else if (strcmp(name_string, "<>") == 0 ) {
-      CHECK_ARITY(name_string, 2, arity);
-      Z3_sort s1 = Z3_get_sort(ctx, subterms[0]);
-      Z3_sort s2 = Z3_get_sort(ctx, subterms[1]);
-      if (numeric_sort(ctx, s1) && numeric_sort(ctx, s2) && (s1 != s2)) { // for numeric types, translate to (a<b or a>b)
-        Z3_ast dis1 = Z3_mk_lt(ctx, subterms[0], subterms[1]);
-        Z3_ast dis2 = Z3_mk_gt(ctx, subterms[0], subterms[1]);
-        if (dis1 == NULL || dis2 == NULL) return(NULL);
-        Z3_ast disjuncts[2] = {dis1, dis2};
-        return Z3_mk_or(ctx, 2, disjuncts);
-      }
-      Z3_ast equality = Z3_mk_eq(ctx, subterms[0], subterms[1]);
-      if (NULL == equality) {
-        ERROR("incompatible types for <>\n");
-        ERROR("sort1: %s\n", Z3_sort_to_string(ctx, s1));
-        ERROR("sort2: %s\n", Z3_sort_to_string(ctx, s2));
-        result = NULL;
-      }
-      else {
-        result = Z3_mk_not(ctx, equality);
-      }
-    }
-    // between, inclusive of both endpoints (as in python):
-    else if (strcmp(name_string, "between") == 0) {
-      CHECK_ARITY(name_string, 3, arity);
-      Z3_ast conj1 = Z3_mk_ge(ctx, subterms[0], subterms[1]);
-      Z3_ast conj2 = Z3_mk_le(ctx, subterms[0], subterms[2]);
-      if (conj1 == NULL || conj2 == NULL) return(NULL);
-      Z3_ast conjuncts[2] = {conj1, conj2};
-      return Z3_mk_and(ctx, 2, conjuncts);
-    }
-    else if (strcmp(name_string, "and") == 0 ) {result = Z3_mk_and(ctx, arity, subterms);}
-    else if (strcmp(name_string, ",") == 0 ) {result = Z3_mk_and(ctx, arity, subterms);}
-    else if (strcmp(name_string, "or") == 0 ) {result = Z3_mk_or(ctx, arity, subterms);}
-    else if (strcmp(name_string, ";") == 0 ) {result = Z3_mk_or(ctx, arity, subterms);}
-    else if (strcmp(name_string, "atleast") == 0) {
-      unsigned k;
-      if (!Z3_get_numeral_uint(ctx, subterms[arity-1], &k)) {
-        ERROR("last argument of atleast should be an int\n");
-        result = NULL;
-      }
-      else {
-        result = Z3_mk_atleast(ctx, arity-1, subterms, k);
-      }
-    }
-    else if (strcmp(name_string, "atmost") == 0) {
-      unsigned k;
-      if (!Z3_get_numeral_uint(ctx, subterms[arity-1], &k)) {
-        ERROR("last argument of atmost should be an int\n");
-        result = NULL;
-      }
-      else {
-        result = Z3_mk_atmost(ctx, arity-1, subterms, k);
-      }
-    }
-
-
-
-    // ********************************************* bit vectors ************************************/
-    // in order of appearance in https://z3prover.github.io/api/html/z3__api_8h.html
-
-    else if (strcmp(name_string, "bvadd") == 0) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_bvadd(ctx, subterms[0], subterms[1]);
-    }
-    else if (strcmp(name_string, "bvadd_no_underflow") == 0) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_bvadd_no_underflow(ctx, subterms[0], subterms[1]);
-    }
-
-    /***
-        special cases, because they have an extra arg:
-        (strcmp(name_string, "bvadd_no_overflow") == 0)
-        (strcmp(name_string, "bvmul_no_overflow") == 0)
-        (strcmp(name_string, "bvsub_no_underflow") == 0)
-    ***/
-
-    else if (strcmp(name_string, "bvand") == 0) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_bvand(ctx, subterms[0], subterms[1]);
-    }
-    else if (strcmp(name_string, "bvashr") == 0) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_bvashr(ctx, subterms[0], subterms[1]);
-    }
-    else if (strcmp(name_string, "bvlshr") == 0) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_bvlshr(ctx, subterms[0], subterms[1]);
-    }
-    else if (strcmp(name_string, "bvmul") == 0) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_bvmul(ctx, subterms[0], subterms[1]);
-    }
-    else if (strcmp(name_string, "bvmul_no_underflow") == 0) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_bvmul_no_underflow(ctx, subterms[0], subterms[1]);
-    }
-    else if (strcmp(name_string, "bvnand") == 0) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_bvand(ctx, subterms[0], subterms[1]);
-    }
-    else if (strcmp(name_string, "bvneg") == 0) {
-      CHECK_ARITY(name_string, 1, arity);
-      result = Z3_mk_bvneg(ctx, subterms[0]);
-    }
-    else if (strcmp(name_string, "bvneg_no_overflow") == 0) {
-      CHECK_ARITY(name_string, 1, arity);
-      result = Z3_mk_bvneg_no_overflow(ctx, subterms[0]);
-    }
-    else if (strcmp(name_string, "bvnor") == 0) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_bvnor(ctx, subterms[0], subterms[1]);
-    }
-    else if (strcmp(name_string, "bvnot") == 0) { // bitwise negation
-      CHECK_ARITY(name_string, 1, arity);
-      result = Z3_mk_bvnot(ctx, subterms[0]);
-    }
-    else if (strcmp(name_string, "bvor") == 0) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_bvor(ctx, subterms[0], subterms[1]);
-    }
-    else if (strcmp(name_string, "bvredand") == 0) {
-      CHECK_ARITY(name_string, 1, arity);
-      result = Z3_mk_bvredand(ctx, subterms[0]);
-    }
-    else if (strcmp(name_string, "bvredor") == 0) {
-      CHECK_ARITY(name_string, 1, arity);
-      result = Z3_mk_bvredor(ctx, subterms[0]);
-    }
-    else if (strcmp(name_string, "bvsdiv") == 0) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_bvsdiv(ctx, subterms[0], subterms[1]);
-    }
-    else if (strcmp(name_string, "bvsdiv_no_overflow") == 0) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_bvsdiv_no_overflow(ctx, subterms[0], subterms[1]);
-    }
-    else if (strcmp(name_string, "bvsge") == 0) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_bvsge(ctx, subterms[0], subterms[1]);
-    }
-    else if (strcmp(name_string, "bvsgt") == 0) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_bvsgt(ctx, subterms[0], subterms[1]);
-    }
-    else if (strcmp(name_string, "bvshl") == 0) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_bvshl(ctx, subterms[0], subterms[1]);
-    }
-    else if (strcmp(name_string, "bvsle") == 0) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_bvsle(ctx, subterms[0], subterms[1]);
-    }
-    else if (strcmp(name_string, "bvslt") == 0) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_bvslt(ctx, subterms[0], subterms[1]);
-    }
-    else if (strcmp(name_string, "bvsmod") == 0) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_bvsmod(ctx, subterms[0], subterms[1]);
-    }
-    else if (strcmp(name_string, "bvsrem") == 0) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_bvsrem(ctx, subterms[0], subterms[1]);
-    }
-    else if (strcmp(name_string, "bvsub") == 0) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_bvsub(ctx, subterms[0], subterms[1]);
-    }
-    else if (strcmp(name_string, "bvsub_no_overflow") == 0) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_bvsub_no_overflow(ctx, subterms[0], subterms[1]);
-    }
-    else if (strcmp(name_string, "bvudiv") == 0) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_bvudiv(ctx, subterms[0], subterms[1]);
-    }
-    else if (strcmp(name_string, "bvuge") == 0) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_bvuge(ctx, subterms[0], subterms[1]);
-    }
-    else if (strcmp(name_string, "bvugt") == 0) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_bvugt(ctx, subterms[0], subterms[1]);
-    }
-    else if (strcmp(name_string, "bvule") == 0) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_bvule(ctx, subterms[0], subterms[1]);
-    }
-    else if (strcmp(name_string, "bvult") == 0) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_bvult(ctx, subterms[0], subterms[1]);
-    }
-    else if (strcmp(name_string, "bvurem") == 0) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_bvurem(ctx, subterms[0], subterms[1]);
-    }
-    else if (strcmp(name_string, "bvxnor") == 0) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_bvxnor(ctx, subterms[0], subterms[1]);
-    }
-    else if (strcmp(name_string, "bvxor") == 0) {
-      CHECK_ARITY(name_string, 2, arity);
-      result = Z3_mk_bvxor(ctx, subterms[0], subterms[1]);
-    }
-
-
-    // ********************************************* uninterpreted compound term_to_ast  ****************************************/
-    else { // uninterpreted function
-      DEBUG("Making uninterpreted function declaration for %s\n", name_string);
-      // no need to look in enum map because we have a compound term:
-      assert(arity > 0);
-      Z3_func_decl declaration = get_function_declaration(h->ctx, declaration_map, name_string, arity);
-      if (declaration == NULL) {
-        INFO("Could not find declaration for %s/%lu\n", name_string, arity);
-        return NULL;
-      }
-      result = Z3_mk_app(ctx, declaration, arity, subterms);
-    }
+    result = compound_to_ast(h, declaration_map, name_string, arity, subterms);
     free(subterms);
     DEBUG("freed subterms\n");
     return result;
@@ -2355,10 +2427,10 @@ foreign_t z3_alloc_bytes_foreign(term_t size_term) {
 #define PRED(name, arity, func, attr) \
   PL_register_foreign_in_module("z3_swi_foreign", name, arity, func, attr)
 
-install_t install()
+install_t install_z3_swi_foreign(void)
 {
-  fprintf(stderr, "Installing Z3 package\n");
-  
+  DEBUG("Installing Z3 package\n");
+
   Z3_string version = Z3_get_full_version();
   fprintf(stderr, "Using Z3 version %s\n", version);
 
@@ -2400,7 +2472,7 @@ install_t install()
   PRED("z3_model_functions", 3, z3_model_functions_foreign, 0); // +handle, +model_pointer, -functions_term
   PRED("z3_model_constants", 3, z3_model_constants_foreign, 0); // +handle, +model_pointer, -constants_term
 
-  PRED("z3_reset_declarations", 1, z3_reset_declarations_foreign, 0); // +handle // clears declarations, including enums, keeps Z3 context
+  PRED("z3_reset_declarations", 1, z3_reset_declarations_foreign, 0); // +handle // clears non-enum declarations, keeps enums and the Z3 context
   PRED("z3_get_enum_declarations", 2, z3_get_enum_declarations_foreign, 0); // +handle, -term
   PRED("z3_get_declarations", 2, z3_get_declarations_foreign, 0); // +handle, -term
 

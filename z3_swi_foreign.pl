@@ -533,4 +533,180 @@ test(remove_decl, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
 
 :- end_tests(remove_declarations).
 
+% Regression tests for bugs fixed in the C wrapper.
+
+:- begin_tests(c_wrapper_fixes).
+
+% bvnand used to build bvand.
+test(bvnand, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
+    term_to_z3_ast(H, bvnand(a:bv(4), b:bv(4)), A),
+    z3_ast_string(H, A, S),
+    assertion(sub_string(S, _, _, _, "bvnand")),
+    % bits are least-significant first: 3 nand 5 = ~1 = 14 in 4 bits.
+    z3_assert(H, c:bv(4) = bvnand(bv_numeral([1,1,0,0]), bv_numeral([1,0,1,0]))),
+    z3_check(H, l_true),
+    z3_model_lists(H, Model),
+    assertion(Model.constants == [c=14]).
+
+% A negative pop count used to abort the process via a C assert.
+test(pop_negative, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)),
+                    throws(error(domain_error(not_less_than_zero, -1), _))] ) :-
+    z3_solver_push(H, _),
+    z3_solver_pop(H, -1, _).
+
+% z3_solver_push/2 used to reject a bound output, so z3_solver_push(H, 1) always failed.
+test(push_bound_output, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
+    z3_solver_push(H, 1),
+    \+ z3_solver_push(H, 5),    % wrong count fails...
+    z3_solver_scopes(H, N),
+    assertion(N == 1),          % ...without pushing
+    z3_solver_push(H, 2).
+
+test(pop_not_integer,[setup(z3_new_handle(H)), cleanup(z3_free_handle(H)),
+                       throws(error(type_error(integer, foo), _))] ) :-
+    z3_solver_pop(H, foo, _).
+
+test(pop_after_error, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
+    z3_solver_push(H, _),
+    catch(z3_solver_pop(H, -1, _), error(domain_error(_, _), _), true),
+    z3_solver_pop(H, 1, N),
+    assertion(N == 0).
+
+% on, off and fail used to become Boolean constants.
+test(on_off_fail_are_constants, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)),
+                                 forall(member(Atom, [on, off, fail]))] ) :-
+    term_to_z3_ast(H, Atom, A),
+    z3_ast_to_term(H, A, T),
+    assertion(T == Atom).
+
+test(on_is_an_int_constant, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
+    z3_assert(H, on > 5),
+    z3_check(H, l_true).
+
+% mk_unsigned_int64 used to truncate to 32 bits and ignore bad values.
+test(unsigned_int64_large, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
+    term_to_z3_ast(H, mk_unsigned_int64(5000000000, int), A),
+    z3_ast_to_term(H, A, T),
+    assertion(T == 5000000000).
+
+test(unsigned_int64_bv64, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
+    Max is 2^64 - 1,
+    z3_assert(H, a:bv(64) = mk_unsigned_int64(Max, bv(64))),
+    z3_check(H, l_true),
+    z3_model_lists(H, Model),
+    assertion(Model.constants == [a=Max]).
+
+test(unsigned_int64_negative, [fail, setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
+    term_to_z3_ast(H, mk_unsigned_int64(-1, int), _).
+
+test(unsigned_int64_bad_sort, [fail, setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
+    term_to_z3_ast(H, mk_unsigned_int64(1, f(x)), _).
+
+% Unconvertible subterms used to be passed to Z3 as NULL (bv2int crashed).
+test(null_subterms, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)),
+                     forall(member(Term, [bv2int(undeclared(x), true),
+                                          int2bv(8, undeclared(x)),
+                                          bvadd_no_overflow(undeclared(x), b:bv(8), true),
+                                          bvmul_no_overflow(b:bv(8), undeclared(x), false),
+                                          bvsub_no_underflow(undeclared(x), undeclared(x), true)]))] ) :-
+    \+ term_to_z3_ast(H, Term, _).
+
+test(prolog_rational, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
+    z3_simplify(H, 1r3, T),
+    assertion(T == 1/3).
+
+% Paths through compound_to_ast that used to leak the subterms array.
+% (These check the results; the leak itself is not observable from Prolog.)
+test(compound_early_returns, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
+    z3_assert(H, between(x:int, 1, 3)),
+    z3_assert(H, x:int <> y:real),
+    z3_check(H, l_true),
+    \+ term_to_z3_ast(H, between(x, 1), _),       % arity error
+    \+ term_to_z3_ast(H, undeclared(x), _),        % missing declaration
+    z3_assert(H, x > 2),
+    z3_check(H, l_true),
+    z3_model_lists(H, Model),
+    assertion(memberchk(x=3, Model.constants)).
+
+% Removing a missing declaration used to trigger a Z3 error.
+test(remove_missing_declaration, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
+    \+ z3_remove_declaration(H, nosuch, 0),
+    z3_assert(H, a:int > 1),
+    z3_check(H, l_true).
+
+% z3_declare_enum argument checking.
+test(enum_name_not_atom, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)),
+                          throws(error(type_error(atom, 3), _))] ) :-
+    z3_declare_enum(H, 3, [a]).
+
+test(enum_name_unbound, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)),
+                         throws(error(instantiation_error, _))] ) :-
+    z3_declare_enum(H, _, [a]).
+
+test(enum_improper_list, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)),
+                          throws(error(type_error(list, [a|b]), _))] ) :-
+    z3_declare_enum(H, c, [a|b]).
+
+test(enum_partial_list, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)),
+                         throws(error(instantiation_error, _))] ) :-
+    z3_declare_enum(H, c, [a|_]).
+
+test(enum_non_ground, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)),
+                       throws(error(instantiation_error, _))] ) :-
+    z3_declare_enum(H, c, [a, _]).
+
+test(enum_empty, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)),
+                  throws(error(domain_error(non_empty_list, []), _))] ) :-
+    z3_declare_enum(H, c, []).
+
+test(enum_compound_value, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)),
+                           throws(error(type_error(atom, f(x)), _))] ) :-
+    z3_declare_enum(H, c, [f(x)]).
+
+test(enum_redeclare_fails, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
+    z3_declare_enum(H, c, [red, green]),
+    \+ z3_declare_enum(H, c, [red, green]),
+    z3_assert(H, x:c <> red),
+    z3_check(H, l_true).
+
+% bv_numeral used to keep going on a non-boolean element, using uninitialized bits.
+test(bv_numeral_bad_lists, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)),
+                            forall(member(L, [[1, foo], [1|_], [1|x], []]))] ) :-
+    \+ term_to_z3_ast(H, bv_numeral(L), _).
+
+% Non-positive bit-vector widths used to reach Z3 as huge unsigned values.
+test(bad_bv_widths, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)),
+                     forall(member(T, [int2bv(0, 5), int2bv(-1, 5), a:bv(0) = a, b:bv(-3) = b]))] ) :-
+    \+ term_to_z3_ast(H, T, _).
+
+% The = check now only lets Int and Real mix.
+test(eq_sort_mismatches, [setup((z3_new_handle(H), z3_declare_enum(H, color, [red, blue]))),
+                          cleanup(z3_free_handle(H)),
+                          forall(member(T, [a:bool = b:int, c:int = d:color, e:bool = f:color]))] ) :-
+    \+ term_to_z3_ast(H, T, _).
+
+test(eq_int_real_mix, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
+    z3_assert(H, x:int = y:real),
+    z3_assert(H, y = 2.0),
+    z3_check(H, l_true).
+
+% <> still treats Bool as numeric, as Z3 does in arithmetic.
+test(neq_bool_real, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
+    z3_assert(H, c:bool <> d:real),
+    z3_check(H, l_true).
+
+% Integer symbols used to be truncated from long to int.
+test(int_symbol_range, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))] ) :-
+    z3_symbol(H, 5, S1),
+    z3_symbol(H, 5, S2),
+    assertion(S1 == S2),
+    Big is 2^40,
+    \+ z3_symbol(H, Big, _).
+
+% z3_check/2 used PL_get_pointer instead of PL_get_pointer_ex.
+test(check_bad_handle, [throws(error(type_error(_, foo), _))] ) :-
+    z3_check(foo, _).
+
+:- end_tests(c_wrapper_fixes).
+
 
