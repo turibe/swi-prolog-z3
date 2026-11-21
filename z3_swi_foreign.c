@@ -4,11 +4,12 @@
 #include <string.h>
 #include <ctype.h>
 #include <assert.h>
-
-// #include <pthread.h>
+#include <stdatomic.h>
+#include <pthread.h>
 
 // /opt/homebrew/Cellar/gmp/6.3.0/include/gmp.h
 // #include <gmp.h>
+#include <SWI-Stream.h>
 #include <SWI-Prolog.h>
 
 #include <z3.h>
@@ -127,24 +128,55 @@ typedef Z3_ast_map sort_map;
 // ***************************** GLOBAL VARIABLES ********************************************
 
 
-// static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
-
-static long handle_counter = 0;
+static atomic_long handle_counter = 0;
 
 // The HandleStruct has the objects needed to typecheck and convert Prolog terms to Z3.
 // Solver and Model objects are separate, and we can do push and pop on solvers from Prolog.
 
+/*
+  Handles and models are given to Prolog as blobs (see z3_handle_blob and z3_model_blob below),
+  so a freed, garbage-collected, or made-up handle cannot crash the process.
+
+  Lifetime: the HandleStruct is reference counted. The handle blob holds one reference, and each
+  live model blob holds one. The Z3 context is deleted when z3_free_handle/1 is called or the handle
+  blob is garbage collected, whichever comes first; ctx is then NULL. The struct itself is freed when
+  the last reference goes away.
+
+  Model blobs may be garbage collected in SWI-Prolog's gc thread, while another thread is using the
+  context. Z3 contexts are not thread-safe, so the release hook does not call Z3. It queues the model
+  on pending_models instead, and the next call that uses the handle releases it.
+
+  Threads: a handle may be shared between Prolog threads. Every predicate that takes a handle holds
+  h->lock for its whole run (see lock_handle and the *_locked functions), so calls on one handle are
+  serialized; calls on different handles run in parallel. A thread waiting for the lock cannot be
+  interrupted until the call holding it (for example a long z3_check) returns.
+  Lock order: h->lock before h->pending_lock. Blob release hooks only take pending_lock.
+*/
+
 struct HandleStruct {
-  Z3_context ctx;
+  Z3_context ctx; // NULL once the context has been deleted
   Z3_solver solver;
   sort_map enum_sorts;  // map from names to Z3 enumeration sorts, used for building terms
   decl_map enum_declarations; // declarations that typechecker will need
   decl_map declarations; // standard declarations
   long handle_id; // used as a unique ID for the context
   Z3_sort int_sort, bool_sort, real_sort;
+
+  pthread_mutex_t lock;          // held for the whole of any predicate that uses this handle
+  atomic_int refcount;           // handle blob + one per live model blob
+  pthread_mutex_t pending_lock;  // protects ctx becoming NULL and the pending_models list
+  Z3_model *pending_models;      // models garbage collected but not yet released in Z3
+  size_t num_pending, max_pending;
 };
 
 typedef struct HandleStruct *handle;
+
+struct ModelStruct {
+  Z3_model model; // NULL once freed
+  handle h;       // NULL once freed
+};
+
+typedef struct ModelStruct *model_ref;
 
 static functor_t pair_functor; // "="
 static functor_t declaration_pair_functor; // ":"
@@ -193,15 +225,187 @@ void initialize_handle(handle handle) {
 
 }
 
+// ***************************** HANDLE AND MODEL BLOBS ********************************************
+
+// Drops one reference to h, freeing the struct when it was the last one. The context must already be deleted.
+static void handle_release_ref(handle h) {
+  if (atomic_fetch_sub(&h->refcount, 1) == 1) {
+    assert(h->ctx == NULL);
+    pthread_mutex_destroy(&h->lock);
+    pthread_mutex_destroy(&h->pending_lock);
+    free(h->pending_models);
+    free(h);
+  }
+}
+
+// Releases the models queued by release_model_blob. The caller must hold h->lock, with h->ctx alive.
+static void drain_pending_models(handle h) {
+  pthread_mutex_lock(&h->pending_lock);
+  for (size_t i = 0; i < h->num_pending; i++) {
+    Z3_model_dec_ref(h->ctx, h->pending_models[i]);
+  }
+  h->num_pending = 0;
+  pthread_mutex_unlock(&h->pending_lock);
+}
+
+// Deletes the Z3 context and everything in it. Safe to call more than once.
+// The caller must hold h->lock, or be the blob release hook (when no other thread can be using h).
+static void destroy_context(handle h) {
+  pthread_mutex_lock(&h->pending_lock);
+  if (h->ctx != NULL) {
+    h->num_pending = 0; // Z3_del_context frees these models too
+    free_handle_contents(h);
+    h->ctx = NULL;
+  }
+  pthread_mutex_unlock(&h->pending_lock);
+}
+
+static int release_handle_blob(atom_t a) {
+  handle h = PL_blob_data(a, NULL, NULL);
+  DEBUG("Garbage collecting handle %ld\n", h->handle_id);
+  destroy_context(h);
+  handle_release_ref(h);
+  return TRUE;
+}
+
+static int write_handle_blob(IOSTREAM *s, atom_t a, int flags) {
+  (void) flags;
+  handle h = PL_blob_data(a, NULL, NULL);
+  Sfprintf(s, "<z3_handle>(%ld%s)", h->handle_id, h->ctx == NULL ? ",freed" : "");
+  return TRUE;
+}
+
+static int release_model_blob(atom_t a) {
+  model_ref m = PL_blob_data(a, NULL, NULL);
+  handle h = m->h;
+  if (h != NULL) {
+    pthread_mutex_lock(&h->pending_lock);
+    if (h->ctx != NULL && m->model != NULL) {
+      if (h->num_pending == h->max_pending) {
+        size_t new_max = h->max_pending == 0 ? 8 : 2 * h->max_pending;
+        Z3_model *grown = realloc(h->pending_models, new_max * sizeof(Z3_model));
+        if (grown == NULL) {
+          pthread_mutex_unlock(&h->pending_lock);
+          return FALSE; // keep the blob; nothing else to do safely
+        }
+        h->pending_models = grown;
+        h->max_pending = new_max;
+      }
+      h->pending_models[h->num_pending++] = m->model;
+    }
+    pthread_mutex_unlock(&h->pending_lock);
+    handle_release_ref(h);
+  }
+  free(m);
+  return TRUE;
+}
+
+static int write_model_blob(IOSTREAM *s, atom_t a, int flags) {
+  (void) flags;
+  model_ref m = PL_blob_data(a, NULL, NULL);
+  if (m->h == NULL) {
+    Sfprintf(s, "<z3_model>(%p,freed)", (void *) m);
+  }
+  else {
+    Sfprintf(s, "<z3_model>(%p,handle=%ld)", (void *) m, m->h->handle_id);
+  }
+  return TRUE;
+}
+
+static PL_blob_t z3_handle_blob = {
+  .magic = PL_BLOB_MAGIC,
+  .flags = PL_BLOB_NOCOPY,
+  .name = "z3_handle",
+  .release = release_handle_blob,
+  .write = write_handle_blob,
+};
+
+static PL_blob_t z3_model_blob = {
+  .magic = PL_BLOB_MAGIC,
+  .flags = PL_BLOB_NOCOPY,
+  .name = "z3_model",
+  .release = release_model_blob,
+  .write = write_model_blob,
+};
+
+/*
+  Gets a live handle from a Prolog term and locks it; the caller must call unlock_handle(h) after.
+  Raises instantiation_error, type_error(z3_handle, T), or existence_error(z3_handle, T) for a
+  handle whose context has been freed (nothing is locked in those cases).
+*/
+static int lock_handle(term_t t, handle *hp) {
+  void *data;
+  PL_blob_t *type;
+  if (!PL_get_blob(t, &data, NULL, &type) || type != &z3_handle_blob) {
+    if (PL_is_variable(t)) return PL_instantiation_error(t);
+    return PL_type_error("z3_handle", t);
+  }
+  handle h = data; // the term keeps the blob, and so h, alive for the whole call
+  pthread_mutex_lock(&h->lock);
+  if (h->ctx == NULL) {
+    pthread_mutex_unlock(&h->lock);
+    return PL_existence_error("z3_handle", t);
+  }
+  drain_pending_models(h);
+  *hp = h;
+  return TRUE;
+}
+
+static void unlock_handle(handle h) {
+  pthread_mutex_unlock(&h->lock);
+}
+
+/*
+  Gets a live model belonging to h. Raises instantiation_error, type_error(z3_model, T),
+  existence_error(z3_model, T) for a freed model, or permission_error(access, z3_model, T)
+  for a model that belongs to a different handle.
+*/
+static int get_model_ref(term_t t, handle h, model_ref *mp) {
+  void *data;
+  PL_blob_t *type;
+  if (!PL_get_blob(t, &data, NULL, &type) || type != &z3_model_blob) {
+    if (PL_is_variable(t)) return PL_instantiation_error(t);
+    return PL_type_error("z3_model", t);
+  }
+  model_ref m = data;
+  if (m->model == NULL) {
+    return PL_existence_error("z3_model", t);
+  }
+  if (m->h != h) {
+    return PL_permission_error("access", "z3_model", t);
+  }
+  *mp = m;
+  return TRUE;
+}
+
+static int get_model(term_t t, handle h, Z3_model *model) {
+  model_ref m;
+  if (!get_model_ref(t, h, &m)) return FALSE;
+  *model = m->model;
+  return TRUE;
+}
+
+// ***************************** END BLOBS ********************************************
+
+
 // TODO: Z3_solver_get_statistics
 
 // TODO: make this handle_stats(h, A, B, C), print in PL.
 
+static foreign_t handle_stats_foreign_locked(handle h, term_t handle_term, term_t num_declarations, term_t num_enum_sorts, term_t num_enum_declarations);
+
 foreign_t handle_stats_foreign(term_t handle_term, term_t num_declarations, term_t num_enum_sorts, term_t num_enum_declarations) {
   handle h;
-  int rval = PL_get_pointer_ex(handle_term, (void **) &h);
-  if (!rval) return rval;
-  
+  if (!lock_handle(handle_term, &h)) return FALSE;
+  foreign_t locked_rval = handle_stats_foreign_locked(h, handle_term, num_declarations, num_enum_sorts, num_enum_declarations);
+  unlock_handle(h);
+  return locked_rval;
+}
+
+static foreign_t handle_stats_foreign_locked(handle h, term_t handle_term, term_t num_declarations, term_t num_enum_sorts, term_t num_enum_declarations) {
+  int rval = TRUE;
+  (void) rval; (void) handle_term;
+
   Z3_context ctx = h->ctx;
   uint64_t decl_size = Z3_ast_map_size(ctx, h->declarations);
   int res = PL_unify_uint64(num_declarations, decl_size);
@@ -222,28 +426,46 @@ foreign_t z3_new_handle_foreign(term_t handle_term) {
     ERROR("z3_new_handle should be called on a variable");
     return FALSE;
   }
-  handle h = malloc(sizeof(struct HandleStruct));
-  memset(h, 0, sizeof(struct HandleStruct));
-  handle_counter += 1;
-  h->handle_id = handle_counter;
-  initialize_handle(h);
-  int res = PL_unify_pointer(handle_term, h);
-  if (!res) {
-    ERROR("error in z3_new_handle.");
-    free_handle_contents(h);
-    free(h);
+  handle h = calloc(1, sizeof(struct HandleStruct));
+  if (h == NULL) {
+    return PL_resource_error("memory");
   }
+  h->handle_id = atomic_fetch_add(&handle_counter, 1) + 1;
+  atomic_init(&h->refcount, 1); // owned by the blob
+  pthread_mutex_init(&h->lock, NULL);
+  pthread_mutex_init(&h->pending_lock, NULL);
+  initialize_handle(h);
+
+  term_t blob = PL_new_term_ref();
+  if (!PL_put_blob(blob, h, sizeof(*h), &z3_handle_blob)) {
+    destroy_context(h);
+    handle_release_ref(h);
+    return FALSE;
+  }
+  // From here the blob owns h; if the unification fails, garbage collection releases it.
   DEBUG("Made new handle %p\n", h);
-  return res;
+  return PL_unify(handle_term, blob);
 }
 
+/*
+  Deletes the handle's Z3 context now, rather than waiting for garbage collection.
+  Afterwards the handle and its models raise existence errors.
+*/
+static foreign_t z3_free_handle_foreign_locked(handle h, term_t handle_term);
+
 foreign_t z3_free_handle_foreign(term_t handle_term) {
-  handle h;  
-  int rval = PL_get_pointer_ex(handle_term, (void **) &h);
-  if (!rval) return rval;
+  handle h;
+  if (!lock_handle(handle_term, &h)) return FALSE;
+  foreign_t locked_rval = z3_free_handle_foreign_locked(h, handle_term);
+  unlock_handle(h);
+  return locked_rval;
+}
+
+static foreign_t z3_free_handle_foreign_locked(handle h, term_t handle_term) {
+  int rval = TRUE;
+  (void) rval; (void) handle_term;
   DEBUG("Freeing handle %p\n", h);
-  free_handle_contents(h);
-  free(h);
+  destroy_context(h);
   return TRUE;
 }
 
@@ -262,10 +484,19 @@ foreign_t z3_finalize_memory_foreign() {
 
 
 // resets declarations but not enums, which cannot be reset in the same way:
+static foreign_t z3_reset_declarations_foreign_locked(handle h, term_t handle_term);
+
 foreign_t z3_reset_declarations_foreign(term_t handle_term) {
   handle h;
-  int rval = PL_get_pointer_ex(handle_term, (void **) &h);
-  if (!rval) return rval;
+  if (!lock_handle(handle_term, &h)) return FALSE;
+  foreign_t locked_rval = z3_reset_declarations_foreign_locked(h, handle_term);
+  unlock_handle(h);
+  return locked_rval;
+}
+
+static foreign_t z3_reset_declarations_foreign_locked(handle h, term_t handle_term) {
+  int rval = TRUE;
+  (void) rval; (void) handle_term;
   Z3_ast_map_reset(h->ctx, h->declarations);
   return TRUE;
 }
@@ -336,20 +567,38 @@ void register_function_declaration(Z3_context ctx, decl_map declaration_map, Z3_
 /****
      for debugging; gets the declarations string into result:
 ***/
+static foreign_t z3_declarations_string_foreign_locked(handle h, term_t handle_term, term_t result);
+
 foreign_t z3_declarations_string_foreign(term_t handle_term, term_t result) {
   handle h;
-  int rval = PL_get_pointer_ex(handle_term, (void **) &h);
-  if (!rval) return rval;
+  if (!lock_handle(handle_term, &h)) return FALSE;
+  foreign_t locked_rval = z3_declarations_string_foreign_locked(h, handle_term, result);
+  unlock_handle(h);
+  return locked_rval;
+}
+
+static foreign_t z3_declarations_string_foreign_locked(handle h, term_t handle_term, term_t result) {
+  int rval = TRUE;
+  (void) rval; (void) handle_term;
   decl_map declaration_map = h->declarations;
   Z3_context ctx = h->ctx;
   Z3_string rstring =  Z3_ast_map_to_string(ctx, declaration_map);
   return PL_unify_string_chars(result, rstring);
 }
 
+static foreign_t z3_enums_string_foreign_locked(handle h, term_t handle_term, term_t result);
+
 foreign_t z3_enums_string_foreign(term_t handle_term, term_t result) {
   handle h;
-  int rval = PL_get_pointer_ex(handle_term, (void **) &h);
-  if (!rval) return rval;
+  if (!lock_handle(handle_term, &h)) return FALSE;
+  foreign_t locked_rval = z3_enums_string_foreign_locked(h, handle_term, result);
+  unlock_handle(h);
+  return locked_rval;
+}
+
+static foreign_t z3_enums_string_foreign_locked(handle h, term_t handle_term, term_t result) {
+  int rval = TRUE;
+  (void) rval; (void) handle_term;
   decl_map declaration_map = h->enum_declarations;
   Z3_context ctx = h->ctx;
   Z3_string rstring =  Z3_ast_map_to_string(ctx, declaration_map);
@@ -364,7 +613,7 @@ foreign_t z3_enums_string_foreign(term_t handle_term, term_t result) {
 /**
 foreign_t z3_make_solver_foreign(term_t handle_term, term_t solver_term) {
   handle h;
-  int rval = PL_get_pointer_ex(handle_term, (void **) &h); // TODO: use ||
+  int rval = get_handle(handle_term, &h); // TODO: use ||
   if (!rval) return rval;
   if (!PL_is_variable(solver_term)) {
     ERROR("z3_make_solver should be called on a variable");
@@ -387,7 +636,7 @@ foreign_t z3_make_solver_foreign(term_t handle_term, term_t solver_term) {
 /**
 foreign_t z3_free_solver_foreign(term_t handle_term, term_t u) {
   handle h;
-  int rval = PL_get_pointer_ex(handle_term, (void **) &h);
+  int rval = get_handle(handle_term, &h);
   if (!rval) return rval;
   
   Z3_solver solver;
@@ -401,17 +650,29 @@ foreign_t z3_free_solver_foreign(term_t handle_term, term_t u) {
 }
 */
 
+static foreign_t z3_free_model_foreign_locked(handle h, term_t handle_term, term_t model_term);
+
 foreign_t z3_free_model_foreign(term_t handle_term, term_t model_term) {
   handle h;
-  int rval = PL_get_pointer_ex(handle_term, (void **) &h);
+  if (!lock_handle(handle_term, &h)) return FALSE;
+  foreign_t locked_rval = z3_free_model_foreign_locked(h, handle_term, model_term);
+  unlock_handle(h);
+  return locked_rval;
+}
+
+static foreign_t z3_free_model_foreign_locked(handle h, term_t handle_term, term_t model_term) {
+  int rval = TRUE;
+  (void) rval; (void) handle_term;
+
+  model_ref m;
+  rval = get_model_ref(model_term, h, &m);
   if (!rval) return rval;
 
-  Z3_model model;
-  rval = PL_get_pointer_ex(model_term, (void **) &model);
-  if (!rval) return rval;
-
-  DEBUG("freeing model %p\n", (void *) model);
-  Z3_model_dec_ref(h->ctx, model);
+  DEBUG("freeing model %p\n", (void *) m->model);
+  Z3_model_dec_ref(h->ctx, m->model);
+  m->model = NULL;
+  m->h = NULL;
+  handle_release_ref(h); // the handle blob still holds its own reference
   return TRUE;
 }
 
@@ -422,31 +683,65 @@ foreign_t z3_free_model_foreign(term_t handle_term, term_t model_term) {
   Model should be freed after use, with z3_free_model/2.
 */
 
+static foreign_t z3_get_model_foreign_locked(handle h, term_t handle_term, term_t model_term);
+
 foreign_t z3_get_model_foreign(term_t handle_term, term_t model_term) {
   handle h;
-  int rval = PL_get_pointer_ex(handle_term, (void **) &h);
-  if (!rval) return rval;
+  if (!lock_handle(handle_term, &h)) return FALSE;
+  foreign_t locked_rval = z3_get_model_foreign_locked(h, handle_term, model_term);
+  unlock_handle(h);
+  return locked_rval;
+}
+
+static foreign_t z3_get_model_foreign_locked(handle h, term_t handle_term, term_t model_term) {
+  int rval = TRUE;
+  (void) rval; (void) handle_term;
 
   Z3_solver solver = h->solver;
 
   Z3_model model = Z3_solver_get_model(h->ctx, solver);
-  
-  if (model && PL_unify_pointer(model_term, model)) {
-    Z3_model_inc_ref(h->ctx, model);
-    return TRUE;
+  if (model == NULL) {
+    return FALSE;
   }
-  return FALSE;
+
+  model_ref m = malloc(sizeof(struct ModelStruct));
+  if (m == NULL) {
+    return PL_resource_error("memory");
+  }
+  Z3_model_inc_ref(h->ctx, model);
+  m->model = model;
+  m->h = h;
+  atomic_fetch_add(&h->refcount, 1);
+
+  term_t blob = PL_new_term_ref();
+  if (!PL_put_blob(blob, m, sizeof(*m), &z3_model_blob)) {
+    Z3_model_dec_ref(h->ctx, model);
+    handle_release_ref(h);
+    free(m);
+    return FALSE;
+  }
+  // From here the blob owns m; if the unification fails, garbage collection releases it.
+  return PL_unify(model_term, blob);
 }
 
 
 
+static foreign_t z3_model_eval_foreign_locked(handle h, term_t handle_term, term_t model_term, term_t term_to_eval, term_t completion_flag, term_t result_term);
+
 foreign_t z3_model_eval_foreign(term_t handle_term, term_t model_term, term_t term_to_eval, term_t completion_flag, term_t result_term) {
   handle h;
-  int rval = PL_get_pointer_ex(handle_term, (void **) &h);
-  if (!rval) return rval;
+  if (!lock_handle(handle_term, &h)) return FALSE;
+  foreign_t locked_rval = z3_model_eval_foreign_locked(h, handle_term, model_term, term_to_eval, completion_flag, result_term);
+  unlock_handle(h);
+  return locked_rval;
+}
+
+static foreign_t z3_model_eval_foreign_locked(handle h, term_t handle_term, term_t model_term, term_t term_to_eval, term_t completion_flag, term_t result_term) {
+  int rval = TRUE;
+  (void) rval; (void) handle_term;
 
   Z3_model model;
-  rval = PL_get_pointer_ex(model_term, (void **) &model);
+  rval = get_model(model_term, h, &model);
   if (!rval) return rval;
 
   int completion = FALSE;
@@ -603,17 +898,35 @@ foreign_t z3_declaration_map_to_term(Z3_context ctx, decl_map declaration_map, t
   return PL_unify(l, result);
 }
 
+static foreign_t z3_get_enum_declarations_foreign_locked(handle h, term_t handle_term, term_t result);
+
 foreign_t z3_get_enum_declarations_foreign(term_t handle_term, term_t result) {
   handle h;
-  int rval = PL_get_pointer_ex(handle_term, (void **) &h);
-  if (!rval) return rval;
+  if (!lock_handle(handle_term, &h)) return FALSE;
+  foreign_t locked_rval = z3_get_enum_declarations_foreign_locked(h, handle_term, result);
+  unlock_handle(h);
+  return locked_rval;
+}
+
+static foreign_t z3_get_enum_declarations_foreign_locked(handle h, term_t handle_term, term_t result) {
+  int rval = TRUE;
+  (void) rval; (void) handle_term;
   return z3_declaration_map_to_term(h->ctx, h->enum_declarations, result);
 }
 
+static foreign_t z3_get_declarations_foreign_locked(handle h, term_t handle_term, term_t result);
+
 foreign_t z3_get_declarations_foreign(term_t handle_term, term_t result) {
   handle h;
-  int rval = PL_get_pointer_ex(handle_term, (void **) &h);
-  if (!rval) return rval;
+  if (!lock_handle(handle_term, &h)) return FALSE;
+  foreign_t locked_rval = z3_get_declarations_foreign_locked(h, handle_term, result);
+  unlock_handle(h);
+  return locked_rval;
+}
+
+static foreign_t z3_get_declarations_foreign_locked(handle h, term_t handle_term, term_t result) {
+  int rval = TRUE;
+  (void) rval; (void) handle_term;
   return z3_declaration_map_to_term(h->ctx, h->declarations, result);
 }
 
@@ -624,10 +937,19 @@ foreign_t z3_get_declarations_foreign(term_t handle_term, term_t result) {
 // enums are accumulated in h->enum_declarations.
 
 // +atom, +list
+static foreign_t z3_declare_enum_foreign_locked(handle h, term_t handle_term, term_t sort_name_term, term_t enum_names_list);
+
 foreign_t z3_declare_enum_foreign(term_t handle_term, term_t sort_name_term, term_t enum_names_list) {
   handle h;
-  int rval = PL_get_pointer_ex(handle_term, (void **) &h);
-  if (!rval) return rval;
+  if (!lock_handle(handle_term, &h)) return FALSE;
+  foreign_t locked_rval = z3_declare_enum_foreign_locked(h, handle_term, sort_name_term, enum_names_list);
+  unlock_handle(h);
+  return locked_rval;
+}
+
+static foreign_t z3_declare_enum_foreign_locked(handle h, term_t handle_term, term_t sort_name_term, term_t enum_names_list) {
+  int rval = TRUE;
+  (void) rval; (void) handle_term;
 
   Z3_context ctx = h->ctx;
 
@@ -726,10 +1048,19 @@ foreign_t remove_declaration(Z3_context ctx, Z3_ast_map map, const char* name_st
 }
 
 
+static foreign_t z3_remove_declaration_foreign_locked(handle h, term_t handle_term, term_t name_term, term_t arity_term);
+
 foreign_t z3_remove_declaration_foreign(term_t handle_term, term_t name_term, term_t arity_term) {
   handle h;
-  int rval = PL_get_pointer_ex(handle_term, (void **) &h);
-  if (!rval) return rval;
+  if (!lock_handle(handle_term, &h)) return FALSE;
+  foreign_t locked_rval = z3_remove_declaration_foreign_locked(h, handle_term, name_term, arity_term);
+  unlock_handle(h);
+  return locked_rval;
+}
+
+static foreign_t z3_remove_declaration_foreign_locked(handle h, term_t handle_term, term_t name_term, term_t arity_term) {
+  int rval = TRUE;
+  (void) rval; (void) handle_term;
   int arity;
   char *name_string;
   rval = PL_get_atom_chars(name_term, &name_string);
@@ -744,10 +1075,19 @@ foreign_t z3_remove_declaration_foreign(term_t handle_term, term_t name_term, te
   For debugging:
 */
 
+static foreign_t z3_symbol_foreign_locked(handle h, term_t handle_term, term_t i, term_t symbol);
+
 foreign_t z3_symbol_foreign(term_t handle_term, term_t i, term_t symbol) {
   handle h;
-  int rval = PL_get_pointer_ex(handle_term, (void **) &h);
-  if (!rval) return rval;
+  if (!lock_handle(handle_term, &h)) return FALSE;
+  foreign_t locked_rval = z3_symbol_foreign_locked(h, handle_term, i, symbol);
+  unlock_handle(h);
+  return locked_rval;
+}
+
+static foreign_t z3_symbol_foreign_locked(handle h, term_t handle_term, term_t i, term_t symbol) {
+  int rval = TRUE;
+  (void) rval; (void) handle_term;
   DEBUG("term types: %d %d\n", PL_term_type(i), PL_term_type(symbol));
 
   Z3_symbol s = mk_symbol(h->ctx, i);
@@ -777,10 +1117,19 @@ int z3_lbool_to_atom(const Z3_lbool status, term_t plterm) {
 
 /* For debugging only, easy to crash the system :-) */
 
+static foreign_t z3_ast_to_term_foreign_locked(handle h, term_t handle_term, term_t ast_term, term_t term);
+
 foreign_t z3_ast_to_term_foreign(term_t handle_term, term_t ast_term, term_t term) {
   handle h;
-  int rval = PL_get_pointer_ex(handle_term, (void **) &h);
-  if (!rval) return rval;
+  if (!lock_handle(handle_term, &h)) return FALSE;
+  foreign_t locked_rval = z3_ast_to_term_foreign_locked(h, handle_term, ast_term, term);
+  unlock_handle(h);
+  return locked_rval;
+}
+
+static foreign_t z3_ast_to_term_foreign_locked(handle h, term_t handle_term, term_t ast_term, term_t term) {
+  int rval = TRUE;
+  (void) rval; (void) handle_term;
   Z3_ast ast;
   rval = PL_get_pointer_ex(ast_term, (void**) &ast);
   if (!rval) {
@@ -792,10 +1141,19 @@ foreign_t z3_ast_to_term_foreign(term_t handle_term, term_t ast_term, term_t ter
 
 // get a Prolog list with the assertions added to a solver:
 // +Solver, -List
+static foreign_t z3_solver_assertions_foreign_locked(handle h, term_t handle_term, term_t list);
+
 foreign_t z3_solver_assertions_foreign(term_t handle_term, term_t list) {
   handle h;
-  int rval = PL_get_pointer_ex(handle_term, (void **) &h);
-  if (!rval) return rval;
+  if (!lock_handle(handle_term, &h)) return FALSE;
+  foreign_t locked_rval = z3_solver_assertions_foreign_locked(h, handle_term, list);
+  unlock_handle(h);
+  return locked_rval;
+}
+
+static foreign_t z3_solver_assertions_foreign_locked(handle h, term_t handle_term, term_t list) {
+  int rval = TRUE;
+  (void) rval; (void) handle_term;
   Z3_solver solver = h->solver;
   Z3_context ctx = h->ctx;
   Z3_ast_vector v = Z3_solver_get_assertions(ctx, solver);
@@ -902,10 +1260,19 @@ foreign_t z3_ast_to_term_internal(const Z3_context ctx, Z3_ast ast, term_t term)
 }
 
 
+static foreign_t term_to_z3_ast_foreign_locked(handle h, term_t handle_term, term_t formula, term_t result);
+
 foreign_t term_to_z3_ast_foreign(term_t handle_term, term_t formula, term_t result) {
   handle h;
-  int rval = PL_get_pointer_ex(handle_term, (void **) &h);
-  if (!rval) return rval;
+  if (!lock_handle(handle_term, &h)) return FALSE;
+  foreign_t locked_rval = term_to_z3_ast_foreign_locked(h, handle_term, formula, result);
+  unlock_handle(h);
+  return locked_rval;
+}
+
+static foreign_t term_to_z3_ast_foreign_locked(handle h, term_t handle_term, term_t formula, term_t result) {
+  int rval = TRUE;
+  (void) rval; (void) handle_term;
   
   Z3_ast z3_ast = term_to_ast(h, h->declarations, formula);
   if (z3_ast == NULL) {
@@ -919,12 +1286,21 @@ foreign_t term_to_z3_ast_foreign(term_t handle_term, term_t formula, term_t resu
   For debugging: convert Z3 ast to a Prolog string:
 */
 
+static foreign_t z3_ast_string_foreign_locked(handle h, term_t handle_term, term_t formula, term_t result);
+
 foreign_t z3_ast_string_foreign(term_t handle_term, term_t formula, term_t result) {
   handle h;
-  int rval = PL_get_pointer_ex(handle_term, (void **) &h);
-  if (!rval) return rval;
+  if (!lock_handle(handle_term, &h)) return FALSE;
+  foreign_t locked_rval = z3_ast_string_foreign_locked(h, handle_term, formula, result);
+  unlock_handle(h);
+  return locked_rval;
+}
+
+static foreign_t z3_ast_string_foreign_locked(handle h, term_t handle_term, term_t formula, term_t result) {
+  int rval = TRUE;
+  (void) rval; (void) handle_term;
   Z3_ast z3_form;
-  rval = PL_get_pointer(formula, (void **) &z3_form);
+  rval = PL_get_pointer_ex(formula, (void **) &z3_form);
   if (!rval) {
     return rval;
   }
@@ -936,10 +1312,19 @@ foreign_t z3_ast_string_foreign(term_t handle_term, term_t formula, term_t resul
   Does one push on the solver; output is the new number of scopes for the solver.
 */
 
+static foreign_t z3_solver_push_foreign_locked(handle h, term_t handle_term, term_t output_term);
+
 foreign_t z3_solver_push_foreign(term_t handle_term, term_t output_term) {
   handle h;
-  int rval = PL_get_pointer_ex(handle_term, (void **) &h);
-  if (!rval) return rval;
+  if (!lock_handle(handle_term, &h)) return FALSE;
+  foreign_t locked_rval = z3_solver_push_foreign_locked(h, handle_term, output_term);
+  unlock_handle(h);
+  return locked_rval;
+}
+
+static foreign_t z3_solver_push_foreign_locked(handle h, term_t handle_term, term_t output_term) {
+  int rval = TRUE;
+  (void) rval; (void) handle_term;
   const Z3_solver solver = h->solver;
   const Z3_context ctx = h->ctx;
   // Unify before pushing, so that a mismatched output fails without leaving an extra scope.
@@ -954,10 +1339,18 @@ foreign_t z3_solver_push_foreign(term_t handle_term, term_t output_term) {
 
 /* Pops the solver npops times. Output is the new number of scopes for the solver. */
 
+static foreign_t z3_solver_pop_foreign_locked(handle h, const term_t npops, term_t output_term);
+
 foreign_t z3_solver_pop_foreign(const term_t handle_term, const term_t npops, term_t output_term) {
   handle h;
-  int rval = PL_get_pointer_ex(handle_term, (void **) &h);
-  if (!rval) return rval;
+  if (!lock_handle(handle_term, &h)) return FALSE;
+  foreign_t locked_rval = z3_solver_pop_foreign_locked(h, npops, output_term);
+  unlock_handle(h);
+  return locked_rval;
+}
+
+static foreign_t z3_solver_pop_foreign_locked(handle h, const term_t npops, term_t output_term) {
+  int rval;
   Z3_solver solver = h->solver;
 
   int nbacktrack;
@@ -984,11 +1377,19 @@ foreign_t z3_solver_pop_foreign(const term_t handle_term, const term_t npops, te
  unsafe: can crash SWI Prolog by putting in a random int as the handle pointer
 */
 
+static foreign_t z3_assert_foreign_locked(handle h, term_t handle_term, term_t formula);
+
 foreign_t z3_assert_foreign(term_t handle_term, term_t formula) {
-  int rval;
   handle h;
-  rval = PL_get_pointer_ex(handle_term, (void **) &h);
-  if (!rval) return rval;
+  if (!lock_handle(handle_term, &h)) return FALSE;
+  foreign_t locked_rval = z3_assert_foreign_locked(h, handle_term, formula);
+  unlock_handle(h);
+  return locked_rval;
+}
+
+static foreign_t z3_assert_foreign_locked(handle h, term_t handle_term, term_t formula) {
+  int rval = TRUE;
+  (void) rval; (void) handle_term;
   DEBUG("got handle\n");
   Z3_ast z3_formula = term_to_ast(h, h->declarations, formula);
   DEBUG("term_to_ast succeeded\n");
@@ -1028,18 +1429,36 @@ foreign_t z3_assert_foreign(term_t handle_term, term_t formula) {
 }
 
 
+static foreign_t z3_solver_scopes_foreign_locked(handle h, term_t handle_term, term_t result);
+
 foreign_t z3_solver_scopes_foreign(term_t handle_term, term_t result) {
   handle h;
-  int rval = PL_get_pointer_ex(handle_term, (void **) &h);
-  if (!rval) return rval;
+  if (!lock_handle(handle_term, &h)) return FALSE;
+  foreign_t locked_rval = z3_solver_scopes_foreign_locked(h, handle_term, result);
+  unlock_handle(h);
+  return locked_rval;
+}
+
+static foreign_t z3_solver_scopes_foreign_locked(handle h, term_t handle_term, term_t result) {
+  int rval = TRUE;
+  (void) rval; (void) handle_term;
   unsigned scopes = Z3_solver_get_num_scopes(h->ctx, h->solver);
   return PL_unify_uint64(result, scopes);
 }
 
+static foreign_t z3_check_foreign_locked(handle h, term_t handle_term, term_t status_arg);
+
 foreign_t z3_check_foreign(term_t handle_term, term_t status_arg) {
   handle h;
-  int rval = PL_get_pointer_ex(handle_term, (void **) &h);
-  if (!rval) return rval;
+  if (!lock_handle(handle_term, &h)) return FALSE;
+  foreign_t locked_rval = z3_check_foreign_locked(h, handle_term, status_arg);
+  unlock_handle(h);
+  return locked_rval;
+}
+
+static foreign_t z3_check_foreign_locked(handle h, term_t handle_term, term_t status_arg) {
+  int rval = TRUE;
+  (void) rval; (void) handle_term;
   Z3_solver solver = h->solver;
   const Z3_context ctx = h->ctx;
   DEBUG("Checking solver %p with context %p\n", solver, ctx);
@@ -1052,12 +1471,19 @@ foreign_t z3_check_foreign(term_t handle_term, term_t status_arg) {
 }
 
 
+static foreign_t z3_check_and_print_foreign_locked(handle h, term_t handle_term, term_t status_arg);
+
 foreign_t z3_check_and_print_foreign(term_t handle_term, term_t status_arg) {
   handle h;
-  int rval = PL_get_pointer_ex(handle_term, (void **) &h);
-  if (!rval) {
-    return rval;
-  }
+  if (!lock_handle(handle_term, &h)) return FALSE;
+  foreign_t locked_rval = z3_check_and_print_foreign_locked(h, handle_term, status_arg);
+  unlock_handle(h);
+  return locked_rval;
+}
+
+static foreign_t z3_check_and_print_foreign_locked(handle h, term_t handle_term, term_t status_arg) {
+  int rval = TRUE;
+  (void) rval; (void) handle_term;
   const Z3_lbool check_status = solver_check_and_print(h->ctx, h->solver);
   return z3_lbool_to_atom(check_status, status_arg);
 }
@@ -1187,10 +1613,19 @@ Z3_func_decl make_function_declaration(handle h, const term_t formula, term_t ra
 
 // Note: This does not handle the case where formula is not ground.
 
+static foreign_t z3_declare_function_foreign_locked(handle h, term_t handle_term, const term_t formula, const term_t range, term_t result);
+
 foreign_t z3_declare_function_foreign(term_t handle_term, const term_t formula, const term_t range, term_t result) {
   handle h;
-  int rval = PL_get_pointer_ex(handle_term, (void **) &h);
-  if (!rval) return rval;
+  if (!lock_handle(handle_term, &h)) return FALSE;
+  foreign_t locked_rval = z3_declare_function_foreign_locked(h, handle_term, formula, range, result);
+  unlock_handle(h);
+  return locked_rval;
+}
+
+static foreign_t z3_declare_function_foreign_locked(handle h, term_t handle_term, const term_t formula, const term_t range, term_t result) {
+  int rval = TRUE;
+  (void) rval; (void) handle_term;
 
   atom_t name;
 
@@ -1415,13 +1850,22 @@ foreign_t model_constants(const Z3_context ctx, const Z3_model m, term_t list) {
 } // model_constants
 
 
+static foreign_t z3_model_functions_foreign_locked(handle h, term_t handle_term, term_t model_term, term_t list);
+
 foreign_t z3_model_functions_foreign(term_t handle_term, term_t model_term, term_t list) {
   handle h;
-  int rval = PL_get_pointer_ex(handle_term, (void **) &h);
-  if (!rval) return rval;
+  if (!lock_handle(handle_term, &h)) return FALSE;
+  foreign_t locked_rval = z3_model_functions_foreign_locked(h, handle_term, model_term, list);
+  unlock_handle(h);
+  return locked_rval;
+}
+
+static foreign_t z3_model_functions_foreign_locked(handle h, term_t handle_term, term_t model_term, term_t list) {
+  int rval = TRUE;
+  (void) rval; (void) handle_term;
   const Z3_context ctx = h->ctx;
   Z3_model model;
-  rval = PL_get_pointer_ex(model_term, (void **) &model);
+  rval = get_model(model_term, h, &model);
   if (!rval) return rval;
 
   Z3_model_inc_ref(ctx, model);
@@ -1430,13 +1874,22 @@ foreign_t z3_model_functions_foreign(term_t handle_term, term_t model_term, term
   return rval;
 }
 
+static foreign_t z3_model_constants_foreign_locked(handle h, term_t handle_term, term_t model_term, term_t list);
+
 foreign_t z3_model_constants_foreign(term_t handle_term, term_t model_term, term_t list) {
   handle h;
-  int rval = PL_get_pointer_ex(handle_term, (void **) &h);
-  if (!rval) return rval;
+  if (!lock_handle(handle_term, &h)) return FALSE;
+  foreign_t locked_rval = z3_model_constants_foreign_locked(h, handle_term, model_term, list);
+  unlock_handle(h);
+  return locked_rval;
+}
+
+static foreign_t z3_model_constants_foreign_locked(handle h, term_t handle_term, term_t model_term, term_t list) {
+  int rval = TRUE;
+  (void) rval; (void) handle_term;
   Z3_context ctx = h->ctx;
   Z3_model model;
-  rval = PL_get_pointer_ex(model_term, (void **) &model);
+  rval = get_model(model_term, h, &model);
   if (!rval) return rval;
   Z3_model_inc_ref(ctx, model);
   rval = model_constants(ctx, model, list);
@@ -1445,10 +1898,19 @@ foreign_t z3_model_constants_foreign(term_t handle_term, term_t model_term, term
 }
 
 // useful to check validity of handle-related things. (The pointer itself is not enough, could be reused.)
+static foreign_t z3_handle_id_foreign_locked(handle h, term_t handle_term, term_t result_term);
+
 foreign_t z3_handle_id_foreign(term_t handle_term, term_t result_term) {
   handle h;
-  int rval = PL_get_pointer_ex(handle_term, (void **) &h);
-  if (!rval) return rval;
+  if (!lock_handle(handle_term, &h)) return FALSE;
+  foreign_t locked_rval = z3_handle_id_foreign_locked(h, handle_term, result_term);
+  unlock_handle(h);
+  return locked_rval;
+}
+
+static foreign_t z3_handle_id_foreign_locked(handle h, term_t handle_term, term_t result_term) {
+  int rval = TRUE;
+  (void) rval; (void) handle_term;
   return PL_unify_int64(result_term, h->handle_id);
 }
 
@@ -2355,10 +2817,19 @@ Z3_ast term_to_ast(const handle h, decl_map declaration_map, const term_t formul
 }
 
 // +handle, +Term, -Term.
+static foreign_t z3_simplify_foreign_locked(handle h, term_t handle_term, term_t tin, term_t tout);
+
 foreign_t z3_simplify_foreign(term_t handle_term, term_t tin, term_t tout) {
   handle h;
-  int rval = PL_get_pointer_ex(handle_term, (void **) &h);
-  if (!rval) return rval;
+  if (!lock_handle(handle_term, &h)) return FALSE;
+  foreign_t locked_rval = z3_simplify_foreign_locked(h, handle_term, tin, tout);
+  unlock_handle(h);
+  return locked_rval;
+}
+
+static foreign_t z3_simplify_foreign_locked(handle h, term_t handle_term, term_t tin, term_t tout) {
+  int rval = TRUE;
+  (void) rval; (void) handle_term;
 
   Z3_context ctx = h->ctx;
   decl_map declaration_map = h->declarations;
@@ -2375,10 +2846,19 @@ foreign_t z3_simplify_foreign(term_t handle_term, term_t tin, term_t tout) {
 }
 
 // make sure that AST maps work:
+static foreign_t map_test_foreign_locked(handle h, term_t handle_term, term_t string_atom);
+
 foreign_t map_test_foreign(term_t handle_term, term_t string_atom) {
   handle h;
-  int rval = PL_get_pointer_ex(handle_term, (void **) &h);
-  if (!rval) return rval;
+  if (!lock_handle(handle_term, &h)) return FALSE;
+  foreign_t locked_rval = map_test_foreign_locked(h, handle_term, string_atom);
+  unlock_handle(h);
+  return locked_rval;
+}
+
+static foreign_t map_test_foreign_locked(handle h, term_t handle_term, term_t string_atom) {
+  int rval = TRUE;
+  (void) rval; (void) handle_term;
 
   if (!PL_is_atom(string_atom)) return FALSE;
   char *name_string;
