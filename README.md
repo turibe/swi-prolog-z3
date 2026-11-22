@@ -325,9 +325,68 @@ yet Z3 searches until stopped. Since `z3_push` checks after each push, set a tim
 when using quantifiers; an undecided check then has status `l_undef`. At the lower level
 (`z3_swi_foreign`), each bound variable needs its sort.
 
+In a model, a function defined by a quantifier can have an else value that depends on its arguments;
+it is then a `lambda(Args, Body)`, with the arguments named as Z3 prints them:
+
+```prolog
+?- z3_push(forall([a:int, b:int], g(a, b) = a - b)), z3_model(M).
+M = model{constants:[], functions:[(g/2=else)=lambda(['x!0':int, 'x!1':int], 'x!0'+ -1*'x!1')]}.
+```
+
 [examples/quantifiers.pl](examples/quantifiers.pl) has worked examples: a syllogism, properties of
 functions and arrays, defining a function by an axiom, explaining an inconsistency, and a question Z3
 cannot settle. Run it with `./examples/quantifiers.pl`.
+
+### Floating point
+
+IEEE floating point has the sorts `float16`, `float32`, `float64` and `float128`, and `fp(Ebits, Sbits)`
+for other formats (`float32` is `fp(8, 24)`). It is not the reals: every operation rounds, and there
+are infinities, NaN and two zeros. This is what to use for checking numeric code. The names follow
+SMT-LIB, with an `fp_` prefix, and the rounding mode first:
+
+- Rounding modes, of sort `roundingmode`: `rne` (to nearest, ties to even: the usual one), `rna` (to
+  nearest, ties away from zero), `rtp` and `rtn` (toward positive or negative infinity), `rtz` (toward
+  zero).
+- Constants: `fp_value(Value, Sort)`, the value of `Sort` nearest to `Value` (an integer, a float, a
+  rational, `nan`, `inf` or `-inf`), so `fp_value(0.1, float32)` is C's `0.1f`.
+- Arithmetic: `fp_add(RM, X, Y)`, `fp_sub`, `fp_mul`, `fp_div`, `fp_fma(RM, X, Y, Z)` (`X * Y + Z`,
+  rounded once), `fp_sqrt(RM, X)`, `fp_round_to_integral(RM, X)`, `fp_rem(X, Y)` (the IEEE remainder),
+  `fp_abs/1`, `fp_neg/1`, `fp_min/2`, `fp_max/2`.
+- Comparisons: `fp_eq`, `fp_lt`, `fp_leq`, `fp_gt`, `fp_geq`. `fp_eq` is IEEE equality, as C's `==`: NaN
+  is not `fp_eq` to itself, and `0.0` and `-0.0` are. `=` is identity: NaN `=` NaN, and the two zeros
+  differ. `+`, `<` and the other arithmetic operators are for `int` and `real` only.
+- Tests: `fp_is_nan`, `fp_is_infinite`, `fp_is_zero`, `fp_is_normal`, `fp_is_subnormal`,
+  `fp_is_negative`, `fp_is_positive`.
+- Conversions: `to_fp(RM, X, Sort)` from a real, an integer, another floating-point number or a signed bit
+  vector; `to_fp_unsigned(RM, BV, Sort)`; `fp_to_real(X)`; `fp_to_sbv(RM, X, Width)` and
+  `fp_to_ubv(RM, X, Width)`, to signed or unsigned bit vectors (as C's casts to integer types, with
+  `rtz`); `fp_to_ieee_bv(X)` and `fp_from_ieee_bv(BV, Sort)`, to and from the IEEE bits.
+
+Models give values as `fp_value(Value, Sort)` too, which can be pushed again with the same meaning. For
+formats that fit in a double (`float16`, `float32`, `float64`), `Value` is a Prolog float with exactly
+the model's value (`-0.0` included); for larger ones, it is an exact integer or rational.
+
+```prolog
+?- z3_push(fp_add(rne, x:float32, fp_value(0.1, float32)) = fp_value(0.3, float32)), z3_model(M).
+M = model{constants:[x=fp_value(0.20000001788139343, float32)], functions:[]}.
+
+?- z3_is_implied(fp_add(rne, fp_add(rne, a:float16, b:float16), c:float16)
+                 = fp_add(rne, a, fp_add(rne, b, c))).
+false.      % not associative
+```
+
+The sort names `float` and `double` used to mean `real`. They are now errors, so that neither meaning
+is assumed: use `real`, or `float32` or `float64`.
+
+Z3 decides floating-point questions by reasoning about the bits, so larger formats are slower: a
+question that takes seconds with `float64` may take a fraction of one with `float16`, which has the same
+pitfalls. `z3_optimize/2` does not optimize floating-point terms (minimizing `fp_to_real(X)` runs until
+stopped). A model with conversions such as `fp_to_sbv` lists Z3's function for their unspecified
+results (for NaN, or out of range), under Z3's own name.
+
+[examples/floating_point.pl](examples/floating_point.pl) has worked examples: `0.1 + 0.2`, a number not
+equal to itself, where `x + 1 = x`, rounding modes, associativity and summation order, an overflowing
+midpoint and its fixes, and `sqrt(x * x)`. Run it with `./examples/floating_point.pl`.
 
 ### Reserved names
 
@@ -341,11 +400,13 @@ constants or functions (with the arities shown, where they matter).
   - `mk_numeral/2` and `mk_unsigned_int64/2`, a numeral of a given sort;
   - `int2bv/2` and `bv2int/2`, conversions between integers and bit vectors;
   - `mk_rational/2`, a rational from a numerator and a denominator;
+  - `fp_value/2`, a floating-point constant;
   - `isoneof/N` and `alldifferent/N`, macros (see above).
-- Constants: `true`, `false`.
-- Sort names, in `Term:Sort` and declarations: `int` or `integer`, `real`, `float` or `double`
-  (all three are Z3's reals), `bool` or `boolean`, `bv(N)`, `string`, `array(IndexSort, ValueSort)`, and the names
-  of declared enumeration sorts.
+- Constants: `true`, `false`, and the rounding modes `rne`, `rna`, `rtp`, `rtn`, `rtz`.
+- Sort names, in `Term:Sort` and declarations: `int` or `integer`, `real`, `bool` or `boolean`, `bv(N)`,
+  `string`, `array(IndexSort, ValueSort)`, `float16`, `float32`, `float64`, `float128`, `fp(Ebits, Sbits)`,
+  `roundingmode`, and the names of declared enumeration sorts. `float` and `double` are errors (they
+  used to mean `real`).
   Any other atom names an uninterpreted sort.
 - Logic: `and`, `or`, `not`, `implies`, `iff`, `xor`, `ite`, and the operators `,`, `;`, `->`, `<=>`.
 - Equality and comparison: `=`, `==`, `equal`, `equals`, `<>`, `distinct`, `<`, `>`, `=<`, `>=`,
@@ -363,6 +424,11 @@ constants or functions (with the arities shown, where they matter).
   `str_to_int/1` (-1 unless all digits), `int_to_str/1` ("" for negative numbers).
   [examples/strings.pl](examples/strings.pl) has worked examples: a password, a word equation, splitting an
   email address, digits, Unicode and lexicographic order.
+- Floating point (see above): `fp_add`, `fp_sub`, `fp_mul`, `fp_div`, `fp_fma`, `fp_sqrt`, `fp_rem`,
+  `fp_round_to_integral`, `fp_abs`, `fp_neg`, `fp_min`, `fp_max`, `fp_eq`, `fp_lt`, `fp_leq`, `fp_gt`,
+  `fp_geq`, `fp_is_nan`, `fp_is_infinite`, `fp_is_zero`, `fp_is_normal`, `fp_is_subnormal`,
+  `fp_is_negative`, `fp_is_positive`, `to_fp/3`, `to_fp_unsigned/3`, `fp_to_real/1`, `fp_to_sbv/3`,
+  `fp_to_ubv/3`, `fp_to_ieee_bv/1`, `fp_from_ieee_bv/2`.
 - Bit vectors:
   - arithmetic: `bvadd`, `bvsub`, `bvmul`, `bvudiv`, `bvsdiv`, `bvurem`, `bvsrem`, `bvsmod`, `bvneg`;
   - bitwise: `bvand`, `bvor`, `bvxor`, `bvnand`, `bvnor`, `bvxnor`, `bvnot`, `bvredand`, `bvredor`;

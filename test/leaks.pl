@@ -83,6 +83,7 @@ iteration(I) :-
     z3_get_unsat_core(H, _),
     optimization(I),
     quantifiers,
+    floating_point,
     z3_model_lists(H, _),
     z3_model_assocs(H, _),
     z3_get_model(H, M),
@@ -124,6 +125,23 @@ quantifiers :-
     z3_check(H, _),
     z3_solver_assertions(H, _),
     \+ z3_assert(H, forall([qx], qx > 0)),                  % malformed: no sort
+    z3_free_handle(H).
+
+% Floating point: sorts, values (special ones, and float128's exact rationals), conversions, and
+% converting models and assertions back, including formulas that fail part-way through.
+floating_point :-
+    z3_new_handle(H),
+    forall(member(N:S, [fx:float32, fd:float64, fq:float128, fm:roundingmode, fb:bv(32)]),
+           z3_declare_function(H, N, S)),
+    z3_assert(H, fp_lt(fp_add(fm, fx, fp_value(0.1, float32)), fp_value(inf, float32))),
+    z3_assert(H, fq = fp_div(rne, fp_value(1, float128), fp_value(3, float128))),
+    z3_assert(H, fb = fp_to_sbv(rtz, to_fp(rne, fd, float32), 32)),
+    z3_assert(H, not(fp_is_nan(fd)) and fp_eq(fp_from_ieee_bv(fb, float32), fx)),
+    z3_check(H, _),
+    z3_model_lists(H, _),
+    z3_solver_assertions(H, _),
+    \+ z3_assert(H, fp_add(rne, fx, fd) = fx),                % different formats
+    \+ z3_assert(H, fp_value(foo, float32) = fx),             % not a value
     z3_free_handle(H).
 
 % Formulas and arguments that fail or raise errors part-way through conversion.

@@ -115,10 +115,12 @@ patterns (triggers) for quantifier instantiation, and lambda terms. What follows
 `Z3_mk_exists_const`), but type inference needs scoped variables, and converting terms back needs to
 handle bound variables.
 
-### 9. Floating point (moderate)
+### 9. Floating point (done)
 
-The `float` sort currently maps to Z3's reals, not IEEE floating point. Adding Z3's floating-point sorts,
-with rounding modes, would matter for checking numeric code.
+Z3's IEEE floating-point sorts, with rounding modes, operations, conversions and exact values in models
+(see the README). The `float` and `double` sort names, which meant reals, are now errors. Not done: bit
+vectors to floating point by `fp(Sign, Exponent, Significand)`, and optimizing floating-point terms,
+which Z3 does not support.
 
 ## Smaller conveniences
 

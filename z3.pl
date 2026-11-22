@@ -1387,7 +1387,81 @@ test(type_error_in_body) :-
     z3_push(forall([x:int], x and p), R),
     assertion(R == l_type_error).
 
+% A function defined by a quantifier has an else value that depends on its arguments: it comes back
+% as a lambda. (z3_model/1 used to fail here.)
+test(model_of_defined_function) :-
+    z3_reset,
+    z3_push(forall([a:int, b:int], g(a, b) = a - b)),
+    z3_model(M),
+    assertion(M.functions = [(g/2 = else) = lambda(['x!0':int, 'x!1':int], _)]).
+
 :- end_tests(z3pl_quantifiers).
+
+% IEEE floating point through z3.pl's type inference.
+
+:- begin_tests(z3pl_floating_point, [setup(reset_globals), cleanup(free_globals)]).
+
+test(solve) :-
+    z3_push(fp_add(rne, x:float32, fp_value(0.1, float32)) = fp_value(0.3, float32)),
+    z3_model(M),
+    memberchk(x = fp_value(V, float32), M.constants),
+    assertion(abs(V - 0.2) < 1.0e-7).
+
+test(sorts_inferred) :-
+    z3_push(fp_lt(fp_add(m, x:float64, y), fp_value(1, float64))),
+    z3_declarations(Ds0),
+    msort(Ds0, Ds),
+    assertion(Ds == [(m/0):roundingmode, (x/0):float64, (y/0):float64]).
+
+% float32 and fp(8, 24) are the same sort.
+test(alias) :-
+    z3_push(x:float32 = y),
+    z3_push(y:fp(8, 24) = fp_value(1.5, float32), Status),
+    assertion(Status == l_true).
+
+test(not_associative) :-
+    assertion(\+ z3_is_implied(fp_add(rne, fp_add(rne, a:float16, b:float16), c:float16)
+                               = fp_add(rne, a, fp_add(rne, b, c)))).
+
+test(model_value_round_trip) :-
+    z3_push(fp_is_subnormal(x:float64)),
+    z3_model(M),
+    memberchk(x = V, M.constants),
+    z3_reset,
+    z3_push(y:float64 = V),
+    assertion(z3_is_implied(fp_is_subnormal(y))).
+
+test(arithmetic_is_type_error) :-
+    z3_push((x:float32) + 1 > 2, Status),
+    assertion(Status == l_type_error).
+
+test(float_sort_removed, [throws(error(domain_error(sort, float), _))]) :-
+    z3_push(x:float > 1.0).
+
+test(quantified) :-
+    assertion(z3_is_implied(forall([z:float32], implies(not(fp_is_nan(z)), fp_leq(z, fp_abs(z)))))).
+
+test(unsat_core) :-
+    z3_unsat_core([fp_is_nan(x:float32), y:int > 0, fp_eq(x, x)], Core),
+    assertion(Core == [fp_is_nan(x:float32), fp_eq(x, x)]).
+
+test(arrays_of_floats) :-
+    z3_push(select(a:array(int, float32), 0) = fp_value(2.5, float32)),
+    z3_model(M),
+    memberchk(a = A, M.constants),
+    z3_reset,
+    z3_push(b:array(int, float32) = A),
+    assertion(z3_is_implied(fp_eq(select(b, 0), fp_value(2.5, float32)))).
+
+% Models with conversions include Z3's function for their unspecified results (such as fp_to_sbv
+% of NaN), whose else value depends on its arguments.
+test(model_with_conversion) :-
+    z3_push(b = fp_to_sbv(rtz, x:float32, 8)),
+    z3_model(M),
+    memberchk(b = _, M.constants),
+    assertion(is_list(M.functions)).
+
+:- end_tests(z3pl_floating_point).
 
 
 :- begin_tests(enums).

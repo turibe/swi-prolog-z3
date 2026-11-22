@@ -8,6 +8,7 @@
 #include <pthread.h>
 #include <time.h>
 #include <limits.h>
+#include <math.h>
 
 // /opt/homebrew/Cellar/gmp/6.3.0/include/gmp.h
 // #include <gmp.h>
@@ -1066,6 +1067,23 @@ Z3_symbol mk_symbol(Z3_context ctx, term_t pl_term) {
 }
 
 
+/*
+  A floating-point sort as a Prolog term: float16, float32, float64 or float128 for the IEEE
+  formats, as accepted by mk_sort, and fp(Ebits, Sbits) otherwise; the rounding-mode sort is
+  roundingmode.
+*/
+static int fp_sort_to_term(Z3_context ctx, Z3_sort sort, term_t term) {
+  if (Z3_get_sort_kind(ctx, sort) == Z3_ROUNDING_MODE_SORT) return PL_put_atom_chars(term, "roundingmode");
+  unsigned e = Z3_fpa_get_ebits(ctx, sort), s = Z3_fpa_get_sbits(ctx, sort);
+  if (e == 5 && s == 11)   return PL_put_atom_chars(term, "float16");
+  if (e == 8 && s == 24)   return PL_put_atom_chars(term, "float32");
+  if (e == 11 && s == 53)  return PL_put_atom_chars(term, "float64");
+  if (e == 15 && s == 113) return PL_put_atom_chars(term, "float128");
+  term_t widths = PL_new_term_refs(2);
+  return PL_put_int64(widths, e) && PL_put_int64(widths + 1, s)
+    && PL_cons_functor(term, PL_new_functor(PL_new_atom("fp"), 2), widths, widths + 1);
+}
+
 bool z3_sort_to_term(Z3_context ctx, Z3_sort sort, term_t result) {
 
   Z3_symbol sname = Z3_get_sort_name(ctx, sort);
@@ -1082,6 +1100,10 @@ bool z3_sort_to_term(Z3_context ctx, Z3_sort sort, term_t result) {
     if (!PL_cons_functor(cons_term, f, size_term)) {
       return FALSE;
     }
+    break;
+  case Z3_FLOATING_POINT_SORT:
+  case Z3_ROUNDING_MODE_SORT:
+    if (!fp_sort_to_term(ctx, sort, cons_term)) return FALSE;
     break;
   case Z3_ARRAY_SORT: {
     term_t parts = PL_new_term_refs(2);
@@ -1501,6 +1523,8 @@ static int prolog_sort_term(Z3_context ctx, Z3_sort sort, term_t term) {
   case Z3_INT_SORT:  return PL_put_atom_chars(term, "int");
   case Z3_REAL_SORT: return PL_put_atom_chars(term, "real");
   case Z3_BOOL_SORT: return PL_put_atom_chars(term, "bool");
+  case Z3_FLOATING_POINT_SORT:
+  case Z3_ROUNDING_MODE_SORT: return fp_sort_to_term(ctx, sort, term);
   case Z3_BV_SORT: {
     term_t width = PL_new_term_ref();
     return PL_put_int64(width, Z3_get_bv_sort_size(ctx, sort))
@@ -1538,8 +1562,123 @@ static const char *string_operation_name(Z3_decl_kind kind) {
   case Z3_OP_INT_TO_STR:   return "int_to_str";
   case Z3_OP_TO_REAL:      return "int2real";   // Z3: to_real
   case Z3_OP_TO_INT:       return "real2int";   // Z3: to_int
+  // Floating point: Z3 prints fp.add and so on, and roundNearestTiesToEven for rne.
+  case Z3_OP_FPA_RM_NEAREST_TIES_TO_EVEN: return "rne";
+  case Z3_OP_FPA_RM_NEAREST_TIES_TO_AWAY: return "rna";
+  case Z3_OP_FPA_RM_TOWARD_POSITIVE:      return "rtp";
+  case Z3_OP_FPA_RM_TOWARD_NEGATIVE:      return "rtn";
+  case Z3_OP_FPA_RM_TOWARD_ZERO:          return "rtz";
+  case Z3_OP_FPA_ABS:      return "fp_abs";
+  case Z3_OP_FPA_NEG:      return "fp_neg";
+  case Z3_OP_FPA_ADD:      return "fp_add";
+  case Z3_OP_FPA_SUB:      return "fp_sub";
+  case Z3_OP_FPA_MUL:      return "fp_mul";
+  case Z3_OP_FPA_DIV:      return "fp_div";
+  case Z3_OP_FPA_FMA:      return "fp_fma";
+  case Z3_OP_FPA_SQRT:     return "fp_sqrt";
+  case Z3_OP_FPA_REM:      return "fp_rem";
+  case Z3_OP_FPA_ROUND_TO_INTEGRAL: return "fp_round_to_integral";
+  case Z3_OP_FPA_MIN:      return "fp_min";
+  case Z3_OP_FPA_MAX:      return "fp_max";
+  case Z3_OP_FPA_LE:       return "fp_leq";
+  case Z3_OP_FPA_LT:       return "fp_lt";
+  case Z3_OP_FPA_GE:       return "fp_geq";
+  case Z3_OP_FPA_GT:       return "fp_gt";
+  case Z3_OP_FPA_EQ:       return "fp_eq";
+  case Z3_OP_FPA_IS_NORMAL:    return "fp_is_normal";
+  case Z3_OP_FPA_IS_SUBNORMAL: return "fp_is_subnormal";
+  case Z3_OP_FPA_IS_ZERO:      return "fp_is_zero";
+  case Z3_OP_FPA_IS_INF:       return "fp_is_infinite";
+  case Z3_OP_FPA_IS_NAN:       return "fp_is_nan";
+  case Z3_OP_FPA_IS_NEGATIVE:  return "fp_is_negative";
+  case Z3_OP_FPA_IS_POSITIVE:  return "fp_is_positive";
+  case Z3_OP_FPA_TO_REAL:      return "fp_to_real";
+  case Z3_OP_FPA_TO_IEEE_BV:   return "fp_to_ieee_bv";
   default:                 return NULL;
   }
+}
+
+#define FP_DECIMAL_PLACES 1100 // a double's smallest subnormal, 2^-1074, has 1074 decimal places
+
+/*
+  A floating-point numeral as fp_value(Value, Sort), as accepted by term_to_ast. Value is nan, inf
+  or -inf; or, for formats that fit in a double (at most 11 exponent and 53 significand bits, as
+  float16, float32 and float64), a Prolog float with exactly the numeral's value, -0.0 included;
+  or, for larger formats, the exact value as a Prolog integer or rational.
+*/
+static int fp_value_to_term(const Z3_context ctx, Z3_ast ast, term_t term) {
+  Z3_sort sort = Z3_get_sort(ctx, ast);
+  term_t args = PL_new_term_refs(2);
+  if (!fp_sort_to_term(ctx, sort, args + 1)) return FALSE;
+  int ok;
+  if (Z3_fpa_is_numeral_nan(ctx, ast)) {
+    ok = PL_put_atom_chars(args, "nan");
+  }
+  else if (Z3_fpa_is_numeral_inf(ctx, ast)) {
+    ok = PL_put_atom_chars(args, "inf");
+    if (ok && Z3_fpa_is_numeral_negative(ctx, ast)) {
+      ok = PL_cons_functor(args, PL_new_functor(PL_new_atom("-"), 1), args);
+    }
+  }
+  else if (Z3_fpa_is_numeral_zero(ctx, ast)) {
+    ok = PL_put_float(args, Z3_fpa_is_numeral_negative(ctx, ast) ? -0.0 : 0.0);
+  }
+  else {
+    Z3_ast real = Z3_simplify(ctx, Z3_mk_fpa_to_real(ctx, ast));
+    if (real == NULL || !Z3_is_numeral_ast(ctx, real)) {
+      ERROR("could not convert floating-point numeral %s\n", Z3_ast_to_string(ctx, ast));
+      return FALSE;
+    }
+    if (Z3_fpa_get_ebits(ctx, sort) <= 11 && Z3_fpa_get_sbits(ctx, sort) <= 53) {
+      // The value is a double, and its decimal expansion is finite, so strtod gives it exactly.
+      Z3_string digits = Z3_get_numeral_decimal_string(ctx, real, FP_DECIMAL_PLACES);
+      ok = PL_put_float(args, strtod(digits, NULL));
+    }
+    else {
+      char *num = strdup(Z3_get_numeral_string(ctx, Z3_get_numerator(ctx, real)));
+      char *den = strdup(Z3_get_numeral_string(ctx, Z3_get_denominator(ctx, real)));
+      if (num == NULL || den == NULL) { free(num); free(den); return PL_resource_error("memory"); }
+      size_t n = strlen(num) + strlen(den) + 2;
+      char *text = malloc(n);
+      if (text == NULL) { free(num); free(den); return PL_resource_error("memory"); }
+      if (strcmp(den, "1") == 0) snprintf(text, n, "%s", num);
+      else snprintf(text, n, "%sr%s", num, den);           // Prolog rational syntax, as in 1r3
+      ok = PL_chars_to_term(text, args);
+      free(num); free(den); free(text);
+    }
+  }
+  term_t result = PL_new_term_ref();
+  return ok && PL_cons_functor(result, PL_new_functor(PL_new_atom("fp_value"), 2), args, args + 1)
+    && PL_unify(term, result);
+}
+
+/*
+  Floating-point conversions whose result sort or width is a parameter of the Z3 operation, not an
+  argument, as accepted by term_to_ast: to_fp(RM, X, Sort), to_fp_unsigned(RM, BV, Sort),
+  fp_from_ieee_bv(BV, Sort), fp_to_sbv(RM, X, Width) and fp_to_ubv(RM, X, Width). subterms are the
+  converted arguments. Returns -1 if ast is none of these.
+*/
+static int fp_conversion_to_term(const Z3_context ctx, Z3_ast ast, Z3_decl_kind kind, unsigned arity,
+                                 term_t subterms, term_t term) {
+  const char *name;
+  switch (kind) {
+  case Z3_OP_FPA_TO_FP:          name = arity == 1 ? "fp_from_ieee_bv" : "to_fp"; break;
+  case Z3_OP_FPA_TO_FP_UNSIGNED: name = "to_fp_unsigned"; break;
+  case Z3_OP_FPA_TO_SBV:         name = "fp_to_sbv"; break;
+  case Z3_OP_FPA_TO_UBV:         name = "fp_to_ubv"; break;
+  default: return -1;
+  }
+  term_t args = PL_new_term_refs(arity + 1);
+  for (unsigned i = 0; i < arity; i++) {
+    if (!PL_put_term(args + i, subterms + i)) return FALSE;
+  }
+  Z3_sort sort = Z3_get_sort(ctx, ast);
+  int ok = (kind == Z3_OP_FPA_TO_SBV || kind == Z3_OP_FPA_TO_UBV)
+    ? PL_put_int64(args + arity, Z3_get_bv_sort_size(ctx, sort))
+    : fp_sort_to_term(ctx, sort, args + arity);
+  term_t result = PL_new_term_ref();
+  return ok && PL_cons_functor_v(result, PL_new_functor(PL_new_atom(name), arity + 1), args)
+    && PL_unify(term, result);
 }
 
 /*
@@ -1551,6 +1690,7 @@ struct scope {
   const struct scope *outer;
   unsigned num_names;
   atom_t *names;
+  bool *used;      // if not NULL, set when one of the names is used
 };
 
 static foreign_t ast_to_term_scoped(const Z3_context ctx, Z3_ast ast, term_t term, const struct scope *scope);
@@ -1580,7 +1720,7 @@ static foreign_t quantifier_to_term(const Z3_context ctx, Z3_ast ast, term_t ter
       && PL_cons_functor(var, PL_new_functor(PL_new_atom(":"), 2), name, sort)
       && PL_cons_list(vars, var, vars);
   }
-  struct scope inner = { .outer = outer, .num_names = n, .names = names };
+  struct scope inner = { .outer = outer, .num_names = n, .names = names, .used = NULL };
   term_t body = PL_new_term_ref();
   ok = ok && ast_to_term_scoped(ctx, Z3_get_quantifier_body(ctx, ast), body, &inner);
   term_t result = PL_new_term_ref();
@@ -1596,7 +1736,10 @@ static foreign_t quantifier_to_term(const Z3_context ctx, Z3_ast ast, term_t ter
 static foreign_t variable_to_term(const Z3_context ctx, Z3_ast ast, term_t term, const struct scope *scope) {
   unsigned index = Z3_get_index_value(ctx, ast);
   for (; scope != NULL; scope = scope->outer) {
-    if (index < scope->num_names) return PL_unify_atom(term, scope->names[scope->num_names - 1 - index]);
+    if (index < scope->num_names) {
+      if (scope->used != NULL) *scope->used = true;
+      return PL_unify_atom(term, scope->names[scope->num_names - 1 - index]);
+    }
     index -= scope->num_names;
   }
   INFO("z3_ast_to_term: a bound variable outside any quantifier\n");
@@ -1609,6 +1752,22 @@ static foreign_t ast_to_term_scoped(const Z3_context ctx, Z3_ast ast, term_t ter
   }
   if (Z3_get_ast_kind(ctx, ast) == Z3_VAR_AST) {
     return variable_to_term(ctx, ast, term, scope);
+  }
+  if (Z3_is_app(ctx, ast)   // a numeral is an app too, of ast kind Z3_NUMERAL_AST
+      && Z3_get_sort_kind(ctx, Z3_get_sort(ctx, ast)) == Z3_ROUNDING_MODE_SORT) {
+    // A rounding-mode value, such as rne. Z3 counts these as numerals, without a numeric value.
+    const char *name = string_operation_name(Z3_get_decl_kind(ctx, Z3_get_app_decl(ctx, Z3_to_app(ctx, ast))));
+    if (name != NULL) return PL_unify_atom_chars(term, name);
+  }
+  if (Z3_is_app(ctx, ast)
+      && Z3_get_sort_kind(ctx, Z3_get_sort(ctx, ast)) == Z3_FLOATING_POINT_SORT) {
+    switch (Z3_get_decl_kind(ctx, Z3_get_app_decl(ctx, Z3_to_app(ctx, ast)))) {
+    case Z3_OP_FPA_NUM: case Z3_OP_FPA_NAN: case Z3_OP_FPA_PLUS_INF: case Z3_OP_FPA_MINUS_INF:
+    case Z3_OP_FPA_PLUS_ZERO: case Z3_OP_FPA_MINUS_ZERO:
+      return fp_value_to_term(ctx, ast, term);
+    default:
+      break;
+    }
   }
   if (Z3_is_algebraic_number(ctx, ast)) {
     return algebraic_to_term(ctx, ast, term);
@@ -1690,6 +1849,8 @@ static foreign_t ast_to_term_scoped(const Z3_context ctx, Z3_ast ast, term_t ter
         && PL_cons_functor(t, PL_new_functor(PL_new_atom("const_array"), 2), sort_and_value, sort_and_value + 1)
         && PL_unify(term, t);
     }
+    int conversion = fp_conversion_to_term(ctx, ast, Z3_get_decl_kind(ctx, decl), arity, subterms, term);
+    if (conversion != -1) return conversion;
     const char *prolog_name = string_operation_name(Z3_get_decl_kind(ctx, decl));
     if (prolog_name != NULL) {
       func = PL_new_functor(PL_new_atom(prolog_name), arity);
@@ -2437,6 +2598,47 @@ static foreign_t z3_declare_function_foreign_locked(handle h, term_t handle_term
 }
 
 
+/*
+  The else value of a function interpretation. It may depend on the arguments, which Z3 represents
+  by bound variables: (:var 0) is the first argument (unlike in a quantifier body, where it is the
+  last bound variable). Then it is lambda(Args, Body), with Args the arguments as Name:Sort, named
+  x!0, x!1, ... as Z3 prints them; for example lambda(['x!0':int, 'x!1':int], 'x!0' - 'x!1').
+  Otherwise it is the value itself.
+*/
+static foreign_t else_to_term(Z3_context ctx, Z3_func_decl fdecl, Z3_ast felse, term_t term) {
+  unsigned n = Z3_get_domain_size(ctx, fdecl);
+  atom_t *names = malloc((n > 0 ? n : 1) * sizeof(atom_t));
+  if (names == NULL) return PL_resource_error("memory");
+  for (unsigned i = 0; i < n; i++) {   // reversed, as variable_to_term counts from the last name
+    char name[32];
+    snprintf(name, sizeof name, "x!%u", n - 1 - i);
+    names[i] = PL_new_atom(name);
+  }
+  bool used = false;
+  struct scope args = { .outer = NULL, .num_names = n, .names = names, .used = &used };
+  term_t body = PL_new_term_ref();
+  int ok = ast_to_term_scoped(ctx, felse, body, &args);
+  if (ok && !used) {
+    ok = PL_unify(term, body);
+  }
+  else if (ok) {
+    term_t vars = PL_new_term_ref(), var = PL_new_term_ref(), sort = PL_new_term_ref(), name = PL_new_term_ref();
+    PL_put_nil(vars);
+    for (unsigned k = n; ok && k > 0; k--) { // argument k - 1, building the list from the end
+      ok = PL_put_atom(name, names[n - k])
+        && prolog_sort_term(ctx, Z3_get_domain(ctx, fdecl, k - 1), sort)
+        && PL_cons_functor(var, PL_new_functor(PL_new_atom(":"), 2), name, sort)
+        && PL_cons_list(vars, var, vars);
+    }
+    term_t lambda = PL_new_term_ref();
+    ok = ok && PL_cons_functor(lambda, PL_new_functor(PL_new_atom("lambda"), 2), vars, body)
+            && PL_unify(term, lambda);
+  }
+  for (unsigned i = 0; i < n; i++) PL_unregister_atom(names[i]);
+  free(names);
+  return ok;
+}
+
 foreign_t model_functions(Z3_context ctx, Z3_model m, term_t list) {
   int num_funcs = Z3_model_get_num_funcs(ctx, m);
   term_t l = PL_new_term_ref();
@@ -2543,7 +2745,7 @@ foreign_t model_functions(Z3_context ctx, Z3_model m, term_t list) {
     DEBUG("getting the else\n");
     Z3_ast felse = Z3_func_interp_get_else(ctx, finterp);
     term_t else_value = PL_new_term_ref();
-    if (!z3_ast_to_term_internal(ctx, felse, else_value)) {
+    if (!else_to_term(ctx, fdecl, felse, else_value)) {
       Z3_func_interp_dec_ref(ctx, finterp);
       return FALSE;
     }
@@ -2714,14 +2916,24 @@ Z3_sort mk_sort(handle h, term_t expression) {
       DEBUG("returning int sort\n");
       return h->int_sort;
     }
-    if (strcmp(name_string, "float") == 0 || strcmp(name_string, "real") == 0 || strcmp(name_string, "double") == 0) {
-      DEBUG("returning sort for float/real/double\n");
-      return h->real_sort; // not the same as a floating point number in Z3
-      // return Z3_mk_fpa_sort_double(ctx);
+    if (strcmp(name_string, "real") == 0) {
+      return h->real_sort;
+    }
+    // float and double once meant real, which is not IEEE floating point; they are now errors, so that
+    // neither meaning is assumed.
+    if (strcmp(name_string, "float") == 0 || strcmp(name_string, "double") == 0) {
+      ERROR("%s is not a sort: use real, or IEEE floating point float32 or float64\n", name_string);
+      return NULL;
     }
     if (strcmp(name_string, "string") == 0) {
       return h->string_sort;
     }
+    // IEEE floating point (see also fp(Ebits, Sbits) below), and the sort of rounding modes:
+    if (strcmp(name_string, "float16") == 0)  return Z3_mk_fpa_sort_16(ctx);
+    if (strcmp(name_string, "float32") == 0)  return Z3_mk_fpa_sort_32(ctx);
+    if (strcmp(name_string, "float64") == 0)  return Z3_mk_fpa_sort_64(ctx);
+    if (strcmp(name_string, "float128") == 0) return Z3_mk_fpa_sort_128(ctx);
+    if (strcmp(name_string, "roundingmode") == 0) return Z3_mk_fpa_rounding_mode_sort(ctx);
     // Check if there's an enumeration sort for it:
     Z3_ast key = mk_ast_key(ctx, name_string, 0);
     DEBUG("Looking for enum sort declaration for %s, key %s\n", name_string, Z3_ast_to_string(ctx, key));
@@ -2781,6 +2993,18 @@ Z3_sort mk_sort(handle h, term_t expression) {
       DEBUG("Making bit vector sort of width %d\n", width);
       return Z3_mk_bv_sort(ctx, width);
     }
+    if (strcmp(name_string, "fp") == 0) { // fp(Ebits, Sbits): IEEE floating point; float32 is fp(8, 24)
+      CHECK_ARITY(name_string, 2, arity);
+      term_t e = PL_new_term_ref(), s = PL_new_term_ref();
+      int ebits, sbits;
+      if (!PL_get_arg(1, expression, e) || !PL_get_arg(2, expression, s)) return NULL;
+      if (!PL_get_integer_ex(e, &ebits) || !PL_get_integer_ex(s, &sbits)) return NULL;
+      if (ebits < 2 || sbits < 3) { // Z3's limits; sbits counts the hidden bit
+        ERROR("fp(Ebits, Sbits) needs Ebits >= 2 and Sbits >= 3, got fp(%d, %d)\n", ebits, sbits);
+        return NULL;
+      }
+      return Z3_mk_fpa_sort(ctx, (unsigned) ebits, (unsigned) sbits);
+    }
 
 
   /*
@@ -2828,10 +3052,61 @@ Z3_sort mk_sort(handle h, term_t expression) {
   Returns NULL on failure. Does not free subterms; the caller owns them, so early returns here are safe.
 */
 
+/*
+  The floating-point operations, with the SMT-LIB argument orders (the rounding mode first). Sets
+  *result (NULL on a Z3 error, such as a badly sorted argument) and returns true if name is one of
+  them with this arity; false otherwise. fp_to_sbv and the other conversions with a sort or width
+  argument are in fp_conversion_from_term.
+*/
+static bool fp_operation(Z3_context ctx, const char *name, size_t arity, Z3_ast *a, Z3_ast *result) {
+  typedef Z3_ast (*unary)(Z3_context, Z3_ast);
+  typedef Z3_ast (*binary)(Z3_context, Z3_ast, Z3_ast);
+  typedef Z3_ast (*ternary)(Z3_context, Z3_ast, Z3_ast, Z3_ast);
+  static const struct { const char *name; unary f; } unaries[] = {
+    {"fp_abs", Z3_mk_fpa_abs}, {"fp_neg", Z3_mk_fpa_neg},
+    {"fp_is_normal", Z3_mk_fpa_is_normal}, {"fp_is_subnormal", Z3_mk_fpa_is_subnormal},
+    {"fp_is_zero", Z3_mk_fpa_is_zero}, {"fp_is_infinite", Z3_mk_fpa_is_infinite},
+    {"fp_is_nan", Z3_mk_fpa_is_nan}, {"fp_is_negative", Z3_mk_fpa_is_negative},
+    {"fp_is_positive", Z3_mk_fpa_is_positive},
+    {"fp_to_real", Z3_mk_fpa_to_real}, {"fp_to_ieee_bv", Z3_mk_fpa_to_ieee_bv},
+  };
+  static const struct { const char *name; binary f; } binaries[] = {
+    {"fp_rem", Z3_mk_fpa_rem}, {"fp_min", Z3_mk_fpa_min}, {"fp_max", Z3_mk_fpa_max},
+    {"fp_leq", Z3_mk_fpa_leq}, {"fp_lt", Z3_mk_fpa_lt}, {"fp_geq", Z3_mk_fpa_geq},
+    {"fp_gt", Z3_mk_fpa_gt}, {"fp_eq", Z3_mk_fpa_eq},
+    {"fp_sqrt", Z3_mk_fpa_sqrt}, {"fp_round_to_integral", Z3_mk_fpa_round_to_integral}, // (rm, x)
+  };
+  static const struct { const char *name; ternary f; } ternaries[] = { // (rm, x, y)
+    {"fp_add", Z3_mk_fpa_add}, {"fp_sub", Z3_mk_fpa_sub},
+    {"fp_mul", Z3_mk_fpa_mul}, {"fp_div", Z3_mk_fpa_div},
+  };
+  if (arity == 1) {
+    for (size_t i = 0; i < sizeof unaries / sizeof unaries[0]; i++)
+      if (strcmp(name, unaries[i].name) == 0) { *result = unaries[i].f(ctx, a[0]); return true; }
+  }
+  else if (arity == 2) {
+    for (size_t i = 0; i < sizeof binaries / sizeof binaries[0]; i++)
+      if (strcmp(name, binaries[i].name) == 0) { *result = binaries[i].f(ctx, a[0], a[1]); return true; }
+  }
+  else if (arity == 3) {
+    for (size_t i = 0; i < sizeof ternaries / sizeof ternaries[0]; i++)
+      if (strcmp(name, ternaries[i].name) == 0) { *result = ternaries[i].f(ctx, a[0], a[1], a[2]); return true; }
+  }
+  else if (arity == 4 && strcmp(name, "fp_fma") == 0) { // (rm, x, y, z): x * y + z, rounded once
+    *result = Z3_mk_fpa_fma(ctx, a[0], a[1], a[2], a[3]);
+    return true;
+  }
+  return false;
+}
+
 static Z3_ast compound_to_ast(const handle h, decl_map declaration_map, const char *name_string,
                               const size_t arity, Z3_ast *subterms) {
   const Z3_context ctx = h->ctx;
   Z3_ast result = NULL;
+
+  if (strncmp(name_string, "fp_", 3) == 0 && fp_operation(ctx, name_string, arity, subterms, &result)) {
+    return result;
+  }
 
   // ********************************************* built-in compound term_to_ast  ****************************************/
   
@@ -3434,6 +3709,111 @@ static Z3_ast quantifier_from_term(const handle h, decl_map declaration_map, con
   Returns NULL if it fails:
 */
 
+// The floating-point sort for Sort, or NULL with an error message.
+static Z3_sort fp_sort_from_term(const handle h, term_t sort_term, const char *where) {
+  Z3_sort sort = mk_sort(h, sort_term);
+  if (sort == NULL) return NULL;
+  if (Z3_get_sort_kind(h->ctx, sort) != Z3_FLOATING_POINT_SORT) {
+    ERROR("%s: %s is not a floating-point sort\n", where, Z3_sort_to_string(h->ctx, sort));
+    return NULL;
+  }
+  return sort;
+}
+
+/*
+  fp_value(Value, Sort): the value of the floating-point Sort nearest to Value (rounding to nearest,
+  ties to even), so fp_value(0.1, float32) is C's 0.1f. Value is an integer, a float, a rational,
+  nan, inf or -inf; -0.0 is negative zero. A float is taken as the decimal number it prints as,
+  which for a value from a model is exactly that value.
+*/
+static Z3_ast fp_value_from_term(const handle h, decl_map declaration_map, const term_t formula) {
+  const Z3_context ctx = h->ctx;
+  term_t value = PL_new_term_ref(), sort_term = PL_new_term_ref();
+  if (!PL_get_arg(1, formula, value) || !PL_get_arg(2, formula, sort_term)) return NULL;
+  Z3_sort sort = fp_sort_from_term(h, sort_term, "fp_value");
+  if (sort == NULL) return NULL;
+  char *name;
+  if (PL_get_atom_chars(value, &name)) {
+    if (strcmp(name, "nan") == 0) return Z3_mk_fpa_nan(ctx, sort);
+    if (strcmp(name, "inf") == 0) return Z3_mk_fpa_inf(ctx, sort, false);
+  }
+  if (PL_is_functor(value, PL_new_functor(PL_new_atom("-"), 1))) {
+    term_t arg = PL_new_term_ref();
+    if (PL_get_arg(1, value, arg) && PL_get_atom_chars(arg, &name) && strcmp(name, "inf") == 0) {
+      return Z3_mk_fpa_inf(ctx, sort, true);
+    }
+  }
+  if (PL_is_float(value)) {
+    double d;
+    if (!PL_get_float(value, &d)) return NULL;
+    if (isnan(d)) return Z3_mk_fpa_nan(ctx, sort);
+    if (isinf(d)) return Z3_mk_fpa_inf(ctx, sort, d < 0);
+    if (d == 0.0) return Z3_mk_fpa_zero(ctx, sort, signbit(d)); // the real 0 has no sign
+  }
+  if (!PL_is_number(value)) {
+    char *text;
+    if (!PL_get_chars(value, &text, CVT_WRITE)) text = NULL;
+    ERROR("fp_value: %s should be a number, nan, inf or -inf\n", text ? text : "the value");
+    return NULL;
+  }
+  Z3_ast real = term_to_ast(h, declaration_map, value);
+  if (real == NULL) return NULL;
+  if (Z3_get_sort_kind(ctx, Z3_get_sort(ctx, real)) == Z3_INT_SORT) real = Z3_mk_int2real(ctx, real);
+  return Z3_simplify(ctx, Z3_mk_fpa_to_fp_real(ctx, Z3_mk_fpa_rne(ctx), real, sort));
+}
+
+// The conversions with a sort or width argument, which term_to_ast handles before the arguments.
+static bool is_fp_conversion(const char *name, size_t arity) {
+  return (arity == 3 && (strcmp(name, "to_fp") == 0 || strcmp(name, "to_fp_unsigned") == 0
+                         || strcmp(name, "fp_to_sbv") == 0 || strcmp(name, "fp_to_ubv") == 0))
+    || (arity == 2 && strcmp(name, "fp_from_ieee_bv") == 0);
+}
+
+/*
+  to_fp(RM, X, Sort): X, a real, integer, floating-point number or (signed) bit vector, as the
+  floating-point Sort, rounded by RM. to_fp_unsigned(RM, BV, Sort): BV as an unsigned integer.
+  fp_from_ieee_bv(BV, Sort): the floating-point number whose IEEE bits are BV.
+  fp_to_sbv(RM, X, Width) and fp_to_ubv(RM, X, Width): X rounded to a signed or unsigned integer,
+  as a bit vector of Width bits.
+*/
+static Z3_ast fp_conversion_from_term(const handle h, decl_map declaration_map, const char *name,
+                                      const term_t formula) {
+  const Z3_context ctx = h->ctx;
+  term_t a = PL_new_term_refs(3);
+  if (strcmp(name, "fp_from_ieee_bv") == 0) {
+    if (!PL_get_arg(1, formula, a) || !PL_get_arg(2, formula, a + 1)) return NULL;
+    Z3_sort sort = fp_sort_from_term(h, a + 1, name);
+    Z3_ast bv = sort ? term_to_ast(h, declaration_map, a) : NULL;
+    return bv ? Z3_mk_fpa_to_fp_bv(ctx, bv, sort) : NULL;
+  }
+  if (!PL_get_arg(1, formula, a) || !PL_get_arg(2, formula, a + 1) || !PL_get_arg(3, formula, a + 2)) return NULL;
+  Z3_ast rm = term_to_ast(h, declaration_map, a);
+  if (rm == NULL) return NULL;
+  Z3_ast x = term_to_ast(h, declaration_map, a + 1);
+  if (x == NULL) return NULL;
+  if (strcmp(name, "fp_to_sbv") == 0 || strcmp(name, "fp_to_ubv") == 0) {
+    int width;
+    if (!PL_get_integer(a + 2, &width) || width <= 0) {
+      ERROR("%s: the width should be a positive integer\n", name);
+      return NULL;
+    }
+    return name[6] == 's' ? Z3_mk_fpa_to_sbv(ctx, rm, x, (unsigned) width)
+                          : Z3_mk_fpa_to_ubv(ctx, rm, x, (unsigned) width);
+  }
+  Z3_sort sort = fp_sort_from_term(h, a + 2, name);
+  if (sort == NULL) return NULL;
+  if (strcmp(name, "to_fp_unsigned") == 0) return Z3_mk_fpa_to_fp_unsigned(ctx, rm, x, sort);
+  switch (Z3_get_sort_kind(ctx, Z3_get_sort(ctx, x))) {
+  case Z3_INT_SORT:            return Z3_mk_fpa_to_fp_real(ctx, rm, Z3_mk_int2real(ctx, x), sort);
+  case Z3_REAL_SORT:           return Z3_mk_fpa_to_fp_real(ctx, rm, x, sort);
+  case Z3_FLOATING_POINT_SORT: return Z3_mk_fpa_to_fp_float(ctx, rm, x, sort);
+  case Z3_BV_SORT:             return Z3_mk_fpa_to_fp_signed(ctx, rm, x, sort);
+  default:
+    ERROR("to_fp: cannot convert %s to floating point\n", Z3_sort_to_string(ctx, Z3_get_sort(ctx, x)));
+    return NULL;
+  }
+}
+
 Z3_ast term_to_ast(const handle h, decl_map declaration_map, const term_t formula) {
   const Z3_context ctx = h->ctx;
   long lval;
@@ -3461,6 +3841,13 @@ Z3_ast term_to_ast(const handle h, decl_map declaration_map, const term_t formul
     if (strcmp(atom_string, "false") == 0) {
       return Z3_mk_false(ctx);
     }
+    // The IEEE rounding modes, for floating-point operations: to nearest with ties to even or away
+    // from zero, toward positive or negative infinity, and toward zero.
+    if (strcmp(atom_string, "rne") == 0) return Z3_mk_fpa_rne(ctx);
+    if (strcmp(atom_string, "rna") == 0) return Z3_mk_fpa_rna(ctx);
+    if (strcmp(atom_string, "rtp") == 0) return Z3_mk_fpa_rtp(ctx);
+    if (strcmp(atom_string, "rtn") == 0) return Z3_mk_fpa_rtn(ctx);
+    if (strcmp(atom_string, "rtz") == 0) return Z3_mk_fpa_rtz(ctx);
     DEBUG("term_to_ast, atom %s\n", atom_string);
 
     Z3_ast bound = bound_variable(h, formula);
@@ -3689,6 +4076,14 @@ Z3_ast term_to_ast(const handle h, decl_map declaration_map, const term_t formul
 
     if (strcmp(name_string, "algebraic") == 0 && arity == 2) { // an algebraic number from a model
       return algebraic_from_term(h, formula);
+    }
+
+    if (strcmp(name_string, "fp_value") == 0 && arity == 2) { // fp_value(Value, Sort): a floating-point constant
+      return fp_value_from_term(h, declaration_map, formula);
+    }
+
+    if (is_fp_conversion(name_string, arity)) {
+      return fp_conversion_from_term(h, declaration_map, name_string, formula);
     }
 
     if (strcmp(name_string, "bv_numeral")==0) {

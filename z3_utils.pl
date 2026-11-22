@@ -83,6 +83,10 @@ z3_declare(_, F, real) :- float(F), !, true.
 z3_declare(H, F, T) :- atom(T), !,
                        z3_declare_function(H, F, T).
 z3_declare(H, F, T) :- compound(T),
+                    functor(T, fp, 2), !,                 % IEEE floating point, fp(Ebits, Sbits)
+                    must_be(ground, T),
+                    z3_declare_function(H, F, T).
+z3_declare(H, F, T) :- compound(T),
                     functor(T, bv, 1), !,
                     must_be(ground, T),
                     z3_declare_function(H, F, T).
@@ -115,6 +119,7 @@ ground_version(X, X, S) :- number(X), !, ord_empty(S).
 ground_version(X, X, [X/0]) :- atom(X), mappable_symbol(X), !, true.
 ground_version(X, X, S) :- atomic(X), !, ord_empty(S).
 ground_version(X, X, S) :- algebraic_value(X), !, ord_empty(S).   % a number, not a function application
+ground_version(X, X, S) :- compound(X), X = fp_value(_, _), !, ord_empty(S).   % likewise
 % A quantifier's bound variables are not symbols to declare; its body's other symbols are.
 ground_version(Q, G, Result) :- quantifier(Q, Vars, Body), !,
                                 ground_version(Body, GBody, BodySymbols),
