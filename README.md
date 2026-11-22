@@ -9,8 +9,10 @@ datatypes, regular expressions, and SMT-LIB2 import and export (see [FUTURE-WORK
 
 With the high-level API in `z3.pl`,
 Z3 asserts are incremental and backtrackable, and the Z3 solver context is pushed and popped automatically.
+This can be used to search for solutions to Prolog queries, that is, instantiations of the Prolog variables, in the usual Prolog way.
 
 Alternatively, `stateful_repl.pl` accumulates state from one query to the next.
+This more procedural, intended for interactive exploration to understand the capabilities of Z3.
 
 ### Contact
 
