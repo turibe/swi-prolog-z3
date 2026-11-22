@@ -202,6 +202,7 @@ static functor_t declaration_pair_functor; // ":"
 // forward declarations:
 Z3_ast term_to_ast(handle h, decl_map map, term_t formula);
 foreign_t z3_ast_to_term_internal(Z3_context ctx, Z3_ast ast, term_t formula);
+foreign_t z3_ast_to_term_typed(Z3_context ctx, Z3_ast ast, term_t formula);
 Z3_sort mk_sort(handle h, term_t formula);
 Z3_symbol mk_symbol(Z3_context ctx, term_t formula);
 
@@ -1444,7 +1445,7 @@ static foreign_t z3_solver_assertions_foreign_locked(handle h, term_t handle_ter
   for (unsigned i = 0; i < size; ++i) {
     term_t a = PL_new_term_ref(); // putting this outside the loop does not work.
     Z3_ast termi = Z3_ast_vector_get(ctx, v, i);
-    if (!z3_ast_to_term_internal(ctx, termi, a)) {
+    if (!z3_ast_to_term_typed(ctx, termi, a)) {
       ERROR("could not convert assertion %s\n", Z3_ast_to_string(ctx, termi));
       Z3_ast_vector_dec_ref(ctx, v);
       return FALSE;
@@ -1459,6 +1460,311 @@ static foreign_t z3_solver_assertions_foreign_locked(handle h, term_t handle_ter
   return PL_unify(l, list);
 }
 
+
+/********************************************* SMT-LIB2 *********************************************/
+
+static int prolog_sort_term(Z3_context ctx, Z3_sort sort, term_t term);
+
+// z3_solver_smtlib2(+Handle, -String): the assertions on Handle's solver as an SMT-LIB2 benchmark,
+// with the declarations they need.
+static foreign_t z3_solver_smtlib2_foreign_locked(handle h, term_t string_term) {
+  Z3_string text = Z3_solver_to_string(h->ctx, h->solver);
+  if (text == NULL) return FALSE;
+  return PL_unify_chars(string_term, PL_STRING | REP_UTF8, (size_t) -1, text);
+}
+
+foreign_t z3_solver_smtlib2_foreign(term_t handle_term, term_t string_term) {
+  handle h;
+  if (!lock_handle(handle_term, &h)) return FALSE;
+  foreign_t rval = z3_solver_smtlib2_foreign_locked(h, string_term);
+  unlock_handle(h);
+  return rval;
+}
+
+// The entries of a declaration map, as parallel arrays of names and declarations (malloc'ed).
+static unsigned map_declarations(Z3_context ctx, decl_map map, Z3_symbol **names, Z3_func_decl **decls) {
+  Z3_ast_vector keys = Z3_ast_map_keys(ctx, map);
+  Z3_ast_vector_inc_ref(ctx, keys);
+  unsigned n = Z3_ast_vector_size(ctx, keys);
+  *names = malloc((n > 0 ? n : 1) * sizeof(Z3_symbol));
+  *decls = malloc((n > 0 ? n : 1) * sizeof(Z3_func_decl));
+  if (*names == NULL || *decls == NULL) { Z3_ast_vector_dec_ref(ctx, keys); return 0; }
+  for (unsigned i = 0; i < n; i++) {
+    Z3_func_decl d = (Z3_func_decl) Z3_ast_map_find(ctx, map, Z3_ast_vector_get(ctx, keys, i));
+    (*decls)[i] = d;
+    (*names)[i] = Z3_get_decl_name(ctx, d);
+  }
+  Z3_ast_vector_dec_ref(ctx, keys);
+  return n;
+}
+
+// While collecting declarations: the ids of the asts visited (an open-addressing hash set; 0 marks
+// a free slot, so ids are stored plus one), and the declarations found, without repeats.
+struct collected {
+  unsigned *ids; size_t id_capacity, id_count;
+  Z3_func_decl *decls; size_t decl_capacity, decl_count;
+  Z3_sort *sorts; size_t sort_capacity, sort_count;   // the datatype sorts used
+};
+
+// Adds id to the visited set; false if it was there already (or memory ran out, set *failed).
+static bool visit(struct collected *c, unsigned id, bool *failed) {
+  if (2 * (c->id_count + 1) > c->id_capacity) {           // keep the load at most 1/2
+    size_t cap = c->id_capacity ? 2 * c->id_capacity : 64;
+    unsigned *ids = calloc(cap, sizeof(unsigned));
+    if (ids == NULL) { *failed = true; return false; }
+    for (size_t i = 0; i < c->id_capacity; i++) {
+      unsigned v = c->ids[i];
+      if (v != 0) { size_t j = v % cap; while (ids[j] != 0) j = (j + 1) % cap; ids[j] = v; }
+    }
+    free(c->ids);
+    c->ids = ids; c->id_capacity = cap;
+  }
+  unsigned v = id + 1;
+  size_t j = v % c->id_capacity;
+  while (c->ids[j] != 0) {
+    if (c->ids[j] == v) return false;
+    j = (j + 1) % c->id_capacity;
+  }
+  c->ids[j] = v; c->id_count++;
+  return true;
+}
+
+static void add_declaration(struct collected *c, Z3_func_decl d, bool *failed) {
+  for (size_t i = 0; i < c->decl_count; i++) if (c->decls[i] == d) return;
+  if (c->decl_count == c->decl_capacity) {
+    size_t cap = c->decl_capacity ? 2 * c->decl_capacity : 16;
+    Z3_func_decl *decls = realloc(c->decls, cap * sizeof(Z3_func_decl));
+    if (decls == NULL) { *failed = true; return; }
+    c->decls = decls; c->decl_capacity = cap;
+  }
+  c->decls[c->decl_count++] = d;
+}
+
+static void add_datatype_sort(Z3_context ctx, struct collected *c, Z3_sort s, bool *failed) {
+  if (Z3_get_sort_kind(ctx, s) != Z3_DATATYPE_SORT) return;
+  for (size_t i = 0; i < c->sort_count; i++) if (c->sorts[i] == s) return;
+  if (c->sort_count == c->sort_capacity) {
+    size_t cap = c->sort_capacity ? 2 * c->sort_capacity : 8;
+    Z3_sort *sorts = realloc(c->sorts, cap * sizeof(Z3_sort));
+    if (sorts == NULL) { *failed = true; return; }
+    c->sorts = sorts; c->sort_capacity = cap;
+  }
+  c->sorts[c->sort_count++] = s;
+}
+
+// Collects in c the uninterpreted functions and constants that ast uses, in order of first use.
+static void collect_declarations(Z3_context ctx, Z3_ast ast, struct collected *c, bool *failed) {
+  if (*failed || !visit(c, Z3_get_ast_id(ctx, ast), failed)) return;
+  switch (Z3_get_ast_kind(ctx, ast)) {
+  case Z3_APP_AST: {
+    Z3_app app = Z3_to_app(ctx, ast);
+    Z3_func_decl d = Z3_get_app_decl(ctx, app);
+    if (Z3_get_decl_kind(ctx, d) == Z3_OP_UNINTERPRETED) {
+      add_declaration(c, d, failed);
+      for (unsigned i = 0; i < Z3_get_domain_size(ctx, d); i++) add_datatype_sort(ctx, c, Z3_get_domain(ctx, d, i), failed);
+    }
+    add_datatype_sort(ctx, c, Z3_get_sort(ctx, ast), failed);
+    unsigned n = Z3_get_app_num_args(ctx, app);
+    for (unsigned i = 0; i < n; i++) collect_declarations(ctx, Z3_get_app_arg(ctx, app, i), c, failed);
+    break;
+  }
+  case Z3_QUANTIFIER_AST:
+    for (unsigned i = 0; i < Z3_get_quantifier_num_bound(ctx, ast); i++)
+      add_datatype_sort(ctx, c, Z3_get_quantifier_bound_sort(ctx, ast, i), failed);
+    collect_declarations(ctx, Z3_get_quantifier_body(ctx, ast), c, failed);
+    break;
+  default:
+    break;
+  }
+}
+
+/*
+  Registers in h the enumeration sort s, as z3_declare_enum/3 does, unless h has it already, and puts
+  enum(Name, Values) in term. Fails, printing a message, for a datatype that is not an enumeration (has
+  a constructor with arguments), or an enumeration whose name h already uses for another sort.
+*/
+static int register_enumeration(handle h, Z3_sort s, term_t term) {
+  Z3_context ctx = h->ctx;
+  char *name = strdup(Z3_get_symbol_string(ctx, Z3_get_sort_name(ctx, s)));
+  if (name == NULL) return PL_resource_error("memory");
+  unsigned n = Z3_get_datatype_sort_num_constructors(ctx, s);
+  for (unsigned i = 0; i < n; i++) {
+    if (Z3_get_domain_size(ctx, Z3_get_datatype_sort_constructor(ctx, s, i)) != 0) {
+      ERROR("z3_parse_smtlib2/4: datatype %s is not an enumeration; only enumerations are supported\n", name);
+      free(name);
+      return FALSE;
+    }
+  }
+  Z3_ast key = mk_ast_key(ctx, name, 0);
+  if (Z3_ast_map_contains(ctx, h->enum_sorts, key)) {
+    if ((Z3_sort) Z3_ast_map_find(ctx, h->enum_sorts, key) != s) {
+      ERROR("z3_parse_smtlib2/4: %s is already an enumeration sort, with other values\n", name);
+      free(name);
+      return FALSE;
+    }
+  }
+  else {
+    Z3_ast_map_insert(ctx, h->enum_sorts, key, (Z3_ast) s);
+    for (unsigned i = 0; i < n; i++) {
+      Z3_func_decl c = Z3_get_datatype_sort_constructor(ctx, s, i);
+      register_function_declaration(ctx, h->enum_declarations, Z3_get_decl_name(ctx, c), 0, c);
+    }
+  }
+  term_t values = PL_new_term_ref(), value = PL_new_term_ref(), args = PL_new_term_refs(2);
+  PL_put_nil(values);
+  int ok = TRUE;
+  for (unsigned i = n; ok && i > 0; i--) {
+    Z3_func_decl c = Z3_get_datatype_sort_constructor(ctx, s, i - 1);
+    ok = PL_put_atom_chars(value, Z3_get_symbol_string(ctx, Z3_get_decl_name(ctx, c)))
+      && PL_cons_list(values, value, values);
+  }
+  ok = ok && PL_put_atom_chars(args, name) && PL_put_term(args + 1, values)
+          && PL_cons_functor(term, PL_new_functor(PL_new_atom("enum"), 2), args, args + 1);
+  free(name);
+  return ok;
+}
+
+// A declaration as the Prolog term z3_declare_function/3 takes apart: Name:Sort for a constant,
+// Name(ArgSort, ...):Sort for a function.
+static int declaration_term(Z3_context ctx, Z3_func_decl d, term_t term) {
+  unsigned arity = Z3_get_domain_size(ctx, d);
+  atom_t name = PL_new_atom(Z3_get_symbol_string(ctx, Z3_get_decl_name(ctx, d)));
+  term_t left = PL_new_term_ref(), range = PL_new_term_ref();
+  int ok = prolog_sort_term(ctx, Z3_get_range(ctx, d), range);
+  if (ok && arity == 0) {
+    ok = PL_put_atom(left, name);
+  }
+  else if (ok) {
+    term_t args = PL_new_term_refs(arity);
+    for (unsigned i = 0; ok && i < arity; i++) ok = prolog_sort_term(ctx, Z3_get_domain(ctx, d, i), args + i);
+    ok = ok && PL_cons_functor_v(left, PL_new_functor(name, arity), args);
+  }
+  PL_unregister_atom(name);
+  return ok && PL_cons_functor(term, declaration_pair_functor, left, range);
+}
+
+/*
+  z3_parse_smtlib2(+Handle, +String, -Formulas, -Declarations): parses String, an SMT-LIB2 script,
+  and gives its assertions (those in scope at its end) as Prolog formulas, which are not asserted.
+  The script can use Handle's declarations and enumeration sorts. The functions and constants the
+  formulas use are declared in Handle, so z3_assert/2 can assert the formulas; Declarations lists
+  them, as Name:Sort and Name(ArgSort, ...):Sort. Fails, printing Z3's message, if String does not
+  parse, or redeclares one of Handle's names with another sort.
+*/
+static foreign_t z3_parse_smtlib2_foreign_locked(handle h, term_t string_term, term_t formulas_term,
+                                                 term_t declarations_term) {
+  Z3_context ctx = h->ctx;
+  char *text;
+  if (!PL_get_chars(string_term, &text, CVT_STRING | CVT_ATOM | CVT_LIST | CVT_EXCEPTION | REP_UTF8)) return FALSE;
+
+  // Handle's declarations (functions and constants) and enumeration sorts.
+  // (Not the enumeration values: the parser declares them with their sorts.)
+  Z3_symbol *names1; Z3_func_decl *decls1;
+  unsigned n1 = map_declarations(ctx, h->declarations, &names1, &decls1);
+  unsigned nd = n1;
+  Z3_symbol *decl_names = malloc((nd > 0 ? nd : 1) * sizeof(Z3_symbol));
+  Z3_func_decl *decls = malloc((nd > 0 ? nd : 1) * sizeof(Z3_func_decl));
+  Z3_ast_vector sort_keys = Z3_ast_map_keys(ctx, h->enum_sorts);
+  Z3_ast_vector_inc_ref(ctx, sort_keys);
+  unsigned ns = Z3_ast_vector_size(ctx, sort_keys);
+  Z3_symbol *sort_names = malloc((ns > 0 ? ns : 1) * sizeof(Z3_symbol));
+  Z3_sort *sorts = malloc((ns > 0 ? ns : 1) * sizeof(Z3_sort));
+  int ok = names1 && decls1 && decl_names && decls && sort_names && sorts;
+  if (ok) {
+    for (unsigned i = 0; i < n1; i++) { decl_names[i] = names1[i]; decls[i] = decls1[i]; }
+    for (unsigned i = 0; i < ns; i++) {
+      sorts[i] = (Z3_sort) Z3_ast_map_find(ctx, h->enum_sorts, Z3_ast_vector_get(ctx, sort_keys, i));
+      sort_names[i] = Z3_get_sort_name(ctx, sorts[i]);
+    }
+  }
+  Z3_ast_vector parsed = ok ? Z3_parse_smtlib2_string(ctx, text, ns, sort_names, sorts, nd, decl_names, decls) : NULL;
+  Z3_ast_vector_dec_ref(ctx, sort_keys);
+  free(names1); free(decls1); free(decl_names); free(decls); free(sort_names); free(sorts);
+  if (!ok) return PL_resource_error("memory");
+  if (parsed == NULL || Z3_get_error_code(ctx) != Z3_OK) {
+    ERROR("z3_parse_smtlib2/4: could not parse the SMT-LIB2 string\n");
+    return FALSE;
+  }
+  Z3_ast_vector_inc_ref(ctx, parsed);
+  unsigned n = Z3_ast_vector_size(ctx, parsed);
+
+  // The declarations the formulas use: check them against Handle's, and declare the new ones.
+  struct collected c = { 0 };
+  bool failed = false;
+  for (unsigned i = 0; i < n; i++) collect_declarations(ctx, Z3_ast_vector_get(ctx, parsed, i), &c, &failed);
+  free(c.ids);
+  if (failed) { free(c.decls); free(c.sorts); Z3_ast_vector_dec_ref(ctx, parsed); return PL_resource_error("memory"); }
+  term_t dlist = PL_new_term_ref(), dterm = PL_new_term_ref();
+  PL_put_nil(dlist);
+  ok = TRUE;
+  // The enumeration sorts first, at the end of the list, so their values are declared when the
+  // functions are.
+  for (size_t i = c.sort_count; ok && i > 0; i--) {
+    ok = register_enumeration(h, c.sorts[i - 1], dterm) && PL_cons_list(dlist, dterm, dlist);
+  }
+  free(c.sorts);
+  for (size_t i = c.decl_count; ok && i > 0; i--) {
+    Z3_func_decl d = c.decls[i - 1];
+    Z3_symbol name = Z3_get_decl_name(ctx, d);
+    unsigned arity = Z3_get_domain_size(ctx, d);
+    char *name_string = strdup(Z3_get_symbol_string(ctx, name));
+    if (name_string == NULL) { ok = PL_resource_error("memory"); break; }
+    Z3_func_decl old = get_function_declaration(ctx, h->declarations, name_string, arity);
+    if (old == NULL) old = get_function_declaration(ctx, h->enum_declarations, name_string, arity);
+    if (old != NULL && old != d) {
+      ERROR("z3_parse_smtlib2/4: %s/%u is already declared with another sort\n", name_string, arity);
+      ok = FALSE;
+    }
+    else if (old == NULL) {
+      register_function_declaration(ctx, h->declarations, name, arity, d);
+    }
+    free(name_string);
+    ok = ok && declaration_term(ctx, d, dterm) && PL_cons_list(dlist, dterm, dlist);
+  }
+  free(c.decls);
+
+  // The formulas, with typed numerals, in the order of the script.
+  term_t flist = PL_new_term_ref();
+  PL_put_nil(flist);
+  for (unsigned i = n; ok && i > 0; i--) {
+    term_t f = PL_new_term_ref();
+    Z3_ast a = Z3_ast_vector_get(ctx, parsed, i - 1);
+    if (!z3_ast_to_term_typed(ctx, a, f)) {
+      ERROR("z3_parse_smtlib2/4: could not convert %s\n", Z3_ast_to_string(ctx, a));
+      ok = FALSE;
+    }
+    ok = ok && PL_cons_list(flist, f, flist);
+  }
+  Z3_ast_vector_dec_ref(ctx, parsed);
+  return ok && PL_unify(formulas_term, flist) && PL_unify(declarations_term, dlist);
+}
+
+foreign_t z3_parse_smtlib2_foreign(term_t handle_term, term_t string_term, term_t formulas_term, term_t declarations_term) {
+  handle h;
+  if (!lock_handle(handle_term, &h)) return FALSE;
+  foreign_t rval = z3_parse_smtlib2_foreign_locked(h, string_term, formulas_term, declarations_term);
+  unlock_handle(h);
+  return rval;
+}
+
+/*
+  z3_eval_smtlib2(+Script, -Output): runs Script, a sequence of SMT-LIB2 commands such as
+  (check-sat) and (get-model), in a fresh Z3 context, and gives what Z3 prints. Independent of any
+  handle. Fails, printing Z3's message, if Script has an error.
+*/
+foreign_t z3_eval_smtlib2_foreign(term_t script_term, term_t output_term) {
+  char *text;
+  if (!PL_get_chars(script_term, &text, CVT_STRING | CVT_ATOM | CVT_LIST | CVT_EXCEPTION | REP_UTF8)) return FALSE;
+  Z3_config cfg = Z3_mk_config();
+  Z3_context ctx = Z3_mk_context(cfg);
+  Z3_del_config(cfg);
+  Z3_set_error_handler(ctx, z3_swi_error_handler);
+  Z3_string out = Z3_eval_smtlib2_string(ctx, text);
+  int ok = out != NULL && Z3_get_error_code(ctx) == Z3_OK
+    && PL_unify_chars(output_term, PL_STRING | REP_UTF8, (size_t) -1, out);
+  Z3_del_context(ctx);
+  return ok;
+}
 
 /*
   Converts a Z3 ast to a Prolog term:
@@ -1562,6 +1868,7 @@ static const char *string_operation_name(Z3_decl_kind kind) {
   case Z3_OP_INT_TO_STR:   return "int_to_str";
   case Z3_OP_TO_REAL:      return "int2real";   // Z3: to_real
   case Z3_OP_TO_INT:       return "real2int";   // Z3: to_int
+  case Z3_OP_ITE:          return "ite";        // Z3: if
   // Floating point: Z3 prints fp.add and so on, and roundNearestTiesToEven for rne.
   case Z3_OP_FPA_RM_NEAREST_TIES_TO_EVEN: return "rne";
   case Z3_OP_FPA_RM_NEAREST_TIES_TO_AWAY: return "rna";
@@ -1691,12 +1998,71 @@ struct scope {
   unsigned num_names;
   atom_t *names;
   bool *used;      // if not NULL, set when one of the names is used
+  bool typed_numerals; // numerals keep their sorts (see typed_numeral_to_term); inherited by inner scopes
 };
 
 static foreign_t ast_to_term_scoped(const Z3_context ctx, Z3_ast ast, term_t term, const struct scope *scope);
 
+// The exact value of an integer or rational numeral as a Prolog number (an integer, or a rational
+// such as 1r3), read from Z3's numerator and denominator strings, so big values are kept exactly.
+static int exact_number_term(const Z3_context ctx, Z3_ast ast, term_t term) {
+  char *num = strdup(Z3_get_numeral_string(ctx, Z3_get_numerator(ctx, ast)));
+  char *den = strdup(Z3_get_numeral_string(ctx, Z3_get_denominator(ctx, ast)));
+  if (num == NULL || den == NULL) { free(num); free(den); return PL_resource_error("memory"); }
+  size_t n = strlen(num) + strlen(den) + 2;
+  char *text = malloc(n);
+  if (text == NULL) { free(num); free(den); return PL_resource_error("memory"); }
+  if (strcmp(den, "1") == 0) snprintf(text, n, "%s", num);
+  else snprintf(text, n, "%sr%s", num, den);
+  int ok = PL_chars_to_term(text, term);
+  free(num); free(den); free(text);
+  return ok;
+}
+
+/*
+  A numeral with its sort kept, for terms that z3.pl will type again: a real is a float (2.0) when
+  it is an integer a double holds exactly, int2real(N) for a larger integer, and a Prolog rational
+  (1r3) otherwise; a bit vector is int2bv(Width, N). Returns -1 for other numerals (integers, and
+  the special kinds handled elsewhere), which are converted as usual.
+*/
+static int typed_numeral_to_term(const Z3_context ctx, Z3_ast ast, term_t term) {
+  Z3_sort sort = Z3_get_sort(ctx, ast);
+  switch (Z3_get_sort_kind(ctx, sort)) {
+  case Z3_REAL_SORT: {
+    if (Z3_is_algebraic_number(ctx, ast)) return -1;
+    term_t value = PL_new_term_ref();
+    if (!exact_number_term(ctx, ast, value)) return FALSE;
+    if (!PL_is_integer(value)) return PL_unify(term, value);           // a rational, such as 1r3
+    int64_t i;
+    if (PL_get_int64(value, &i) && i > -(INT64_C(1) << 53) && i < (INT64_C(1) << 53)) {
+      return PL_unify_float(term, (double) i);                         // exact as a double
+    }
+    term_t t = PL_new_term_ref();
+    return PL_cons_functor(t, PL_new_functor(PL_new_atom("int2real"), 1), value) && PL_unify(term, t);
+  }
+  case Z3_BV_SORT: {
+    // Z3_get_numerator is for integers and reals; a bit vector's numeral string is its unsigned value.
+    term_t args = PL_new_term_refs(2), t = PL_new_term_ref();
+    return PL_put_int64(args, Z3_get_bv_sort_size(ctx, sort))
+      && PL_chars_to_term(Z3_get_numeral_string(ctx, ast), args + 1)
+      && PL_cons_functor(t, PL_new_functor(PL_new_atom("int2bv"), 2), args, args + 1)
+      && PL_unify(term, t);
+  }
+  default:
+    return -1;
+  }
+}
+
 foreign_t z3_ast_to_term_internal(const Z3_context ctx, Z3_ast ast, term_t term) {
   return ast_to_term_scoped(ctx, ast, term, NULL);
+}
+
+// Like z3_ast_to_term_internal, but numerals keep their sorts, so that the term means the same when
+// given to Z3 again, even without declarations to coerce it: for assertions and parsed formulas.
+// Model values stay plain numbers.
+foreign_t z3_ast_to_term_typed(const Z3_context ctx, Z3_ast ast, term_t term) {
+  struct scope root = { .outer = NULL, .num_names = 0, .names = NULL, .used = NULL, .typed_numerals = true };
+  return ast_to_term_scoped(ctx, ast, term, &root);
 }
 
 // forall(Vars, Body) or exists(Vars, Body), Vars a list of Name:Sort, as accepted by term_to_ast.
@@ -1720,7 +2086,8 @@ static foreign_t quantifier_to_term(const Z3_context ctx, Z3_ast ast, term_t ter
       && PL_cons_functor(var, PL_new_functor(PL_new_atom(":"), 2), name, sort)
       && PL_cons_list(vars, var, vars);
   }
-  struct scope inner = { .outer = outer, .num_names = n, .names = names, .used = NULL };
+  struct scope inner = { .outer = outer, .num_names = n, .names = names, .used = NULL,
+                         .typed_numerals = outer != NULL && outer->typed_numerals };
   term_t body = PL_new_term_ref();
   ok = ok && ast_to_term_scoped(ctx, Z3_get_quantifier_body(ctx, ast), body, &inner);
   term_t result = PL_new_term_ref();
@@ -1765,12 +2132,23 @@ static foreign_t ast_to_term_scoped(const Z3_context ctx, Z3_ast ast, term_t ter
     case Z3_OP_FPA_NUM: case Z3_OP_FPA_NAN: case Z3_OP_FPA_PLUS_INF: case Z3_OP_FPA_MINUS_INF:
     case Z3_OP_FPA_PLUS_ZERO: case Z3_OP_FPA_MINUS_ZERO:
       return fp_value_to_term(ctx, ast, term);
+    case Z3_OP_FPA_FP: {
+      // fp(Sign, Exponent, Significand), as the SMT-LIB2 parser makes literals: of numerals, it
+      // simplifies to an ordinary floating-point numeral.
+      Z3_ast simplified = Z3_simplify(ctx, ast);
+      if (simplified != NULL && Z3_is_numeral_ast(ctx, simplified)) return fp_value_to_term(ctx, simplified, term);
+      break;
+    }
     default:
       break;
     }
   }
   if (Z3_is_algebraic_number(ctx, ast)) {
     return algebraic_to_term(ctx, ast, term);
+  }
+  if (scope != NULL && scope->typed_numerals && Z3_is_numeral_ast(ctx, ast)) {
+    int typed = typed_numeral_to_term(ctx, ast, term);
+    if (typed != -1) return typed;
   }
   if (Z3_is_numeral_ast(ctx, ast)) {
     int64_t i;
@@ -1851,6 +2229,22 @@ static foreign_t ast_to_term_scoped(const Z3_context ctx, Z3_ast ast, term_t ter
     }
     int conversion = fp_conversion_to_term(ctx, ast, Z3_get_decl_kind(ctx, decl), arity, subterms, term);
     if (conversion != -1) return conversion;
+    // int2bv(Width, N) and bv2int(BV, Signed), as accepted by term_to_ast: Z3's int2bv has the width
+    // as a parameter, not an argument, and its bv2int is unsigned.
+    if (Z3_get_decl_kind(ctx, decl) == Z3_OP_INT2BV && arity == 1) {
+      term_t args = PL_new_term_refs(2);
+      return PL_put_int64(args, Z3_get_bv_sort_size(ctx, Z3_get_sort(ctx, ast)))
+        && PL_put_term(args + 1, subterms)
+        && PL_cons_functor(t, PL_new_functor(PL_new_atom("int2bv"), 2), args, args + 1)
+        && PL_unify(term, t);
+    }
+    if ((Z3_get_decl_kind(ctx, decl) == Z3_OP_BV2INT || Z3_get_decl_kind(ctx, decl) == Z3_OP_SBV2INT) && arity == 1) {
+      term_t args = PL_new_term_refs(2);
+      return PL_put_term(args, subterms)
+        && PL_put_atom_chars(args + 1, Z3_get_decl_kind(ctx, decl) == Z3_OP_SBV2INT ? "true" : "false")
+        && PL_cons_functor(t, PL_new_functor(PL_new_atom("bv2int"), 2), args, args + 1)
+        && PL_unify(term, t);
+    }
     const char *prolog_name = string_operation_name(Z3_get_decl_kind(ctx, decl));
     if (prolog_name != NULL) {
       func = PL_new_functor(PL_new_atom(prolog_name), arity);
@@ -2615,7 +3009,7 @@ static foreign_t else_to_term(Z3_context ctx, Z3_func_decl fdecl, Z3_ast felse, 
     names[i] = PL_new_atom(name);
   }
   bool used = false;
-  struct scope args = { .outer = NULL, .num_names = n, .names = names, .used = &used };
+  struct scope args = { .outer = NULL, .num_names = n, .names = names, .used = &used, .typed_numerals = false };
   term_t body = PL_new_term_ref();
   int ok = ast_to_term_scoped(ctx, felse, body, &args);
   if (ok && !used) {
@@ -4421,6 +4815,9 @@ install_t install_z3_swi_foreign(void)
 
   PRED("z3_simplify", 3, z3_simplify_foreign, 0); // +handle, +term, -simplified_term
   PRED("z3_solver_assertions", 2, z3_solver_assertions_foreign, 0); // +handle, -assertion_list
+  PRED("z3_solver_smtlib2", 2, z3_solver_smtlib2_foreign, 0); // +handle, -string
+  PRED("z3_parse_smtlib2", 4, z3_parse_smtlib2_foreign, 0); // +handle, +string, -formulas, -declarations
+  PRED("z3_eval_smtlib2", 2, z3_eval_smtlib2_foreign, 0); // +script, -output
 
   PRED("z3_model_functions", 3, z3_model_functions_foreign, 0); // +handle, +model, -functions_term
   PRED("z3_model_constants", 3, z3_model_constants_foreign, 0); // +handle, +model, -constants_term

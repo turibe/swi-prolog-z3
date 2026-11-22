@@ -6,9 +6,9 @@ Effort estimates are rough: small is a day or less, moderate a few days, large m
 Current support, for reference: `int`, `real` and `bool` sorts, enumerations, uninterpreted sorts and
 functions, bit vectors, arithmetic (nonlinear too, with exact irrational values in models), propositional
 logic and equality, pseudo-Boolean `atleast`/`atmost`, strings, arrays, quantifiers and IEEE floating
-point; unsat cores, explanations and relaxations, optimization, timeouts and interrupts; and Prolog
-variables in formulas, with `z3_label/1`. Still open: items 6, 10, 11 and 12, the leftovers listed under
-the items that are done, and items 13 to 17.
+point; unsat cores, explanations and relaxations, optimization, timeouts and interrupts; SMT-LIB2 import
+and export; and Prolog variables in formulas, with `z3_label/1`. Still open: items 6, 11 and 12, the
+leftovers listed under the items that are done, and items 13 to 17.
 
 ## Gaps in what is already there
 
@@ -127,7 +127,13 @@ which Z3 does not support.
 
 ## Smaller conveniences
 
-### 10. SMT-LIB2 import and export (small)
+### 10. SMT-LIB2 import and export (done)
+
+There is now `z3_smtlib2/1`, `z3_push_smtlib2/1` and `z3_smtlib2_formulas/2` in `z3.pl`, and
+`z3_solver_smtlib2/2`, `z3_parse_smtlib2/4` and `z3_eval_smtlib2/2` at the lower level; see the README.
+Enumeration sorts are imported; other datatypes wait for item 6. What follows describes the plan as it
+was.
+
 
 `Z3_solver_to_string` and `Z3_eval_smtlib2_string`, to dump the current assertions for other solvers or
 load benchmarks.
@@ -183,7 +189,7 @@ not known yet.
 
 ## Suggested order
 
-10 first: it is small, helps with debugging (dumping the assertions as SMT-LIB2) and lets the library
-be checked against other solvers. Then 6, which would most extend what the library can do, since
-datatypes map naturally onto Prolog terms. The small items, 14 to 16, can be done at any time; 11 when
+6 first, now that 10 is done: it would most extend what the library can do, since datatypes map
+naturally onto Prolog terms, and SMT-LIB2 import already rejects them with a message, waiting for it.
+The small items, 14 to 16, can be done at any time; 11 when
 independent queries on shared declarations are needed; and 13 when SWI-Prolog's `undo/1` is fixed.

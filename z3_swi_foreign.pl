@@ -35,6 +35,9 @@
               z3_solver_push/2,            %% +handle, -new_scopes     push the solver one time
               z3_simplify/3,               %% +handle, +term, -term
               z3_solver_scopes/2,          %% +handle, -scopes
+              z3_solver_smtlib2/2,         %% +handle, -string  The assertions, as SMT-LIB2
+              z3_parse_smtlib2/4,          %% +handle, +string, -formulas, -declarations
+              z3_eval_smtlib2/2,           %% +script, -output  Runs an SMT-LIB2 script in a fresh context
 
               %% for debugging:
               z3_declarations_string/2,    %% +handle, -string
@@ -155,7 +158,9 @@ prolog:message(z3_message(F,L)) --> {swritef(S, F, L)}, [S].
 
 %! z3_solver_assertions(+Handle, -Assertions) is det.
 %  Assertions is the formulas asserted on Handle's solver, newest first, converted back to Prolog with
-%  the names z3_assert/2 accepts, so they can be asserted again.
+%  the names z3_assert/2 accepts, so they can be asserted again. Numerals keep their sorts: a real
+%  is a float (`2.0`), `int2real(N)` for an integer too large for a float to hold exactly, or a
+%  rational (`1r3`); a bit vector is `int2bv(Width, N)`.
 %  (Defined in `z3_swi_foreign.c`.)
 
 %! z3_solver_push(+Handle, -Scopes) is det.
@@ -210,6 +215,28 @@ prolog:message(z3_message(F,L)) --> {swritef(S, F, L)}, [S].
 %  Raises `domain_error(not_less_than_zero, N)` if N is negative, and
 %  `domain_error(between(0, Current), N)` if N is more than the Current number of scopes;
 %  the solver is unchanged in both cases.
+%  (Defined in `z3_swi_foreign.c`.)
+
+%! z3_solver_smtlib2(+Handle, -String) is det.
+%  String is the assertions on Handle's solver as an SMT-LIB2 benchmark: the declarations they need
+%  (`declare-fun`, `declare-sort`, `declare-datatypes` for enumerations), then the `assert`s. It can
+%  be given to other SMT solvers, or read back with z3_parse_smtlib2/4.
+%  (Defined in `z3_swi_foreign.c`.)
+
+%! z3_parse_smtlib2(+Handle, +String, -Formulas, -Declarations) is semidet.
+%  Parses String, an SMT-LIB2 script (an atom, string or code list), and gives its assertions (those
+%  in scope at its end) as Prolog formulas, in order; they are not asserted. The script can use
+%  Handle's declarations and enumeration sorts. The functions and constants the formulas use are
+%  declared in Handle, so z3_assert/2 can assert the formulas; Declarations lists them, as `Name:Sort`
+%  and `Name(ArgSort, ...):Sort`. Numerals keep their sorts, as in z3_solver_assertions/2. Commands
+%  other than declarations and assertions, such as `check-sat`, are ignored. Fails, printing Z3's
+%  message, if String does not parse, or redeclares one of Handle's names with another sort.
+%  (Defined in `z3_swi_foreign.c`.)
+
+%! z3_eval_smtlib2(+Script, -Output) is semidet.
+%  Runs Script, a sequence of SMT-LIB2 commands such as `check-sat` and `get-model`, in a fresh Z3
+%  context, and Output is what Z3 prints, as a string. Independent of any handle. Fails, printing Z3's
+%  message, if Script has an error.
 %  (Defined in `z3_swi_foreign.c`.)
 
 %! z3_solver_scopes(+Handle, -Scopes)
@@ -1898,3 +1925,110 @@ test(bad_formulas, [forall(bad_fp_formula(F))]) :-
                        z3_free_handle(H)).
 
 :- end_tests(floating_point).
+
+% SMT-LIB2 export, import and evaluation, and assertions that keep their numerals' sorts.
+
+:- begin_tests(smtlib2).
+
+smt_handle(H) :-
+    z3_new_handle(H),
+    forall(member(N:S, [x:int, r:real, w:bv(8), f(int):real, q:float32, s:string]), z3_declare_function(H, N, S)).
+
+test(export, [setup(smt_handle(H)), cleanup(z3_free_handle(H))]) :-
+    z3_assert(H, x > 2),
+    z3_assert(H, r = f(x) + 1.5),
+    z3_solver_smtlib2(H, S),
+    assertion(string(S)),
+    forall(member(Part, ["(declare-fun x () Int)", "(declare-fun f (Int) Real)", "(assert (> x 2))"]),
+           assertion(sub_string(S, _, _, _, Part))).
+
+% Numerals in assertions keep their sorts, so the assertions can be asserted again, with the same
+% meaning, even by z3.pl's type inference.
+test(typed_numerals, [setup(smt_handle(H)), cleanup(z3_free_handle(H))]) :-
+    z3_assert(H, r > 2.0),
+    z3_assert(H, r < 1r3 + 10),
+    z3_assert(H, w = int2bv(8, 200)),
+    z3_assert(H, r < int2real(100000000000000000000)),
+    z3_solver_assertions(H, As),
+    assertion(As == [r < int2real(100000000000000000000), w = int2bv(8, 200),
+                     r < int2real(1) / int2real(3) + int2real(10), r > 2.0]).
+
+% Z3 keeps 1.5 as the rational 3/2, which comes back as the Prolog rational 3r2.
+test(rational_numeral, [setup(smt_handle(H)), cleanup(z3_free_handle(H))]) :-
+    z3_assert(H, r = 1.5),
+    z3_solver_assertions(H, As),
+    assertion(As == [r = 3r2]).
+
+% Signed bv2int is expanded by Z3 into an ite; both come back in forms that can be asserted again.
+test(bv2int_round_trip, [setup(smt_handle(H)), cleanup((z3_free_handle(H), z3_free_handle(H2)))]) :-
+    z3_assert(H, x = bv2int(w, false)),
+    z3_assert(H, x > bv2int(w, true)),        % so w is negative as signed
+    z3_solver_assertions(H, As),
+    assertion(As = [x > ite(bvslt(w, int2bv(8, 0)), _, _), x = bv2int(w, false)]),
+    smt_handle(H2),
+    forall(member(A, As), z3_assert(H2, A)),
+    z3_check(H, S1), z3_check(H2, S2),
+    assertion(S1-S2 == l_true-l_true),
+    z3_assert(H2, w = int2bv(8, 5)),        % positive: the two values agree, so x > signed fails
+    z3_check(H2, S3),
+    assertion(S3 == l_false).
+
+% Exporting and parsing gives back the assertions, and their declarations.
+test(round_trip, [setup(smt_handle(H)), cleanup((z3_free_handle(H), z3_free_handle(H2)))]) :-
+    z3_assert(H, x > 2),
+    z3_assert(H, r = f(x) + 1.5),
+    z3_assert(H, w = int2bv(8, 7)),
+    z3_assert(H, q = fp_value(0.5, float32)),
+    z3_assert(H, s = "hé"),
+    z3_solver_smtlib2(H, S),
+    z3_new_handle(H2),
+    z3_parse_smtlib2(H2, S, Fs, Ds),
+    msort(Ds, SortedDs),
+    assertion(SortedDs == [q:float32, r:real, s:string, w:bv(8), x:int, f(int):real]),
+    assertion(Fs = [x > 2, r = f(x) + _, w = int2bv(8, 7), q = fp_value(0.5, float32), s = "hé"]),
+    forall(member(F, Fs), z3_assert(H2, F)),
+    z3_check(H2, Status),
+    assertion(Status == l_true).
+
+% A script can use the handle's declarations and enumeration sorts.
+test(uses_handle_declarations, [setup(smt_handle(H)), cleanup(z3_free_handle(H))]) :-
+    z3_declare_enum(H, color, [red, green]),
+    z3_declare_function(H, c, color),
+    z3_parse_smtlib2(H, "(declare-const y Int) (assert (> y x)) (assert (= c red))", Fs, Ds),
+    assertion(Fs == [y > x, c = red]),
+    assertion(Ds == [y:int, x:int, c:color, enum(color, [red, green])]),
+    forall(member(F, Fs), z3_assert(H, F)),
+    z3_check(H, l_true).
+
+test(redeclaration_fails, [setup(smt_handle(H)), cleanup(z3_free_handle(H)), fail]) :-
+    z3_parse_smtlib2(H, "(declare-const x Real) (assert (> x 1.0))", _, _).
+
+% An enumeration sort in the script is declared in the handle, so its formulas can be asserted.
+test(enumeration_declared, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))]) :-
+    z3_parse_smtlib2(H, "(declare-datatypes ((shade 0)) (((light) (dark)))) (declare-const s shade) (assert (= s dark))", Fs, Ds),
+    assertion(Ds == [s:shade, enum(shade, [light, dark])]),
+    z3_enum_declarations(H, Es),
+    assertion(Es == [(light/0):shade, (dark/0):shade]),
+    forall(member(F, Fs), z3_assert(H, F)),
+    z3_check(H, l_true).
+
+% Other datatypes are not supported yet.
+test(datatype_fails, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)), fail]) :-
+    z3_parse_smtlib2(H, "(declare-datatypes ((L 0)) (((nil) (cons (hd Int) (tl L))))) (declare-const l L) (assert (= l nil))", _, _).
+
+test(syntax_error_fails, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)), fail]) :-
+    z3_parse_smtlib2(H, "(assert (> z", _, _).
+
+% Assertions in scope at the end of the script; other commands are ignored.
+test(scopes_and_commands, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))]) :-
+    z3_parse_smtlib2(H, "(declare-const a Int) (assert (> a 1)) (push) (assert (< a 0)) (pop) (check-sat)", Fs, _),
+    assertion(Fs == [a > 1]).
+
+test(eval) :-
+    z3_eval_smtlib2("(declare-const a Int) (assert (> a 5)) (assert (< a 7)) (check-sat) (get-value (a))", Out),
+    assertion(Out == "sat\n((a 6))\n").
+
+test(eval_error, [fail]) :-
+    z3_eval_smtlib2("(assert (> undeclared 5))", _).
+
+:- end_tests(smtlib2).
