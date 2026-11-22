@@ -49,7 +49,12 @@ conversion to and from integers, and later regular expressions.
 
 ## New solver capabilities
 
-### 3. Timeouts and interrupts (small)
+### 3. Timeouts and interrupts (done)
+
+There is now `z3_set_timeout/1,2`, `z3_interrupt/1` and `z3_reason_unknown/1,2`, and a running
+`z3_check` responds to `call_with_time_limit/2`, `thread_signal/2` and Ctrl-C; see the README.
+What follows describes the problem as it was.
+
 
 A solver `timeout` parameter, and a `z3_interrupt/1` predicate built on `Z3_interrupt`, which is safe to
 call from another thread. This would complete the work on busy handles: a thread waiting for a handle

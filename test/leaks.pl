@@ -68,7 +68,10 @@ iteration(I) :-
     z3_solver_push(H, _),
     z3_assert(H, between(d:int, 1, 3)),
     z3_assert(H, d:int <> e:real),
+    z3_set_timeout(H, 60000),
+    z3_interrupt(H),                          % no check running: no effect
     z3_check(H, l_true),
+    z3_reason_unknown(H, _),
     z3_model_lists(H, _),
     z3_model_assocs(H, _),
     z3_get_model(H, M),

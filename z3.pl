@@ -6,6 +6,8 @@
               solver_scopes/1,         % +Num_scopes, starting at 0
               z3_check/1,              % +Status Returns status of global solver: l_true, l_false, l_undet
               z3_check_and_print/1,    % +Status Returns status, prints model if possible
+              z3_set_timeout/1,        % +Milliseconds  Limit each check of the global solver (0: no limit)
+              z3_reason_unknown/1,     % -Reason  Why the last check returned l_undef
               z3_declarations/1,       % -Declarations  Get declarations so far, or those used in the previous query (reset on a new push).
               z3_declare_enum/2,       % +EnumName, +EnumValues. Not backtrackable.
               z3_enum_declarations/1,
@@ -97,6 +99,8 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
                   z3_reset_declarations/1,
                   z3_check/2,
                   z3_check_and_print/2,
+                  z3_set_timeout/2,
+                  z3_reason_unknown/2,
                   z3_solver_pop/3,
                   z3_solver_push/2,
                   z3_solver_scopes/2
@@ -192,6 +196,7 @@ new_global_handle(Handle) :-
     print_message(informational, z3_message("Making new z3.pl handle")),
     free_handle,
     z3_new_handle(Handle),
+    (nb_current(z3_timeout, Ms) -> z3_set_timeout(Handle, Ms) ; true), % kept across z3_reset
     nb_setval(global_handle, Handle),
     nb_setval(solver_depth, 0),
     print_message(informational, z3_message("Made new z3.pl handle")).
@@ -255,6 +260,21 @@ solver_scopes(N) :- resolve_solver_depth(_), raw_solver_scopes(N).
 internal_assert_and_check(Solver, Formula, Status) :-
     z3_assert(Solver, Formula),
     z3_check(Solver, Status).
+
+%! z3_set_timeout(+Milliseconds) is det.
+%  Limits each check of the global solver to Milliseconds; a check that runs out has status `l_undef`,
+%  with reason `timeout` or `canceled` (see z3_reason_unknown/1). 0 removes the limit. The limit is kept when
+%  z3_reset/0 makes a new handle. To limit one call instead, call_with_time_limit/2 also works.
+z3_set_timeout(Ms) :-
+    (get_global_handle(H) -> true ; new_global_handle(H)),
+    z3_set_timeout(H, Ms),
+    nb_setval(z3_timeout, Ms).
+
+%! z3_reason_unknown(-Reason) is det.
+%  Reason is why the last check of the global solver had status `l_undef`, such as `timeout`.
+z3_reason_unknown(Reason) :-
+    get_global_handle(H),
+    z3_reason_unknown(H, Reason).
 
 %! z3_check(-Status)
 %  Do a solver check and return the status, one of `{l_true, l_false, l_undef}`
@@ -815,6 +835,32 @@ test(string_type_error) :-
     assertion(R == l_type_error).
 
 :- end_tests(z3pl_strings).
+
+% The timeout for z3.pl's global solver, which survives z3_reset.
+
+:- begin_tests(z3pl_timeout, [setup(reset_globals), cleanup((z3_set_timeout(0), free_globals))]).
+
+% The pigeonhole problem with 9 pigeons and 8 holes, as one conjunction of clauses; it takes
+% about 0.1 s to prove unsatisfiable, far longer than a 1 ms timeout.
+pigeonhole_formula(F) :-
+    findall(C, pigeonhole_clause(C), Cs),
+    F =.. [and|Cs].
+pigeonhole_clause(C) :- between(1, 9, I), findall(P, (between(1, 8, J), pigeonhole:pigeon(I, J, P)), Ps), C =.. [or|Ps].
+pigeonhole_clause(not(and(A, B))) :- between(1, 8, J), between(1, 9, I), between(1, 9, K), I < K,
+                                     pigeonhole:pigeon(I, J, A), pigeonhole:pigeon(K, J, B).
+
+:- use_module(examples/pigeonhole, []).
+
+test(timeout_survives_reset) :-
+    z3_set_timeout(1),
+    z3_reset,
+    pigeonhole_formula(F),
+    z3_push(F, Status),
+    assertion(Status == l_undef),
+    z3_reason_unknown(Reason),
+    assertion(memberchk(Reason, [timeout, canceled])).   % depends on which part of Z3 stops
+
+:- end_tests(z3pl_timeout).
 
 
 :- begin_tests(enums).

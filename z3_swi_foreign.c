@@ -7,6 +7,7 @@
 #include <stdatomic.h>
 #include <pthread.h>
 #include <time.h>
+#include <limits.h>
 
 // /opt/homebrew/Cellar/gmp/6.3.0/include/gmp.h
 // #include <gmp.h>
@@ -92,10 +93,10 @@ Z3_ast mk_ast_key(Z3_context ctx, const char * name, const int64_t arity)
    If the context is satisfiable, then display the model.
 */
 
-Z3_lbool solver_check_and_print(Z3_context ctx, Z3_solver s)
+// Prints the result of a check of solver s, and its model if there is one.
+void print_check_result(Z3_context ctx, Z3_solver s, Z3_lbool result)
 {
     Z3_model m      = 0;
-    Z3_lbool result = Z3_solver_check(ctx, s);
     switch (result) {
     case Z3_L_FALSE:
         printf("unsat\n");
@@ -119,7 +120,6 @@ Z3_lbool solver_check_and_print(Z3_context ctx, Z3_solver s)
     if (m) {
       Z3_model_dec_ref(ctx, m);
     }
-    return result;
 }
 
 
@@ -504,6 +504,78 @@ static int get_obj(term_t t, PL_blob_t *type, handle h, void **ptr) {
 }
 
 // ***************************** END BLOBS ********************************************
+
+/*
+  Runs Z3_solver_check on h's solver so that Prolog signals still reach this thread: a time limit
+  (call_with_time_limit/2), thread_signal/2 or Ctrl-C. Z3 does not return to its caller while it
+  searches, so the check runs on a helper thread while this one waits, handling signals every
+  CHECK_POLL_MS. If a handler raises an exception, Z3_interrupt stops the check, and this returns
+  FALSE, with the exception pending, once the helper has finished. Otherwise it sets *result.
+  The caller holds h->lock, so nothing else uses the context meanwhile; the helper makes no
+  Prolog calls.
+*/
+#define CHECK_POLL_MS 10
+#define CHECK_STACK_SIZE (256 * 1024 * 1024) // Z3 can recurse deeply; this is only reserved, not used
+
+struct check_job {
+  Z3_context ctx;
+  Z3_solver solver;
+  Z3_lbool result;
+  int done;
+  pthread_mutex_t mutex;
+  pthread_cond_t finished;
+};
+
+static void *run_check(void *arg) {
+  struct check_job *job = arg;
+  Z3_lbool result = Z3_solver_check(job->ctx, job->solver);
+  pthread_mutex_lock(&job->mutex);
+  job->result = result;
+  job->done = TRUE;
+  pthread_cond_signal(&job->finished);
+  pthread_mutex_unlock(&job->mutex);
+  return NULL;
+}
+
+static int interruptible_check(handle h, Z3_lbool *result) {
+  struct check_job job = { .ctx = h->ctx, .solver = h->solver, .result = Z3_L_UNDEF, .done = FALSE };
+  pthread_mutex_init(&job.mutex, NULL);
+  pthread_cond_init(&job.finished, NULL);
+  pthread_attr_t attr;
+  pthread_attr_init(&attr);
+  pthread_attr_setstacksize(&attr, CHECK_STACK_SIZE);
+  pthread_t helper;
+  int started = pthread_create(&helper, &attr, run_check, &job) == 0;
+  pthread_attr_destroy(&attr);
+  int raised = FALSE;
+  if (!started) {
+    job.result = Z3_solver_check(h->ctx, h->solver); // no thread: check here, uninterruptibly
+  }
+  else {
+    pthread_mutex_lock(&job.mutex);
+    while (!job.done) {
+      struct timespec deadline;
+      clock_gettime(CLOCK_REALTIME, &deadline);
+      deadline.tv_nsec += CHECK_POLL_MS * 1000000L;
+      if (deadline.tv_nsec >= 1000000000L) { deadline.tv_sec += 1; deadline.tv_nsec -= 1000000000L; }
+      pthread_cond_timedwait(&job.finished, &job.mutex, &deadline);
+      if (!job.done && !raised) {
+        pthread_mutex_unlock(&job.mutex);
+        if (PL_handle_signals() < 0) { // a handler raised an exception: stop the search
+          raised = TRUE;
+          Z3_interrupt(h->ctx);
+        }
+        pthread_mutex_lock(&job.mutex);
+      }
+    }
+    pthread_mutex_unlock(&job.mutex);
+    pthread_join(helper, NULL);
+  }
+  pthread_cond_destroy(&job.finished);
+  pthread_mutex_destroy(&job.mutex);
+  *result = job.result;
+  return !raised;
+}
 
 
 // TODO: Z3_solver_get_statistics
@@ -1699,11 +1771,10 @@ foreign_t z3_check_foreign(term_t handle_term, term_t status_arg) {
 static foreign_t z3_check_foreign_locked(handle h, term_t handle_term, term_t status_arg) {
   int rval = TRUE;
   (void) rval; (void) handle_term;
-  Z3_solver solver = h->solver;
-  const Z3_context ctx = h->ctx;
-  DEBUG("Checking solver %p with context %p\n", solver, ctx);
+  DEBUG("Checking solver %p with context %p\n", h->solver, h->ctx);
 
-  Z3_lbool check_status = Z3_solver_check(ctx, solver);
+  Z3_lbool check_status;
+  if (!interruptible_check(h, &check_status)) return FALSE; // a signal raised an exception
   DEBUG("did check, status %d\n", check_status);
   rval = z3_lbool_to_atom(check_status, status_arg);
   DEBUG("did status to atom %d\n", rval);
@@ -1724,8 +1795,85 @@ foreign_t z3_check_and_print_foreign(term_t handle_term, term_t status_arg) {
 static foreign_t z3_check_and_print_foreign_locked(handle h, term_t handle_term, term_t status_arg) {
   int rval = TRUE;
   (void) rval; (void) handle_term;
-  const Z3_lbool check_status = solver_check_and_print(h->ctx, h->solver);
+  Z3_lbool check_status;
+  if (!interruptible_check(h, &check_status)) return FALSE; // a signal raised an exception
+  print_check_result(h->ctx, h->solver, check_status);
   return z3_lbool_to_atom(check_status, status_arg);
+}
+
+/*
+  Sets the solver's timeout, in milliseconds: a check that takes longer returns l_undef, with reason
+  timeout (see z3_reason_unknown/2). 0 removes the limit.
+*/
+static foreign_t z3_set_timeout_foreign_locked(handle h, term_t handle_term, term_t ms_term);
+
+foreign_t z3_set_timeout_foreign(term_t handle_term, term_t ms_term) {
+  handle h;
+  if (!lock_handle(handle_term, &h)) return FALSE;
+  foreign_t locked_rval = z3_set_timeout_foreign_locked(h, handle_term, ms_term);
+  unlock_handle(h);
+  return locked_rval;
+}
+
+static foreign_t z3_set_timeout_foreign_locked(handle h, term_t handle_term, term_t ms_term) {
+  (void) handle_term;
+  int64_t ms;
+  if (!PL_get_int64_ex(ms_term, &ms)) return FALSE;
+  if (ms < 0 || ms >= UINT_MAX) {
+    term_t ex = PL_new_term_ref();
+    if (!PL_unify_term(ex, PL_FUNCTOR_CHARS, "error", 2,
+                             PL_FUNCTOR_CHARS, "domain_error", 2,
+                               PL_FUNCTOR_CHARS, "between", 2, PL_INT, 0, PL_INT64, (int64_t) UINT_MAX - 1,
+                               PL_TERM, ms_term,
+                             PL_VARIABLE)) return FALSE;
+    return PL_raise_exception(ex);
+  }
+  Z3_context ctx = h->ctx;
+  Z3_params params = Z3_mk_params(ctx);
+  Z3_params_inc_ref(ctx, params);
+  // Z3 has no explicit "no timeout" value; its default is the largest unsigned.
+  Z3_params_set_uint(ctx, params, Z3_mk_string_symbol(ctx, "timeout"), ms == 0 ? UINT_MAX : (unsigned) ms);
+  Z3_solver_set_params(ctx, h->solver, params);
+  Z3_params_dec_ref(ctx, params);
+  return TRUE;
+}
+
+/* Why the last check returned l_undef, as an atom such as timeout, interrupted or canceled. */
+static foreign_t z3_reason_unknown_foreign_locked(handle h, term_t handle_term, term_t reason_term);
+
+foreign_t z3_reason_unknown_foreign(term_t handle_term, term_t reason_term) {
+  handle h;
+  if (!lock_handle(handle_term, &h)) return FALSE;
+  foreign_t locked_rval = z3_reason_unknown_foreign_locked(h, handle_term, reason_term);
+  unlock_handle(h);
+  return locked_rval;
+}
+
+static foreign_t z3_reason_unknown_foreign_locked(handle h, term_t handle_term, term_t reason_term) {
+  (void) handle_term;
+  return PL_unify_atom_chars(reason_term, Z3_solver_get_reason_unknown(h->ctx, h->solver));
+}
+
+/*
+  Interrupts a check running on handle_term, normally from another thread; the check then returns
+  l_undef with reason interrupted. Does nothing if no check is running. It does not take the handle's
+  lock, since the point is to reach a handle that is busy; pending_lock keeps the context from being
+  deleted meanwhile. Z3_interrupt is designed to be called while another thread uses the context.
+*/
+foreign_t z3_interrupt_foreign(term_t handle_term) {
+  void *data;
+  PL_blob_t *type;
+  if (!PL_get_blob(handle_term, &data, NULL, &type) || type != &z3_handle_blob) {
+    if (PL_is_variable(handle_term)) return PL_instantiation_error(handle_term);
+    return PL_type_error("z3_handle", handle_term);
+  }
+  handle h = data;
+  int live;
+  pthread_mutex_lock(&h->pending_lock);
+  live = h->ctx != NULL;
+  if (live) Z3_interrupt(h->ctx);
+  pthread_mutex_unlock(&h->pending_lock);
+  return live ? TRUE : PL_existence_error("z3_handle", handle_term);
 }
 
 
@@ -3345,6 +3493,9 @@ install_t install_z3_swi_foreign(void)
   PRED("z3_solver_scopes", 2, z3_solver_scopes_foreign, 0); // +handle, -num_scopes):
   PRED("z3_check", 2, z3_check_foreign, 0); // +handle, -status
   PRED("z3_check_and_print", 2, z3_check_and_print_foreign, 0); // +handle, -status
+  PRED("z3_set_timeout", 2, z3_set_timeout_foreign, 0); // +handle, +milliseconds (0: none)
+  PRED("z3_reason_unknown", 2, z3_reason_unknown_foreign, 0); // +handle, -reason
+  PRED("z3_interrupt", 1, z3_interrupt_foreign, 0); // +handle; from another thread
 
   PRED("z3_get_model", 2, z3_get_model_foreign, 0); // +handle, -model
   PRED("z3_model_eval", 5, z3_model_eval_foreign, 0); // +handle, +model, +formula, +completion_flag, -value
