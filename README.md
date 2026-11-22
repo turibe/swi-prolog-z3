@@ -235,6 +235,24 @@ For convenience, we expand `isoneof(a,v1,...,vn)` to `or(a=v1, ... a=vn)`.
 
 `alldifferent` is an alias for Z3's `distinct`.
 
+### Timeouts and interrupts
+
+A long check can be stopped in several ways:
+
+- `z3_set_timeout(Milliseconds)` (or `z3_set_timeout(Handle, Milliseconds)` with `z3_swi_foreign`)
+  limits each check; one that runs out has status `l_undef`. 0 removes the limit.
+- `call_with_time_limit/2`, `thread_signal/2` and Ctrl-C stop a running check and raise their
+  exception, as for any other Prolog goal.
+- `z3_interrupt(Handle)`, from another thread, makes a running check return `l_undef`.
+
+After an `l_undef` status, `z3_reason_unknown(Reason)` says why: for example `timeout` or `canceled`
+for a timeout, or `interrupted` after `z3_interrupt/1`.
+
+```prolog
+?- z3_set_timeout(1000), z3_push(HardFormula, Status), z3_reason_unknown(Reason).
+Status = l_undef, Reason = timeout.       % or canceled, depending on which part of Z3 stops
+```
+
 ### Reserved names
 
 These names have a built-in meaning in formulas, so they cannot be used as names of your own

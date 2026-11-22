@@ -22,6 +22,9 @@
               z3_solver_assertions/2,      %% +handle, -assertions
               z3_check/2,                  %% +handle, -status
               z3_check_and_print/2,        %% calls Z3_model_to_string
+              z3_set_timeout/2,            %% +handle, +milliseconds (0: no limit)
+              z3_reason_unknown/2,         %% +handle, -reason for the last l_undef
+              z3_interrupt/1,              %% +handle, from another thread
               z3_get_model/2,              %% +handle, -model
               z3_solver_pop/3,             %% +handle, +N, -new_scopes pop the solver N times
               z3_solver_push/2,            %% +handle, -new_scopes     push the solver one time
@@ -81,8 +84,12 @@ prolog:message(z3_message(F,L)) --> {swritef(S, F, L)}, [S].
 %  Get approximate memory usage, in bytes, from Z3.
 %  (Defined in `z3_swi_foreign.c`.)
 
-%! z3_check(+Handle, -Status)
-%  Does a z3_check for Handle's solver, and returns Status.
+%! z3_check(+Handle, -Status) is det.
+%  Checks the assertions on Handle's solver; Status is `l_true`, `l_false` or `l_undef`.
+%  The check can be interrupted: by a time limit (call_with_time_limit/2), thread_signal/2 or
+%  Ctrl-C, which stop it and raise their exception, or by z3_interrupt/1, which makes it return
+%  `l_undef`. A solver timeout (z3_set_timeout/2) also makes it return `l_undef`.
+%  z3_check_and_print/2 can be interrupted in the same ways.
 %  (Defined in `z3_swi_foreign.c`.)
 
 %! z3_check_and_print(+Handle, -Status)
@@ -147,6 +154,22 @@ prolog:message(z3_message(F,L)) --> {swritef(S, F, L)}, [S].
 
 %! z3_solver_push(+Handle, -Scopes)
 %  Does a z3_push for Handle's solver, and reports the new number of Scopes.
+%  (Defined in `z3_swi_foreign.c`.)
+
+%! z3_set_timeout(+Handle, +Milliseconds) is det.
+%  Limits each check on Handle's solver to Milliseconds; a check that runs out returns `l_undef`,
+%  with reason `timeout` or `canceled`, depending on which part of Z3 stops. 0 removes the limit.
+%  (Defined in `z3_swi_foreign.c`.)
+
+%! z3_reason_unknown(+Handle, -Reason) is det.
+%  Reason is an atom saying why the last check on Handle returned `l_undef`, such as `timeout`,
+%  `interrupted` or `canceled`.
+%  (Defined in `z3_swi_foreign.c`.)
+
+%! z3_interrupt(+Handle) is det.
+%  Interrupts a check running on Handle, which then returns `l_undef` with reason `interrupted`.
+%  Meant to be called from another thread; it does not wait for the handle, which is busy.
+%  Does nothing if no check is running.
 %  (Defined in `z3_swi_foreign.c`.)
 
 %! z3_solver_pop(+Handle, +N, -Scopes) is det.
@@ -1256,3 +1279,70 @@ test(malformed, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)),
     \+ z3_assert(H, F).
 
 :- end_tests(strings).
+
+% Stopping a running check: a time limit, a thread signal, a solver timeout, or z3_interrupt/1.
+% pigeonhole(H, 9) takes about 1.3 s to prove unsatisfiable, so it is still running when stopped.
+
+:- begin_tests(interrupts).
+
+:- use_module(examples/pigeonhole).
+
+busy_handle(H) :- z3_new_handle(H), pigeonhole(H, 9).
+
+elapsed(Goal, Seconds) :- get_time(T0), call(Goal), get_time(T1), Seconds is T1 - T0.
+
+% A running check used to see Prolog signals only after Z3 returned.
+test(time_limit, [setup(busy_handle(H)), cleanup(z3_free_handle(H))]) :-
+    elapsed(catch(call_with_time_limit(0.2, z3_check(H, _)), E, true), Seconds),
+    assertion(E == time_limit_exceeded),
+    assertion(Seconds < 0.6),
+    z3_solver_scopes(H, 0).                                 % the handle still works
+
+test(thread_signal, [setup(busy_handle(H)), cleanup(z3_free_handle(H))]) :-
+    thread_self(Me),
+    thread_create(( sleep(0.1), thread_signal(Me, throw(stop)) ), Signaller),
+    elapsed(catch(z3_check(H, _), Caught, true), Seconds),
+    thread_join(Signaller, _),
+    assertion(Caught == stop),
+    assertion(Seconds < 0.6).
+
+test(z3_interrupt, [setup(busy_handle(H)), cleanup(z3_free_handle(H))]) :-
+    thread_create(( sleep(0.1), z3_interrupt(H) ), Interrupter),
+    elapsed(z3_check(H, Status), Seconds),
+    thread_join(Interrupter, _),
+    assertion(Status == l_undef),
+    z3_reason_unknown(H, Reason),
+    assertion(Reason == interrupted),
+    assertion(Seconds < 0.6).
+
+% pigeonhole(H, 8) takes about 0.1 s, far longer than a 1 ms timeout.
+test(timeout, [setup((z3_new_handle(H), pigeonhole(H, 8))), cleanup(z3_free_handle(H))]) :-
+    z3_set_timeout(H, 1),
+    z3_check(H, Status),
+    assertion(Status == l_undef),
+    z3_reason_unknown(H, Reason),
+    assertion(memberchk(Reason, [timeout, canceled])),   % depends on which part of Z3 stops
+    z3_set_timeout(H, 0),                                   % no limit again
+    z3_check(H, Status2),
+    assertion(Status2 == l_false).
+
+test(interrupt_while_idle, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))]) :-
+    z3_interrupt(H),                                        % no check running: no effect
+    z3_assert(H, (x:int) > 1),
+    z3_check(H, l_true).
+
+test(timeout_errors, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)),
+                      forall(member(Ms-Error, [-1-domain_error(between(0, 4294967294), -1),
+                                               foo-type_error(integer, foo)]))]) :-
+    catch(z3_set_timeout(H, Ms), error(E, _), true),
+    assertion(E == Error).
+
+test(interrupt_errors) :-
+    catch(z3_interrupt(12345), error(E1, _), true),
+    assertion(E1 == type_error(z3_handle, 12345)),
+    z3_new_handle(H),
+    z3_free_handle(H),
+    catch(z3_interrupt(H), error(E2, _), true),
+    assertion(E2 = existence_error(z3_handle, _)).
+
+:- end_tests(interrupts).
