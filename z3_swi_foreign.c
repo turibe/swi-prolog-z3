@@ -2922,7 +2922,7 @@ Z3_sort mk_sort(handle h, term_t expression) {
     // float and double once meant real, which is not IEEE floating point; they are now errors, so that
     // neither meaning is assumed.
     if (strcmp(name_string, "float") == 0 || strcmp(name_string, "double") == 0) {
-      ERROR("%s is not a sort: use real, or IEEE floating point float32 or float64\n", name_string);
+      ERROR("%s is not a sort: use real, or IEEE floating point float16, float32, float64, float128 or fp(Ebits, Sbits)\n", name_string);
       return NULL;
     }
     if (strcmp(name_string, "string") == 0) {

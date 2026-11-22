@@ -1,6 +1,6 @@
 %%% -*- Mode: Prolog; Module: leaks; -*-
 
-%% Leak check for the C wrapper, run by `make leaks` (macOS only).
+%% Leak check for the C wrapper, run with `make leaks` (macOS only).
 %%
 %% Runs a workload that exercises most of z3_swi_foreign.c, including the error paths, then runs
 %% macOS's `leaks` tool on this process. Fails if any leaked block was allocated with

@@ -261,7 +261,7 @@ canonical_sort(float32, fp(8, 24)) :- !.
 canonical_sort(float64, fp(11, 53)) :- !.
 canonical_sort(float128, fp(15, 113)) :- !.
 canonical_sort(S, _) :- memberchk(S, [float, double]), !,
-    domain_error(sort, S, "use real, or IEEE floating point float32 or float64").
+    domain_error(sort, S, "use real, or IEEE floating point float16, float32, float64, float128 or fp(Ebits, Sbits)").
 canonical_sort(array(I, V), array(CI, CV)) :- !, canonical_sort(I, CI), canonical_sort(V, CV).
 canonical_sort(S, S).
 

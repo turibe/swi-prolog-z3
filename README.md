@@ -382,7 +382,8 @@ false.      % not associative
 ```
 
 The sort names `float` and `double` used to mean `real`. They are now errors, so that neither meaning
-is assumed: use `real`, or `float32` or `float64`.
+is assumed: use `real`, or one of the floating-point sorts above (`float64` is C's `double`, and
+`float32` its `float`).
 
 Z3 decides floating-point questions by reasoning about the bits, so larger formats are slower: a
 question that takes seconds with `float64` may take a fraction of one with `float16`, which has the same
