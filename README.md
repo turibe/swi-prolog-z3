@@ -374,6 +374,12 @@ faster when only a few of many formulas conflict:
 Core = [x<3].
 ```
 
+QuickXplain pushes formulas one at a time, and `z3_push` fails on type errors as well as on
+inconsistency, so `qexplain(z3_push, Formulas, Core)` used directly can mistake a type error for a
+conflict, when a formula pushed alone gets other types than with the rest (`f(a) = f(b)` before
+`a = 1`). `z3_minimal_core/2` types all the formulas together first. With quantifiers, its consistency
+checks of subsets may each take until the timeout, while `z3_unsat_core/2` stays fast.
+
 At the lower level, `z3_check_assumptions(Handle, Literals, Status)` checks under Boolean assumptions,
 and `z3_get_unsat_core(Handle, Core)` gives the ones an `l_false` result used.
 

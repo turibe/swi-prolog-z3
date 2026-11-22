@@ -304,8 +304,7 @@ z3_optimize(Objectives, Model) :-
 optimal_model(Objectives, Model, Values) :-
     maplist(objective_formula, Objectives, Formulas),
     Conjunction =.. [and, true | Formulas],
-    z3_push(Conjunction, Status),            % types and declares the objectives' symbols
-    memberchk(Status, [l_true, l_undef]),
+    push_formula(Conjunction, types_only, l_true),  % types and declares the objectives' symbols
     ground_version(Objectives, Grounded, _),
     remove_type_annotations(Grounded, Plain),
     get_global_handle(H),
@@ -340,9 +339,29 @@ z3_unsat_core(Formulas, Core) :-
 %! z3_minimal_core(+Formulas, -Core) is semidet.
 %  Like z3_unsat_core/2, but Core is minimal: removing any formula from it makes it consistent with
 %  the formulas pushed so far. The unsat core is a fast first cut, which QuickXplain then minimizes.
+%  QuickXplain pushes the formulas one at a time, and z3_push/1 fails on a type error as well as on
+%  inconsistency; a formula pushed alone can get other types than with the rest (in f(a) = f(b), a
+%  and f have no numeric type yet, so a = 1 is then a type error). So all the core's formulas are first
+%  typed and declared together, without being asserted.
 z3_minimal_core(Formulas, Core) :-
     z3_unsat_core(Formulas, Core0),
-    qexplain(z3_push, Core0, Core).
+    length(Core0, N),
+    numlist(1, N, Is),
+    pairs_keys_values(Numbered, Is, Core0),
+    % findall/3 undoes the pushes; only the numbers come out, so Formulas are not copied.
+    findall(MinIs, minimal_core_numbers(Core0, Numbered, MinIs), Found),
+    resolve_solver_depth(_),
+    Found = [MinIs],
+    findall(F, (member(I, MinIs), nth1(I, Core0, F)), Core).
+
+minimal_core_numbers([], _, []) :- !.     % the pushed formulas are inconsistent by themselves
+minimal_core_numbers(Core0, Numbered, Numbers) :-
+    Conjunction =.. [and, true | Core0],
+    push_formula(Conjunction, types_only, l_true),  % types and declares all the core's symbols together
+    qexplain(push_numbered, Numbered, Minimal),
+    pairs_keys(Minimal, Numbers).
+
+push_numbered(_-F) :- z3_push(F).
 
 numlist_labels(0, []) :- !.
 numlist_labels(N, Labels) :-
@@ -414,6 +433,12 @@ check_status_arg(Status) :- valid_status_list(L),
 %  Typechecks the formula and declares any needed types.
 z3_push(Foriginal, Status) :-
     check_status_arg(Status),
+    push_formula(Foriginal, assert, Status).
+
+% push_formula(+Formula, +Mode, -Status): z3_push/2 for Mode = assert; for Mode = types_only, only types
+% and declares Formula's symbols and pushes a solver scope, without asserting or checking (Status is
+% l_true unless there is a type error).
+push_formula(Foriginal, Mode, Status) :-
     (get_global_handle(H) -> true; new_global_handle(H)),
     z3_expand_term(Foriginal, F),
     (b_getval(solver_depth, 0) ->
@@ -437,7 +462,10 @@ z3_push(Foriginal, Status) :-
              %% we use the ":" annotations in the type checking after variables are grounded (assert_type);
              %% so we do two passes through the term.
              remove_type_annotations(FG, FG_notypes),
-             internal_assert_and_check(Solver, FG_notypes, Status)
+             (   Mode == assert
+             ->  internal_assert_and_check(Solver, FG_notypes, Status)
+             ;   Status = l_true
+             )
          )
     ;  (
         Status = l_type_error,
@@ -996,6 +1024,14 @@ test(prolog_variables) :-
     z3_unsat_core([X < 5, Y > X, Y < 0], Core),
     Core = [Lt],
     assertion(Lt == (X < 5)).                               % the formula itself, not a copy
+
+% QuickXplain pushes formulas one at a time; pushed alone, f(a) = f(b) left a, b and f without a
+% numeric type, so a = 1 was a type error, which looked like a conflict.
+test(minimal_core_types_formulas_together) :-
+    z3_reset,
+    Formulas = [f(a) = f(b), a = 1, b = 2, f(1) <> f(2)],
+    z3_minimal_core(Formulas, Core),
+    assertion(Core == Formulas).                            % all four are needed
 
 test(minimal_core_like_qexplain) :-
     Formulas = [a:int = b, b:int = c, c:int = d, d:int = f(a), e:int = f(b), f(a:int) > f(d:int)],
