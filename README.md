@@ -489,6 +489,8 @@ constants or functions (with the arities shown, where they matter).
   `leq`, `geq`, `between`.
 - Arithmetic: `+`, `-`, `minus`, `*`, `/`, `div`, `mod`, `rem`, `divides`, `power`, `**`, `^`,
   `is_int`, `int2real`, `real2int`.
+  `/` and `div` divide as integers (rounding down) when both arguments are integers, and as reals
+  otherwise.
 - Pseudo-Boolean: `atleast`, `atmost`.
 - Quantifiers: `forall(Vars, Body)` and `exists(Vars, Body)`.
 - Arrays: `select(Array, Index)`, `store(Array, Index, Value)` (the array with `Index` set to `Value`), and
