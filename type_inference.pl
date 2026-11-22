@@ -88,10 +88,6 @@ signature(^, A, B) :- signature(power, A, B).
 
 :- declare(distinct, all(_T), bool).
 
-% A possible improvement is to support expressions like all(number) AND oneof(float),
-% but makes the typechecking more expensive:
-% :- declare(+, oneof(real), real).
-% :- declare(*, oneof(real), real).
 
 % +, *, - and minus are typed by a rule in typecheck/4 (see arithmetic_operator/1), not by signatures.
 
@@ -115,12 +111,7 @@ signature(^, A, B) :- signature(power, A, B).
 :- declare(rem, [int, int], int).
 :- declare(mod, [int, int], int).
 
-% :- declare(<, [T, T], bool).
-% :- declare(>, [T, T], bool).
-% :- declare(>=, [T, T], bool).
-% :- declare(geq, [T, T], bool).
-% :- declare(=<, [T, T], bool).
-% :- declare(leq, [T, T], bool).
+% Comparisons (<, >, =<, >=, leq, geq) are typed by a rule in typecheck/4 (see comparison_operator/1).
 :- declare(and, all(bool), bool).
 :- declare(or, all(bool), bool).
 :- declare(xor, all(bool), bool).
@@ -189,14 +180,6 @@ signature(^, A, B) :- signature(power, A, B).
 
 :- declare(mk_rational, [int, int], real).
 
-sub_type(int, real).
-sub_type(bool, int).
-sub_type(bool, real).
-sub_type(T,T).
-
-% unify_or_error(T1, T2) :- T1 = T2, !, true.
-% unify_or_error(T1, T2) :- write(user_error, "Could not unify "), writeln(user_error, types(T1,T2)), fail.
-
 % "mappable" are non-declared atoms or functions whose type signature needs to be inferred; that is, not pre-defined.
 atomic_mappable(X) :- atom(X).
 
@@ -229,8 +212,8 @@ typecheck(F, _, _, _) :- var(F), !, instantiation_error(F).
 typecheck(Term:Type, T, Envin, Envout) :- !, Type = T,
                                           typecheck(Term, Type, Envin, Envout).
 typecheck(X, int, E, E) :- integer(X), !.
-typecheck(true, bool, E, E) :- true, !.
-typecheck(false, bool, E, E) :- true, !.
+typecheck(true, bool, E, E) :- !.
+typecheck(false, bool, E, E) :- !.
 %% We could allow integer constants  to be real, but this leads to duplicate answers.
 %% Without this, we must use, e.g., 2.0 instead of 2 when warranted.
 %% typecheck(X, real, E, E) :- integer(X).
@@ -251,13 +234,14 @@ typecheck(T, Type, Envin, Envout) :- functor(T, mk_unsigned_int64, N), !,
                                      N = 2,
                                      T = mk_unsigned_int64(Integer, Type),
                                      typecheck(Integer, int, Envin, Envout).
-%% for bv_numeral, need an integer, and a list of bools.
+%% bv_numeral(Bits): a bit vector from a list of bits, least significant first, each one of
+%% true, false, 1 or 0 (what the C code accepts).
 %% Q: how to refer to or constrain a single bit in a BV?
-typecheck(T, Type, E, E) :- functor(T, bv_numeral, 1),
-                            T = bv_numeral(L),                          
-                            ground(L),
-                            %% todo: add check that they're all boolean
+typecheck(T, Type, E, E) :- functor(T, bv_numeral, 1), !,
+                            T = bv_numeral(L),
                             is_list(L),
+                            L \== [],
+                            forall(member(B, L), ( nonvar(B), memberchk(B, [true, false, 1, 0]) )),
                             length(L, N),
                             Type = bv(N).
 %% Arithmetic, with any number of arguments: each argument is numeric (bool, int or real), and the
@@ -274,7 +258,7 @@ typecheck(between(X, Low, High), bool, Envin, Envout) :- !,
                                      numeric_args([X, Low, High], Envin, Envout).
 typecheck(X, T, Envin, Envout) :- atomic_mappable(X), !,
                                   (get_assoc(X/0, Envin, T1) ->
-                                       T = T1, %% unify_or_error(T, T1), % print error if this fails
+                                       T = T1,
                                        Envin = Envout
                                   ;
                                   (
@@ -301,15 +285,14 @@ typecheck(T, bool, E, ER) :- compound(T),
                              typecheck(S1, N1, E, E1),
                              numeric_type(N2),
                              typecheck(S2, N2, E1, ER).
+% Built-ins with a signature (T is not a variable here: the first clause handles those, and the
+% comparison operators have no signature).
 typecheck(T, Type, Envin, Envout) :-
-    nonvar(T),
     functor(T, F, Arity),
-    \+ comparison_operator(F),
     T =.. [F|Subterms],
     signature(F, ArgTypes, Result),
     check_length(ArgTypes, Arity),
     Type = Result,
-    %% sub_type(Type, Result),
     check_signature(Subterms, ArgTypes, Envin, Envout).
                              
 
@@ -495,7 +478,7 @@ test(between_not_numeric, [fail]) :-
     typecheck(between(a:foo, 1, 2), bool, _).
 
 % int2bv used to accept only an integer literal.
-test(int2bv_expression) :-
+test(int2bv_expression, [nondet]) :-
     typecheck(int2bv(8, (b:int) + 1), T, M),
     assertion(T == bv(8)),
     assertion(get_assoc(b/0, M, int)).
@@ -510,14 +493,68 @@ test(bit_reductions, [forall(member(Op, [bvredand, bvredor]))]) :-
     assertion(Type == bv(1)).
 
 % isoneof was declared with a meaningless type; alldifferent had no type at all.
-test(isoneof_bool) :-
+test(isoneof_bool, [nondet]) :-
     typecheck(isoneof(x, 1, 2), T, M),
     assertion(T == bool),
     assertion(get_assoc(x/0, M, int)).
 
-test(alldifferent_like_distinct) :-
+test(alldifferent_like_distinct, [nondet]) :-
     typecheck(alldifferent(a:int, b, c), T, M),
     assertion(T == bool),
     assertion(get_assoc(c/0, M, int)).
+
+% Coverage of built-ins and special forms that had no direct tests.
+
+% Each Term has the given Type, with the given symbol types.
+typing(ite(c, a:int, 2), int, [c/0-bool, a/0-int]).
+typing(distinct(a:int, b, c), bool, [b/0-int, c/0-int]).
+typing(power(a:real, 2), real, [a/0-real]).
+typing(div(a:int, 2), int, [a/0-int]).
+typing(div(a:real, 2), real, [a/0-real]).
+typing(mod(a:int, 3), int, [a/0-int]).
+typing(rem(a:int, 3), int, [a/0-int]).
+typing(divides(3, a), bool, [a/0-int]).
+typing(xor(p, q, r), bool, [p/0-bool, q/0-bool, r/0-bool]).
+typing(atmost(p, q, 1), bool, [p/0-bool, q/0-bool]).
+typing(mk_numeral("123", bv(16)), bv(16), []).
+typing(mk_unsigned_int64(123, bv(16)), bv(16), []).
+typing(bv_numeral([true, false, 1, 0]), bv(4), []).
+typing(algebraic(1.4142135623730951, root([-2, 0, 1], 2)), real, []).
+typing("a string", string, []).
+typing(bvadd(x:bv(8), y), bv(8), [y/0-bv(8)]).
+typing(bvsub_no_underflow(x:bv(8), y, s), bool, [y/0-bv(8), s/0-bool]).
+typing(bv2int(x:bv(8), true), int, [x/0-bv(8)]).
+
+test(typings, [forall(typing(Term, Type, Symbols)), nondet]) :-
+    typecheck(Term, T, M),
+    assertion(T == Type),
+    forall(member(S-ST, Symbols), assertion(get_assoc(S, M, ST))).
+
+% These do not type.
+ill_typed(ite(c, a:int, b:bool)).          % branches of different types
+ill_typed(ite(1, a, b)).                    % condition not boolean
+ill_typed(mod(a:real, 2)).                  % mod and rem are integer-only
+ill_typed(bvadd(x:bv(8), y:bv(16))).        % different widths
+ill_typed(bv_numeral([1, x])).              % a bit that is not a bit
+ill_typed(bv_numeral([])).                  % no bits
+ill_typed(not(_)).                          % unbound subterms are errors, see below
+ill_typed(and(p, 3)).                       % 3 is not a bool
+
+test(ill_typed, [forall(ill_typed(Term))]) :-
+    \+ catch(typecheck(Term, _, _), error(instantiation_error, _), fail).
+
+test(unbound_term, [throws(error(instantiation_error, _))]) :-
+    typecheck(_, _, _).
+
+% A function name can be used with different arities, each with its own type.
+test(overloading_by_arity, [nondet]) :-
+    typecheck(and(f(a:int) = 1, f(a, b:bool) = 2.0), bool, M),
+    assertion(get_assoc(f/1, M, lambda([int], int))),
+    assertion(get_assoc(f/2, M, lambda([int, bool], real))).
+
+% A symbol keeps one type within a formula: p cannot be a boolean and equal to an integer.
+% (Booleans are allowed in arithmetic, so and(p, p + 1 = 2) does type.)
+test(symbol_type_conflict, [fail]) :-
+    typecheck(and(p, p = 3), bool, _).
 
 :- end_tests(type_inference_tests).
