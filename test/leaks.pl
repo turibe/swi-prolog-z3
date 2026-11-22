@@ -23,7 +23,7 @@
 :- initialization(main, main).
 
 main(Argv) :-
-    (   member(A, Argv), atom_number(A, N) -> true ; N = 2000 ),
+    (   member(A, Argv), atom_number(A, N) -> true ; N = 100 ),   % see LEAK_ITERATIONS in the Makefile
     (   getenv('MallocStackLogging', _)
     ->  true
     ;   format(user_error, "MallocStackLogging is not set; leaks cannot show call stacks.~n", []),

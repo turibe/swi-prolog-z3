@@ -64,7 +64,11 @@ einstein: $(LIB)
 
 # Runs a workload under macOS's leaks tool and fails if any leaked block was allocated with
 # z3_swi_foreign.so on its call stack. The workload's expected error messages go to LEAKS_LOG.
-LEAK_ITERATIONS ?= 2000
+# 100 iterations reach the same lines and branches of z3_swi_foreign.c as 2000 (measured with clang's
+# source coverage), and a leak shows up whenever the leaking code runs at all, so more iterations only
+# take longer: about 6 s for 100, against 80 s for 2000. (Even 10 iterations miss only one branch, whose
+# outcome depends on the clock.)
+LEAK_ITERATIONS ?= 100
 LEAKS_LOG       ?= $(or $(TMPDIR),/tmp/)z3-leaks-stderr.log
 
 leaks: $(LIB)

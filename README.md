@@ -126,7 +126,8 @@ swipl -g run_tests -t halt z3.pl stateful_repl.pl z3_swi_foreign.pl
 
 On macOS, `make leaks` checks the C code for memory leaks. It runs a workload that exercises most of
 `z3_swi_foreign.c` (`test/leaks.pl`) under macOS's `leaks` tool, and fails if any leaked block was
-allocated from `z3_swi_foreign.so`. Set `LEAK_ITERATIONS` to change the workload size (default 2000).
+allocated from `z3_swi_foreign.so`. Set `LEAK_ITERATIONS` to change the workload size (default 100;
+every line and branch of the C code that the workload reaches is already reached in 100 iterations).
 It finds memory that is never freed, not objects that are kept alive longer than needed but are freed
 with their handle.
 
