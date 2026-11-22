@@ -8,6 +8,8 @@
               z3_check_and_print/1,    % +Status Returns status, prints model if possible
               z3_set_timeout/1,        % +Milliseconds  Limit each check of the global solver (0: no limit)
               z3_reason_unknown/1,     % -Reason  Why the last check returned l_undef
+              z3_unsat_core/2,         % +Formulas, -Core  A subset of Formulas inconsistent with the solver
+              z3_minimal_core/2,       % +Formulas, -Core  The same, minimal (using QuickXplain)
               z3_declarations/1,       % -Declarations  Get declarations so far, or those used in the previous query (reset on a new push).
               z3_declare_enum/2,       % +EnumName, +EnumValues. Not backtrackable.
               z3_enum_declarations/1,
@@ -73,6 +75,7 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
                   z3_expand_term/2
                   ]
              ).
+:- use_module(quickexplain, [qexplain/3]).  % for z3_minimal_core/2
 
 :- use_module(utils, [repeat_string/3,
                       pair_list_to_assoc/2
@@ -101,6 +104,8 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
                   z3_check_and_print/2,
                   z3_set_timeout/2,
                   z3_reason_unknown/2,
+                  z3_check_assumptions/3,
+                  z3_get_unsat_core/2,
                   z3_solver_pop/3,
                   z3_solver_push/2,
                   z3_solver_scopes/2
@@ -275,6 +280,52 @@ z3_set_timeout(Ms) :-
 z3_reason_unknown(Reason) :-
     get_global_handle(H),
     z3_reason_unknown(H, Reason).
+
+%! z3_unsat_core(+Formulas, -Core) is semidet.
+%  Core is a subset of Formulas, in their order, that is inconsistent with the formulas pushed so far.
+%  Fails if Formulas are consistent with them, or if Z3 cannot decide (status `l_undef`). The solver
+%  is left as it was. Z3 keeps cores small, but they need not be minimal; see z3_minimal_core/2.
+%  If the pushed formulas are inconsistent by themselves, Core is `[]`.
+%  Each formula F is asserted as `implies(Label, F)`, for a fresh Boolean Label, and the check is
+%  made under the Labels as assumptions (z3_check_assumptions/3).
+z3_unsat_core(Formulas, Core) :-
+    must_be(list, Formulas),
+    length(Formulas, N),
+    numlist_labels(N, Labels),
+    % findall/3 undoes the push; only the ground labels come out, so Formulas are not copied.
+    findall(CoreLabels, core_labels(Formulas, Labels, CoreLabels), Found),
+    resolve_solver_depth(_),          % pop the labelled formulas now, not at the next push
+    Found = [CoreLabels],
+    labelled_subset(Labels, Formulas, CoreLabels, Core).
+
+%! z3_minimal_core(+Formulas, -Core) is semidet.
+%  Like z3_unsat_core/2, but Core is minimal: removing any formula from it makes it consistent with
+%  the formulas pushed so far. The unsat core is a fast first cut, which QuickXplain then minimizes.
+z3_minimal_core(Formulas, Core) :-
+    z3_unsat_core(Formulas, Core0),
+    qexplain(z3_push, Core0, Core).
+
+numlist_labels(0, []) :- !.
+numlist_labels(N, Labels) :-
+    numlist(1, N, Is),
+    maplist([I, L]>>format(atom(L), "$core_~w", [I]), Is, Labels).
+
+core_labels(Formulas, Labels, CoreLabels) :-
+    maplist([F, L, implies(L:bool, F)]>>true, Formulas, Labels, Implications),
+    Conjunction =.. [and, true | Implications],
+    z3_push(Conjunction, Status),
+    (   Status == l_false
+    ->  CoreLabels = []                % inconsistent without any of Formulas
+    ;   memberchk(Status, [l_true, l_undef]),
+        get_global_handle(H),
+        z3_check_assumptions(H, Labels, l_false),
+        z3_get_unsat_core(H, CoreLabels)
+    ).
+
+labelled_subset([], [], _, []).
+labelled_subset([L|Ls], [F|Fs], CoreLabels, Core) :-
+    (   memberchk(L, CoreLabels) -> Core = [F|Core1] ; Core = Core1 ),
+    labelled_subset(Ls, Fs, CoreLabels, Core1).
 
 %! z3_check(-Status)
 %  Do a solver check and return the status, one of `{l_true, l_false, l_undef}`
@@ -861,6 +912,61 @@ test(timeout_survives_reset) :-
     assertion(memberchk(Reason, [timeout, canceled])).   % depends on which part of Z3 stops
 
 :- end_tests(z3pl_timeout).
+
+% z3_unsat_core/2 and z3_minimal_core/2.
+
+:- begin_tests(z3pl_cores, [setup(reset_globals), cleanup(free_globals)]).
+
+test(core) :-
+    z3_reset,
+    z3_unsat_core([a:int > b, b > a, c:int = 1], Core),
+    assertion(Core == [a:int > b, b > a]).
+
+test(relative_to_pushed) :-
+    z3_reset,
+    z3_push(x:int > 5),
+    z3_unsat_core([x < 3, y:int = 1, x < 0], Core),
+    assertion(memberchk(Core, [[x < 3], [x < 0], [x < 3, x < 0]])).
+
+test(consistent, [fail]) :-
+    z3_reset,
+    z3_push(x:int > 5),
+    z3_unsat_core([x > 7, y:int = 1], _).
+
+test(solver_unchanged) :-
+    z3_reset,
+    z3_push(x:int > 5),
+    raw_solver_scopes(S0),
+    z3_unsat_core([x < 3], _),
+    raw_solver_scopes(S1),
+    assertion(S1 == S0),
+    get_global_handle(H),
+    z3_solver_assertions(H, As),
+    assertion(As == [x > 5]).                               % no labelled formulas left
+
+test(already_inconsistent) :-
+    z3_reset,
+    z3_push(x:int > 5, _),
+    z3_push(x < 3, l_false),
+    z3_unsat_core([y:int = 1], Core),
+    assertion(Core == []).
+
+test(prolog_variables) :-
+    z3_reset,
+    z3_push(X > 10),
+    z3_unsat_core([X < 5, Y > X, Y < 0], Core),
+    Core = [Lt],
+    assertion(Lt == (X < 5)).                               % the formula itself, not a copy
+
+test(minimal_core_like_qexplain) :-
+    Formulas = [a:int = b, b:int = c, c:int = d, d:int = f(a), e:int = f(b), f(a:int) > f(d:int)],
+    z3_reset,
+    z3_minimal_core(Formulas, Core),
+    z3_reset,
+    qexplain(z3_push, Formulas, Expected),
+    assertion(Core == Expected).
+
+:- end_tests(z3pl_cores).
 
 
 :- begin_tests(enums).

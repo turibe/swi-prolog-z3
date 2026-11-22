@@ -520,6 +520,8 @@ static int get_obj(term_t t, PL_blob_t *type, handle h, void **ptr) {
 struct check_job {
   Z3_context ctx;
   Z3_solver solver;
+  unsigned num_assumptions;  // 0 for a plain check
+  Z3_ast *assumptions;
   Z3_lbool result;
   int done;
   pthread_mutex_t mutex;
@@ -528,7 +530,9 @@ struct check_job {
 
 static void *run_check(void *arg) {
   struct check_job *job = arg;
-  Z3_lbool result = Z3_solver_check(job->ctx, job->solver);
+  Z3_lbool result = job->num_assumptions == 0
+    ? Z3_solver_check(job->ctx, job->solver)
+    : Z3_solver_check_assumptions(job->ctx, job->solver, job->num_assumptions, job->assumptions);
   pthread_mutex_lock(&job->mutex);
   job->result = result;
   job->done = TRUE;
@@ -537,8 +541,10 @@ static void *run_check(void *arg) {
   return NULL;
 }
 
-static int interruptible_check(handle h, Z3_lbool *result) {
-  struct check_job job = { .ctx = h->ctx, .solver = h->solver, .result = Z3_L_UNDEF, .done = FALSE };
+// As interruptible_check, under the given assumptions (Z3_solver_check_assumptions).
+static int interruptible_check_assumptions(handle h, unsigned n, Z3_ast *assumptions, Z3_lbool *result) {
+  struct check_job job = { .ctx = h->ctx, .solver = h->solver, .num_assumptions = n, .assumptions = assumptions,
+                           .result = Z3_L_UNDEF, .done = FALSE };
   pthread_mutex_init(&job.mutex, NULL);
   pthread_cond_init(&job.finished, NULL);
   pthread_attr_t attr;
@@ -549,7 +555,7 @@ static int interruptible_check(handle h, Z3_lbool *result) {
   pthread_attr_destroy(&attr);
   int raised = FALSE;
   if (!started) {
-    job.result = Z3_solver_check(h->ctx, h->solver); // no thread: check here, uninterruptibly
+    run_check(&job); // no thread: check here, uninterruptibly
   }
   else {
     pthread_mutex_lock(&job.mutex);
@@ -575,6 +581,10 @@ static int interruptible_check(handle h, Z3_lbool *result) {
   pthread_mutex_destroy(&job.mutex);
   *result = job.result;
   return !raised;
+}
+
+static int interruptible_check(handle h, Z3_lbool *result) {
+  return interruptible_check_assumptions(h, 0, NULL, result);
 }
 
 
@@ -1874,6 +1884,92 @@ foreign_t z3_interrupt_foreign(term_t handle_term) {
   if (live) Z3_interrupt(h->ctx);
   pthread_mutex_unlock(&h->pending_lock);
   return live ? TRUE : PL_existence_error("z3_handle", handle_term);
+}
+
+// True if a is a Boolean literal: an uninterpreted Boolean constant, or its negation.
+static int boolean_literal(Z3_context ctx, Z3_ast a) {
+  if (Z3_get_ast_kind(ctx, a) != Z3_APP_AST || Z3_get_sort_kind(ctx, Z3_get_sort(ctx, a)) != Z3_BOOL_SORT) return FALSE;
+  Z3_app app = Z3_to_app(ctx, a);
+  Z3_func_decl decl = Z3_get_app_decl(ctx, app);
+  if (Z3_get_decl_kind(ctx, decl) == Z3_OP_NOT) return boolean_literal(ctx, Z3_get_app_arg(ctx, app, 0));
+  return Z3_get_decl_kind(ctx, decl) == Z3_OP_UNINTERPRETED && Z3_get_app_num_args(ctx, app) == 0;
+}
+
+/*
+  Checks the solver's assertions under extra assumptions, which must be Boolean literals: Boolean
+  constants such as p:bool, or their negations. They hold for this check only. After l_false,
+  z3_get_unsat_core/2 gives the assumptions the proof of unsatisfiability used. Interruptible, like z3_check.
+  Raises domain_error(boolean_literal, A) for an assumption A that is not a literal.
+*/
+static foreign_t z3_check_assumptions_foreign_locked(handle h, term_t handle_term, term_t list, term_t status_term);
+
+foreign_t z3_check_assumptions_foreign(term_t handle_term, term_t list, term_t status_term) {
+  handle h;
+  if (!lock_handle(handle_term, &h)) return FALSE;
+  foreign_t locked_rval = z3_check_assumptions_foreign_locked(h, handle_term, list, status_term);
+  unlock_handle(h);
+  return locked_rval;
+}
+
+static foreign_t z3_check_assumptions_foreign_locked(handle h, term_t handle_term, term_t list, term_t status_term) {
+  (void) handle_term;
+  size_t n;
+  switch (PL_skip_list(list, 0, &n)) {
+  case PL_LIST: break;
+  case PL_PARTIAL_LIST: return PL_instantiation_error(list);
+  default: return PL_type_error("list", list);
+  }
+  if (!PL_is_ground(list)) return PL_instantiation_error(list);
+  Z3_ast *assumptions = malloc((n > 0 ? n : 1) * sizeof(Z3_ast));
+  if (assumptions == NULL) return PL_resource_error("memory");
+  term_t head = PL_new_term_ref(), tail = PL_copy_term_ref(list);
+  size_t i = 0;
+  while (PL_get_list(tail, head, tail)) {
+    Z3_ast a = term_to_ast(h, h->declarations, head);
+    if (a == NULL || !boolean_literal(h->ctx, a)) {
+      free(assumptions);
+      return a == NULL && PL_exception(0) ? FALSE : PL_domain_error("boolean_literal", head);
+    }
+    assumptions[i++] = a;
+  }
+  Z3_lbool status;
+  int ok = interruptible_check_assumptions(h, (unsigned) n, assumptions, &status);
+  free(assumptions);
+  if (!ok) return FALSE; // a signal raised an exception
+  return z3_lbool_to_atom(status, status_term);
+}
+
+/*
+  The unsat core of the last check: after z3_check_assumptions/3 returned l_false, the assumptions
+  its proof used, as a list of literals. Z3 makes cores small, but they need not be minimal.
+*/
+static foreign_t z3_get_unsat_core_foreign_locked(handle h, term_t handle_term, term_t core_term);
+
+foreign_t z3_get_unsat_core_foreign(term_t handle_term, term_t core_term) {
+  handle h;
+  if (!lock_handle(handle_term, &h)) return FALSE;
+  foreign_t locked_rval = z3_get_unsat_core_foreign_locked(h, handle_term, core_term);
+  unlock_handle(h);
+  return locked_rval;
+}
+
+static foreign_t z3_get_unsat_core_foreign_locked(handle h, term_t handle_term, term_t core_term) {
+  (void) handle_term;
+  Z3_context ctx = h->ctx;
+  Z3_ast_vector core = Z3_solver_get_unsat_core(ctx, h->solver);
+  if (core == NULL) return FALSE;
+  Z3_ast_vector_inc_ref(ctx, core);
+  term_t list = PL_new_term_ref();
+  PL_put_nil(list);
+  term_t elem = PL_new_term_ref();
+  int ok = TRUE;
+  for (unsigned i = Z3_ast_vector_size(ctx, core); ok && i > 0; i--) { // build the list from the end
+    ok = PL_put_variable(elem)
+      && z3_ast_to_term_internal(ctx, Z3_ast_vector_get(ctx, core, i - 1), elem)
+      && PL_cons_list(list, elem, list);
+  }
+  Z3_ast_vector_dec_ref(ctx, core);
+  return ok && PL_unify(core_term, list);
 }
 
 
@@ -3496,6 +3592,8 @@ install_t install_z3_swi_foreign(void)
   PRED("z3_set_timeout", 2, z3_set_timeout_foreign, 0); // +handle, +milliseconds (0: none)
   PRED("z3_reason_unknown", 2, z3_reason_unknown_foreign, 0); // +handle, -reason
   PRED("z3_interrupt", 1, z3_interrupt_foreign, 0); // +handle; from another thread
+  PRED("z3_check_assumptions", 3, z3_check_assumptions_foreign, 0); // +handle, +literals, -status
+  PRED("z3_get_unsat_core", 2, z3_get_unsat_core_foreign, 0); // +handle, -literals
 
   PRED("z3_get_model", 2, z3_get_model_foreign, 0); // +handle, -model
   PRED("z3_model_eval", 5, z3_model_eval_foreign, 0); // +handle, +model, +formula, +completion_flag, -value

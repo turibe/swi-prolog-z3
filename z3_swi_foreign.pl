@@ -25,6 +25,8 @@
               z3_set_timeout/2,            %% +handle, +milliseconds (0: no limit)
               z3_reason_unknown/2,         %% +handle, -reason for the last l_undef
               z3_interrupt/1,              %% +handle, from another thread
+              z3_check_assumptions/3,      %% +handle, +literals, -status
+              z3_get_unsat_core/2,         %% +handle, -literals
               z3_get_model/2,              %% +handle, -model
               z3_solver_pop/3,             %% +handle, +N, -new_scopes pop the solver N times
               z3_solver_push/2,            %% +handle, -new_scopes     push the solver one time
@@ -170,6 +172,18 @@ prolog:message(z3_message(F,L)) --> {swritef(S, F, L)}, [S].
 %  Interrupts a check running on Handle, which then returns `l_undef` with reason `interrupted`.
 %  Meant to be called from another thread; it does not wait for the handle, which is busy.
 %  Does nothing if no check is running.
+%  (Defined in `z3_swi_foreign.c`.)
+
+%! z3_check_assumptions(+Handle, +Assumptions, -Status) is det.
+%  Checks Handle's solver under the extra Assumptions, for this check only. Assumptions is a list of
+%  Boolean literals: Boolean constants such as `p:bool`, or their negations; anything else raises
+%  `domain_error(boolean_literal, A)`. After `l_false`, z3_get_unsat_core/2 gives the assumptions used.
+%  Interruptible, like z3_check/2.
+%  (Defined in `z3_swi_foreign.c`.)
+
+%! z3_get_unsat_core(+Handle, -Core) is det.
+%  After z3_check_assumptions/3 returned `l_false`, Core is the list of assumptions that its proof of
+%  unsatisfiability used. Z3 keeps cores small, but they need not be minimal.
 %  (Defined in `z3_swi_foreign.c`.)
 
 %! z3_solver_pop(+Handle, +N, -Scopes) is det.
@@ -1346,3 +1360,56 @@ test(interrupt_errors) :-
     assertion(E2 = existence_error(z3_handle, _)).
 
 :- end_tests(interrupts).
+
+% Checking under assumptions, and unsat cores.
+
+:- begin_tests(unsat_cores).
+
+:- use_module(examples/pigeonhole).
+
+tracked(H) :-
+    z3_new_handle(H),
+    z3_assert(H, implies(p:bool, (x:int) > 3)),
+    z3_assert(H, implies(q:bool, (x:int) < 2)),
+    z3_assert(H, implies(r:bool, (y:int) = 1)).
+
+test(core, [setup(tracked(H)), cleanup(z3_free_handle(H))]) :-
+    z3_check_assumptions(H, [p, q, r], Status),
+    assertion(Status == l_false),
+    z3_get_unsat_core(H, Core),
+    msort(Core, Sorted),
+    assertion(Sorted == [p, q]).                            % r is not needed
+
+test(negated_assumption, [setup(tracked(H)), cleanup(z3_free_handle(H))]) :-
+    z3_check_assumptions(H, [p, not(q), r], Status),
+    assertion(Status == l_true).
+
+test(assumptions_are_temporary, [setup(tracked(H)), cleanup(z3_free_handle(H))]) :-
+    z3_check_assumptions(H, [p, q], l_false),
+    z3_check(H, Status),                                    % without them, satisfiable again
+    assertion(Status == l_true).
+
+test(no_assumptions, [setup(tracked(H)), cleanup(z3_free_handle(H))]) :-
+    z3_check_assumptions(H, [], Status),
+    assertion(Status == l_true).
+
+test(not_literals, [setup(tracked(H)), cleanup(z3_free_handle(H)),
+                    forall(member(A, [(x:int) > 3, undeclared_atom, and(p, q)]))]) :-
+    catch(z3_check_assumptions(H, [A], _), error(E, _), true),
+    assertion(E == domain_error(boolean_literal, A)).
+
+test(bad_lists, [setup(tracked(H)), cleanup(z3_free_handle(H)),
+                 forall(member(L-Error, [[p|_]-instantiation_error, foo-type_error(list, foo)]))]) :-
+    catch(z3_check_assumptions(H, L, _), error(E, _), true),
+    assertion(E =@= Error).
+
+% Interruptible, like z3_check.
+test(time_limit, [setup((z3_new_handle(H), pigeonhole(H, 9), z3_assert(H, implies(s:bool, true)))),
+                  cleanup(z3_free_handle(H))]) :-
+    get_time(T0),
+    catch(call_with_time_limit(0.2, z3_check_assumptions(H, [s], _)), E, true),
+    get_time(T1),
+    assertion(E == time_limit_exceeded),
+    assertion(T1 - T0 < 0.6).
+
+:- end_tests(unsat_cores).

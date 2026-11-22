@@ -50,7 +50,12 @@ main :- current_prolog_flag(argv, Argv), main(Argv).
 % ---------------------------------------------------------------------------- workload
 
 workload(N) :-
-    forall(between(1, N, I), iteration(I)).
+    forall(between(1, N, I),
+           (   iteration(I)
+           ->  true
+           ;   format("FAIL: workload iteration ~w failed (a goal in iteration/1 no longer succeeds)~n", [I]),
+               halt(2)
+           )).
 
 % One iteration with its own handle, so everything a handle owns is created and freed each time.
 iteration(I) :-
@@ -72,6 +77,9 @@ iteration(I) :-
     z3_interrupt(H),                          % no check running: no effect
     z3_check(H, l_true),
     z3_reason_unknown(H, _),
+    z3_assert(H, implies(t1:bool, (core_x:int) < 0)),
+    z3_check_assumptions(H, [t1], _),
+    z3_get_unsat_core(H, _),
     z3_model_lists(H, _),
     z3_model_assocs(H, _),
     z3_get_model(H, M),

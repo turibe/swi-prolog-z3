@@ -302,6 +302,20 @@ This code can be used on stand-alone basis, plugging in any monotonic `check` or
 For this Z3 integration, we use `z3_push`.
 See [quickexplain.pl](https://github.com/turibe/swi-prolog-z3/blob/main/quickexplain.pl).
 
+- Z3 can also explain inconsistency directly, with unsat cores. `z3_unsat_core(Formulas, Core)` gives a
+subset of `Formulas` that is inconsistent with the formulas pushed so far (and fails if there is none);
+Z3 keeps cores small, but they need not be minimal. `z3_minimal_core(Formulas, Core)` makes the core
+minimal with QuickXplain, which gives the same result as `qexplain(z3_push, Formulas, Core)`, much
+faster when only a few of many formulas conflict:
+
+```prolog
+?- z3_push(x:int > 5), z3_unsat_core([x < 3, y:int = 1], Core).
+Core = [x<3].
+```
+
+At the lower level, `z3_check_assumptions(Handle, Literals, Status)` checks under Boolean assumptions,
+and `z3_get_unsat_core(Handle, Core)` gives the ones an `l_false` result used.
+
 ## Documentation
 
 From swipl, run

@@ -61,7 +61,13 @@ call from another thread. This would complete the work on busy handles: a thread
 can already be interrupted (by `call_with_time_limit/2`, `thread_signal/2` or Ctrl-C), but a running
 `z3_check` cannot, since it only sees Prolog signals after Z3 returns.
 
-### 4. Unsat cores and checking under assumptions (moderate)
+### 4. Unsat cores and checking under assumptions (done)
+
+There is now `z3_unsat_core/2` and `z3_minimal_core/2` in `z3.pl`, and `z3_check_assumptions/3` and
+`z3_get_unsat_core/2` at the lower level; see the README. On 203 formulas with a conflict among 3 of
+them, `z3_minimal_core/2` gives the same result as QuickXplain alone, about 14 times faster.
+What follows describes the plan as it was.
+
 
 `Z3_solver_assert_and_track`, `Z3_solver_check_assumptions` and `Z3_solver_get_unsat_core`.
 `quickexplain.pl` finds minimal conflicting subsets with repeated push, check and pop; a native unsat
