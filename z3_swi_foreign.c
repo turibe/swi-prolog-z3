@@ -170,6 +170,7 @@ struct HandleStruct {
   decl_map declarations; // standard declarations
   long handle_id; // used as a unique ID for the context
   Z3_sort int_sort, bool_sort, real_sort, string_sort;
+  unsigned timeout_ms;          // from z3_set_timeout/2, 0 for none; also given to optimizers
 
   pthread_mutex_t lock;          // held for the whole of any predicate that uses this handle
   atomic_int refcount;           // handle blob + one per live model blob
@@ -520,6 +521,7 @@ static int get_obj(term_t t, PL_blob_t *type, handle h, void **ptr) {
 struct check_job {
   Z3_context ctx;
   Z3_solver solver;
+  Z3_optimize optimize;      // if not NULL, check this instead of the solver
   unsigned num_assumptions;  // 0 for a plain check
   Z3_ast *assumptions;
   Z3_lbool result;
@@ -530,7 +532,9 @@ struct check_job {
 
 static void *run_check(void *arg) {
   struct check_job *job = arg;
-  Z3_lbool result = job->num_assumptions == 0
+  Z3_lbool result = job->optimize != NULL
+    ? Z3_optimize_check(job->ctx, job->optimize, 0, NULL)
+    : job->num_assumptions == 0
     ? Z3_solver_check(job->ctx, job->solver)
     : Z3_solver_check_assumptions(job->ctx, job->solver, job->num_assumptions, job->assumptions);
   pthread_mutex_lock(&job->mutex);
@@ -541,10 +545,11 @@ static void *run_check(void *arg) {
   return NULL;
 }
 
-// As interruptible_check, under the given assumptions (Z3_solver_check_assumptions).
-static int interruptible_check_assumptions(handle h, unsigned n, Z3_ast *assumptions, Z3_lbool *result) {
-  struct check_job job = { .ctx = h->ctx, .solver = h->solver, .num_assumptions = n, .assumptions = assumptions,
-                           .result = Z3_L_UNDEF, .done = FALSE };
+// Runs the check described by job (see interruptible_check) on a helper thread, handling signals.
+static int interruptible_run(handle h, struct check_job *job_in, Z3_lbool *result) {
+  struct check_job job = *job_in;
+  job.result = Z3_L_UNDEF;
+  job.done = FALSE;
   pthread_mutex_init(&job.mutex, NULL);
   pthread_cond_init(&job.finished, NULL);
   pthread_attr_t attr;
@@ -583,8 +588,20 @@ static int interruptible_check_assumptions(handle h, unsigned n, Z3_ast *assumpt
   return !raised;
 }
 
+// As interruptible_check, under the given assumptions (Z3_solver_check_assumptions).
+static int interruptible_check_assumptions(handle h, unsigned n, Z3_ast *assumptions, Z3_lbool *result) {
+  struct check_job job = { .ctx = h->ctx, .solver = h->solver, .num_assumptions = n, .assumptions = assumptions };
+  return interruptible_run(h, &job, result);
+}
+
 static int interruptible_check(handle h, Z3_lbool *result) {
   return interruptible_check_assumptions(h, 0, NULL, result);
+}
+
+// As interruptible_check, for an optimizer (Z3_optimize_check).
+static int interruptible_optimize(handle h, Z3_optimize optimize, Z3_lbool *result) {
+  struct check_job job = { .ctx = h->ctx, .optimize = optimize };
+  return interruptible_run(h, &job, result);
 }
 
 
@@ -1844,6 +1861,7 @@ static foreign_t z3_set_timeout_foreign_locked(handle h, term_t handle_term, ter
   // Z3 has no explicit "no timeout" value; its default is the largest unsigned.
   Z3_params_set_uint(ctx, params, Z3_mk_string_symbol(ctx, "timeout"), ms == 0 ? UINT_MAX : (unsigned) ms);
   Z3_solver_set_params(ctx, h->solver, params);
+  h->timeout_ms = (unsigned) ms;
   Z3_params_dec_ref(ctx, params);
   return TRUE;
 }
@@ -1970,6 +1988,174 @@ static foreign_t z3_get_unsat_core_foreign_locked(handle h, term_t handle_term, 
   }
   Z3_ast_vector_dec_ref(ctx, core);
   return ok && PL_unify(core_term, list);
+}
+
+/*
+  One-shot optimization. Creates a Z3 optimizer, asserts the solver's assertions in it, and adds
+  the Objectives, in priority order (lexicographic, Z3's default):
+    minimize(T), maximize(T)   an arithmetic or bit-vector term T;
+    soft(F), soft(F, Weight)   a formula F that should hold, with a positive integer or float Weight
+                               (1 by default). All soft constraints together form one objective, at
+                               the position of the first one, minimizing the total weight violated.
+  Status is the check's status. After l_true, Values has one value per objective, in order: the
+  optimum of T, or for soft(F, ...) whether F holds in the model; and Model is a model blob, as from
+  z3_get_model/2. Otherwise Values is [] and Model is none. An optimum can be infinite or not
+  attained: values can contain oo (infinity) and epsilon (an infinitesimal), as in -1*oo for an
+  unbounded minimum, or epsilon for the infimum of x > 0. The optimizer is freed before returning.
+  The check is interruptible, like z3_check, and uses the timeout from z3_set_timeout/2.
+  Raises domain_error(z3_objective, O) for an objective of another form, and domain_error for a
+  weight that is not positive.
+*/
+enum objective_kind { OBJECTIVE_MINIMIZE, OBJECTIVE_MAXIMIZE, OBJECTIVE_SOFT };
+
+struct objective {
+  enum objective_kind kind;
+  unsigned index;   // from Z3_optimize_minimize/maximize
+  Z3_ast formula;   // the soft constraint
+};
+
+static foreign_t z3_optimize_foreign_locked(handle h, term_t handle_term, term_t objectives,
+                                            term_t status_term, term_t values_term, term_t model_term);
+
+foreign_t z3_optimize_foreign(term_t handle_term, term_t objectives, term_t status_term, term_t values_term, term_t model_term) {
+  handle h;
+  if (!lock_handle(handle_term, &h)) return FALSE;
+  foreign_t locked_rval = z3_optimize_foreign_locked(h, handle_term, objectives, status_term, values_term, model_term);
+  unlock_handle(h);
+  return locked_rval;
+}
+
+// Adds one objective term to o, filling in *obj. FALSE, with an exception or a printed message, if it is bad.
+static int add_objective(handle h, Z3_optimize o, term_t objective, struct objective *obj) {
+  Z3_context ctx = h->ctx;
+  atom_t name;
+  size_t arity;
+  if (!PL_get_name_arity(objective, &name, &arity)) {
+    return PL_domain_error("z3_objective", objective);
+  }
+  const char *n = PL_atom_nchars(name, NULL);
+  term_t arg = PL_new_term_ref();
+  if ((strcmp(n, "minimize") == 0 || strcmp(n, "maximize") == 0) && arity == 1) {
+    if (!PL_get_arg(1, objective, arg)) return FALSE;
+    Z3_ast t = term_to_ast(h, h->declarations, arg);
+    if (t == NULL) return FALSE;
+    Z3_sort_kind k = Z3_get_sort_kind(ctx, Z3_get_sort(ctx, t));
+    if (k != Z3_INT_SORT && k != Z3_REAL_SORT && k != Z3_BV_SORT) {
+      ERROR("%s: the objective should be an arithmetic or bit-vector term\n", n);
+      return FALSE;
+    }
+    obj->kind = n[1] == 'i' ? OBJECTIVE_MINIMIZE : OBJECTIVE_MAXIMIZE;
+    obj->index = obj->kind == OBJECTIVE_MINIMIZE ? Z3_optimize_minimize(ctx, o, t) : Z3_optimize_maximize(ctx, o, t);
+    return TRUE;
+  }
+  if (strcmp(n, "soft") == 0 && (arity == 1 || arity == 2)) {
+    if (!PL_get_arg(1, objective, arg)) return FALSE;
+    Z3_ast f = term_to_ast(h, h->declarations, arg);
+    if (f == NULL) return FALSE;
+    if (Z3_get_sort_kind(ctx, Z3_get_sort(ctx, f)) != Z3_BOOL_SORT) {
+      ERROR("soft: the constraint should be a formula\n");
+      return FALSE;
+    }
+    char *weight = "1";
+    if (arity == 2) {
+      term_t w = PL_new_term_ref();
+      double d;
+      if (!PL_get_arg(2, objective, w)) return FALSE;
+      if (!(PL_is_integer(w) || PL_is_float(w))) return PL_type_error("number", w);
+      if (!PL_get_float(w, &d) || !(d > 0)) return PL_domain_error("positive_number", w);
+      if (!PL_get_chars(w, &weight, CVT_INTEGER | CVT_FLOAT)) return FALSE;
+    }
+    obj->kind = OBJECTIVE_SOFT;
+    obj->formula = f;
+    Z3_optimize_assert_soft(ctx, o, f, weight, Z3_mk_string_symbol(ctx, "soft"));
+    return TRUE;
+  }
+  return PL_domain_error("z3_objective", objective);
+}
+
+static foreign_t z3_optimize_foreign_locked(handle h, term_t handle_term, term_t objectives,
+                                            term_t status_term, term_t values_term, term_t model_term) {
+  (void) handle_term;
+  Z3_context ctx = h->ctx;
+  size_t n;
+  switch (PL_skip_list(objectives, 0, &n)) {
+  case PL_LIST: break;
+  case PL_PARTIAL_LIST: return PL_instantiation_error(objectives);
+  default: return PL_type_error("list", objectives);
+  }
+  if (!require_ground(objectives)) return FALSE;
+
+  Z3_optimize o = Z3_mk_optimize(ctx);
+  Z3_optimize_inc_ref(ctx, o);
+  if (h->timeout_ms != 0) {
+    Z3_params params = Z3_mk_params(ctx);
+    Z3_params_inc_ref(ctx, params);
+    Z3_params_set_uint(ctx, params, Z3_mk_string_symbol(ctx, "timeout"), h->timeout_ms);
+    Z3_optimize_set_params(ctx, o, params);
+    Z3_params_dec_ref(ctx, params);
+  }
+  Z3_ast_vector assertions = Z3_solver_get_assertions(ctx, h->solver);
+  Z3_ast_vector_inc_ref(ctx, assertions);
+  for (unsigned i = 0; i < Z3_ast_vector_size(ctx, assertions); i++) {
+    Z3_optimize_assert(ctx, o, Z3_ast_vector_get(ctx, assertions, i));
+  }
+  Z3_ast_vector_dec_ref(ctx, assertions);
+
+  struct objective *objs = malloc((n > 0 ? n : 1) * sizeof(struct objective));
+  int ok = objs != NULL;
+  if (!ok) PL_resource_error("memory");
+  term_t head = PL_new_term_ref(), tail = PL_copy_term_ref(objectives);
+  for (size_t i = 0; ok && PL_get_list(tail, head, tail); i++) {
+    ok = add_objective(h, o, head, &objs[i]);
+  }
+
+  Z3_lbool status = Z3_L_UNDEF;
+  if (ok) ok = interruptible_optimize(h, o, &status); // FALSE: a signal raised an exception
+
+  term_t values = PL_new_term_ref();
+  term_t model = PL_new_term_ref();
+  PL_put_nil(values);
+  if (ok && status == Z3_L_TRUE) {
+    Z3_model m = Z3_optimize_get_model(ctx, o);
+    term_t value = PL_new_term_ref();
+    for (size_t i = n; ok && i > 0; i--) { // build the list from the end
+      struct objective *obj = &objs[i - 1];
+      ok = PL_put_variable(value);
+      if (obj->kind == OBJECTIVE_SOFT) {
+        Z3_ast holds;
+        ok = ok && Z3_model_eval(ctx, m, obj->formula, true, &holds)
+                && z3_ast_to_term_internal(ctx, holds, value);
+      }
+      else {
+        Z3_ast bound = obj->kind == OBJECTIVE_MINIMIZE ? Z3_optimize_get_lower(ctx, o, obj->index)
+                                                       : Z3_optimize_get_upper(ctx, o, obj->index);
+        ok = ok && z3_ast_to_term_internal(ctx, bound, value);
+      }
+      ok = ok && PL_cons_list(values, value, values);
+    }
+    if (ok) {
+      // A model blob, as in z3_get_model; it keeps a reference to h, and outlives the optimizer.
+      model_ref mr = malloc(sizeof(struct ModelStruct));
+      ok = mr != NULL;
+      if (!ok) PL_resource_error("memory");
+      else {
+        Z3_model_inc_ref(ctx, m);
+        mr->model = m;
+        mr->h = h;
+        atomic_fetch_add(&h->refcount, 1);
+        ok = PL_unify_blob(model, mr, sizeof(*mr), &z3_model_blob);
+      }
+    }
+  }
+  else if (ok) {
+    ok = PL_put_atom_chars(model, "none");
+  }
+  free(objs);
+  Z3_optimize_dec_ref(ctx, o);
+  return ok
+    && z3_lbool_to_atom(status, status_term)
+    && PL_unify(values_term, values)
+    && PL_unify(model_term, model);
 }
 
 
@@ -3594,6 +3780,7 @@ install_t install_z3_swi_foreign(void)
   PRED("z3_interrupt", 1, z3_interrupt_foreign, 0); // +handle; from another thread
   PRED("z3_check_assumptions", 3, z3_check_assumptions_foreign, 0); // +handle, +literals, -status
   PRED("z3_get_unsat_core", 2, z3_get_unsat_core_foreign, 0); // +handle, -literals
+  PRED("z3_optimize", 5, z3_optimize_foreign, 0); // +handle, +objectives, -status, -values, -model
 
   PRED("z3_get_model", 2, z3_get_model_foreign, 0); // +handle, -model
   PRED("z3_model_eval", 5, z3_model_eval_foreign, 0); // +handle, +model, +formula, +completion_flag, -value

@@ -17,6 +17,8 @@
               z3_declare_enum/3,           %% +handle, +name, +list_of_values
               z3_model_eval/5,             %% +handle, +model, +formula, +completion_flag, -value
               z3_model_lists/2,            %% +handle, -map with lists for constants and functions
+              z3_model_lists/3,            %% +handle, +model, -map: the same, for a given model
+              z3_model_assocs/3,           %% +handle, +model, -map: with assocs, for a given model
               z3_model_assocs/2,           %% +handle, -map with assocs for constants and functions
               z3_reset_declarations/1,     %% +handle  Resets all declarations, does not clear solvers.
               z3_solver_assertions/2,      %% +handle, -assertions
@@ -27,6 +29,7 @@
               z3_interrupt/1,              %% +handle, from another thread
               z3_check_assumptions/3,      %% +handle, +literals, -status
               z3_get_unsat_core/2,         %% +handle, -literals
+              z3_optimize/5,               %% +handle, +objectives, -status, -values, -model
               z3_get_model/2,              %% +handle, -model
               z3_solver_pop/3,             %% +handle, +N, -new_scopes pop the solver N times
               z3_solver_push/2,            %% +handle, -new_scopes     push the solver one time
@@ -186,6 +189,20 @@ prolog:message(z3_message(F,L)) --> {swritef(S, F, L)}, [S].
 %  unsatisfiability used. Z3 keeps cores small, but they need not be minimal.
 %  (Defined in `z3_swi_foreign.c`.)
 
+%! z3_optimize(+Handle, +Objectives, -Status, -Values, -Model) is det.
+%  One-shot optimization over the assertions of Handle's solver, which is not changed.
+%  Objectives is a list, in priority order (lexicographic), of `minimize(T)` and `maximize(T)` for an
+%  arithmetic or bit-vector term T, and `soft(F)` and `soft(F, Weight)` for a formula F that should
+%  hold, with a positive integer or float Weight (default 1). All soft constraints together form one
+%  objective, at the position of the first one, minimizing the total weight of those violated.
+%  After Status `l_true`, Values has one value per objective: the optimum of T, or for a soft
+%  constraint whether it holds (`true` or `false`); and Model is a model, as from z3_get_model/2.
+%  Otherwise Values is `[]` and Model is `none`. Optima can be infinite or not attained, so values
+%  can contain `oo` (infinity) and `epsilon` (an infinitesimal): `-1*oo` for an unbounded minimum,
+%  or `epsilon` for the infimum of x > 0. Interruptible, like z3_check/2, and uses the timeout set
+%  with z3_set_timeout/2. Raises `domain_error(z3_objective, O)` for an objective of another form.
+%  (Defined in `z3_swi_foreign.c`.)
+
 %! z3_solver_pop(+Handle, +N, -Scopes) is det.
 %  Pops Handle's solver `N` times, and reports the new number of Scopes.
 %  Raises `domain_error(not_less_than_zero, N)` if N is negative, and
@@ -208,6 +225,8 @@ z3_declare_function(H, F, T) :- F == A/0, z3_declare_function(H, A, T).
 z3_declare_function(H, F, T) :- z3_declare_function(H, F, T, _C).
 % (The returned declaration, a z3_ast blob, is only useful for debugging, so we hide it here.)
 
+%! z3_model_lists(+Handle, +Model, -Map) is det.
+%  Like z3_model_lists/2, for a given Model of Handle, such as one from z3_get_model/2 or z3_optimize/5.
 z3_model_lists(H, M, Map) :- z3_model_functions(H, M, F),
                              z3_model_constants(H, M, C),
                              sort(F, FS),
@@ -215,6 +234,8 @@ z3_model_lists(H, M, Map) :- z3_model_functions(H, M, F),
                              Map = model{functions:FS, constants:CS}.
 
 
+%! z3_model_assocs(+Handle, +Model, -Map) is det.
+%  Like z3_model_assocs/2, for a given Model of Handle.
 z3_model_assocs(H, M, Map) :- z3_model_functions(H, M, F),
                               z3_model_constants(H, M, C),
                               pair_list_to_assoc(F, Fmap),
@@ -1413,3 +1434,92 @@ test(time_limit, [setup((z3_new_handle(H), pigeonhole(H, 9), z3_assert(H, implie
     assertion(T1 - T0 < 0.6).
 
 :- end_tests(unsat_cores).
+
+% One-shot optimization (z3_optimize/5).
+
+:- begin_tests(optimization).
+
+:- use_module(examples/pigeonhole).
+
+% Optimizes Objectives subject to Formulas; Constants are the model's constants.
+optimize(Formulas, Objectives, Status, Values, Constants) :-
+    setup_call_cleanup(z3_new_handle(H),
+                       ( maplist(z3_assert(H), Formulas),
+                         z3_optimize(H, Objectives, Status, Values, M),
+                         ( M == none -> Constants = none ; z3_model_lists(H, M, Model), Constants = Model.constants ) ),
+                       z3_free_handle(H)).
+
+box([(x:int) >= 0, (y:int) >= 0, (x:int) + (y:int) =< 10]).
+
+test(maximize) :-
+    box(B),
+    optimize(B, [maximize(2*x + y)], Status, Values, C),
+    assertion(Status == l_true),
+    assertion(Values == [20]),
+    assertion(C == [x = 10, y = 0]).
+
+% Objectives are lexicographic: earlier ones take priority.
+test(priority_order, [forall(member(Os-Expected, [[maximize(x), maximize(y)]-[x = 10, y = 0],
+                                                    [maximize(y), maximize(x)]-[x = 0, y = 10]]))]) :-
+    box(B),
+    optimize(B, Os, l_true, _, C),
+    assertion(C == Expected).
+
+test(soft_weights, [forall(member(Os-Values-Expected, [[soft(p, 2), soft(q)]-[true, false]-[p = true, q = false],
+                                                         [soft(p, 0.5), soft(q, 1.5)]-[false, true]-[p = false, q = true]]))]) :-
+    optimize([not(and(p:bool, q:bool))], Os, l_true, Vs, C),
+    assertion(Vs == Values),
+    assertion(C == Expected).
+
+test(infinite_and_infinitesimal, [forall(member(Fs-O-Value, [[(x:int) > 0]-maximize(x)-oo,
+                                                               [(x:int) < 0]-minimize(x)-(-1*oo),
+                                                               [(x:real) > 0.0]-minimize(x)-epsilon]))]) :-
+    optimize(Fs, [O], l_true, [V], _),
+    assertion(V == Value).
+
+test(bit_vectors) :-
+    optimize([(b:bv(8)) = b], [maximize(b)], l_true, Values, _),
+    assertion(Values == [255]).
+
+test(unsatisfiable) :-
+    optimize([(x:int) > 0, (x:int) < 0], [maximize(x)], Status, Values, C),
+    assertion(Status == l_false),
+    assertion(Values == []),
+    assertion(C == none).
+
+test(solver_unchanged, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))]) :-
+    z3_assert(H, (x:int) > 0),
+    z3_optimize(H, [maximize(x), soft((x:int) < 5)], _, _, _),
+    z3_solver_assertions(H, As),
+    assertion(As == [x > 0]),
+    z3_check(H, l_true).
+
+% pigeonhole(H, 9) takes about 1.3 s even without objectives.
+test(timeout, [setup((z3_new_handle(H), pigeonhole(H, 9))), cleanup(z3_free_handle(H))]) :-
+    z3_set_timeout(H, 50),
+    z3_optimize(H, [soft(p_1_1:bool)], Status, Values, M),
+    assertion(Status == l_undef),
+    assertion(Values == []),
+    assertion(M == none).
+
+test(time_limit, [setup((z3_new_handle(H), pigeonhole(H, 9))), cleanup(z3_free_handle(H))]) :-
+    get_time(T0),
+    catch(call_with_time_limit(0.2, z3_optimize(H, [soft(p_1_1:bool)], _, _, _)), E, true),
+    get_time(T1),
+    assertion(E == time_limit_exceeded),
+    assertion(T1 - T0 < 0.6).
+
+bad_objective([foo(x)], domain_error(z3_objective, foo(x))).
+bad_objective([soft(p:bool, -1)], domain_error(positive_number, -1)).
+bad_objective([soft(p:bool, 0)], domain_error(positive_number, 0)).
+bad_objective([soft(p:bool, foo)], type_error(number, foo)).
+bad_objective(not_a_list, type_error(list, not_a_list)).
+
+test(errors, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)), forall(bad_objective(Os, Error))]) :-
+    catch(z3_optimize(H, Os, _, _, _), error(E, _), true),
+    assertion(E == Error).
+
+test(not_a_number_objective, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)), fail]) :-
+    z3_optimize(H, [maximize(p:bool)], _, _, _).
+
+:- end_tests(optimization).
