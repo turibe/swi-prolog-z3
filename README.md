@@ -107,6 +107,9 @@ true.
 ```
 
 This makes `algebraic/2` a reserved name, like the other built-in operations.
+[examples/algebraic_numbers.pl](examples/algebraic_numbers.pl) has worked examples: the golden ratio, cube and square roots, a root that cannot be written with
+radicals, and exact values against floats. Run it with
+`./examples/algebraic_numbers.pl`.
 
 6. If you prefer, run `use_module(stateful_repl)` and add assertions interactively:
 ```bash
@@ -254,6 +257,10 @@ for a timeout, or `interrupted` after `z3_interrupt/1`.
 Status = l_undef, Reason = timeout.       % or canceled, depending on which part of Z3 stops
 ```
 
+[examples/timeouts.pl](examples/timeouts.pl) has worked examples: a timeout, `call_with_time_limit/2`, `z3_interrupt/1` from another thread, and
+the solver still working afterwards, all on a pigeonhole problem. Run it with
+`./examples/timeouts.pl`.
+
 ### Optimization
 
 `z3_optimize(Objectives, Model)` finds a model of the formulas pushed so far that is optimal for
@@ -278,6 +285,10 @@ reals. `z3_optimize/2` fails if the formulas are inconsistent, or if Z3 cannot d
 timeout). At the lower level, `z3_optimize(Handle, Objectives, Status, Values, Model)` returns the status,
 the values and a model of the handle's solver.
 
+[examples/optimization.pl](examples/optimization.pl) has worked examples: a production plan, a knapsack, lexicographic priorities, weighted
+preferences, and unbounded objectives. Run it with
+`./examples/optimization.pl`.
+
 ### Arrays
 
 Arrays have the sort `array(IndexSort, ValueSort)`, and are used with `select/2`, `store/3` and
@@ -291,6 +302,10 @@ M = model{constants:[a=store(const_array(int, 7), 1, 5)], functions:[]}.
 
 Here every element of `a` is 7, except the one at index 1. (Z3 chose 7 for the default, since only
 indices 1 and 2 are constrained.)
+
+[examples/arrays.pl](examples/arrays.pl) has worked examples: finding arrays, swapping elements, which stores commute, a lookup table,
+and a matrix as an array of arrays. Run it with
+`./examples/arrays.pl`.
 
 ### Quantifiers
 
@@ -346,6 +361,8 @@ constants or functions (with the arities shown, where they matter).
   `str_prefixof/2` and `str_suffixof/2` (prefix or suffix first), `str_indexof/3` (string, substring, start;
   -1 if absent), `str_replace/3` (the first occurrence), `str_lt/2` and `str_le/2` (lexicographic),
   `str_to_int/1` (-1 unless all digits), `int_to_str/1` ("" for negative numbers).
+  [examples/strings.pl](examples/strings.pl) has worked examples: a password, a word equation, splitting an
+  email address, digits, Unicode and lexicographic order.
 - Bit vectors:
   - arithmetic: `bvadd`, `bvsub`, `bvmul`, `bvudiv`, `bvsdiv`, `bvurem`, `bvsrem`, `bvsmod`, `bvneg`;
   - bitwise: `bvand`, `bvor`, `bvxor`, `bvnand`, `bvnor`, `bvxnor`, `bvnot`, `bvredand`, `bvredor`;
@@ -389,7 +406,7 @@ Core)` is `z3_unsat_core` followed by `z3_explain`. With quantifiers, their cons
 subsets may each take until the timeout, while `z3_unsat_core/2` stays fast.
 
 [examples/explanations.pl](examples/explanations.pl) has worked examples: scheduling a meeting and
-configuring a car within a budget, explained, relaxed and optimized. Run it with
+configuring a car within a budget, explained, relaxed and optimized, and a quick unsat core. Run it with
 `./examples/explanations.pl`.
 
 At the lower level, `z3_check_assumptions(Handle, Literals, Status)` checks under Boolean assumptions,

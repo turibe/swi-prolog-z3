@@ -138,6 +138,23 @@ answer(car_weighted, options(Options)-price(Price)) :-
     memberchk(price = Price, M.constants).
 
 % ------------------------------------------------------------------------------------------------
+% A quick first answer. z3_unsat_core/2 asks Z3 once, so it is fast, even on large problems. Its core
+% need not be minimal: it may include formulas that the conflict does not need. For small problems
+% like this one it usually is minimal already; z3_explain/2 on the core checks, and trims it if not.
+% (z3_minimal_core/2 does both steps.)
+
+question(meeting_unsat_core,
+         "Which requests does a quick unsat core blame, and does z3_explain trim any of them?").
+
+answer(meeting_unsat_core, core(CoreNames)-minimal(MinimalNames)) :-
+    meeting_requests(Requests),
+    pairs_values(Requests, Formulas),
+    z3_unsat_core(Formulas, Core),
+    names(Requests, Core, CoreNames),
+    z3_explain(Core, Minimal),
+    names(Requests, Minimal, MinimalNames).
+
+% ------------------------------------------------------------------------------------------------
 % Why z3_explain/2 rather than QuickXplain with z3_push. These four formulas conflict, and all four
 % are needed: f(a) = f(b), with a = 1 and b = 2, says f(1) = f(2).
 
@@ -162,6 +179,7 @@ expected(meeting_relaxed, kept([office_hours, alice, carol, lunch])-at(_)).
 expected(car_conflict, [budget, sport]).
 expected(car_relaxed, kept([budget, sunroof, leather])-price(29000)).
 expected(car_weighted, options([sunroof, leather])-price(29000)).
+expected(meeting_unsat_core, core(_)-minimal([alice, bob])).
 expected(why_z3_explain, [qexplain-[f(a) = f(b), a = 1], z3_explain-[f(a) = f(b), a = 1, b = 2, f(1) <> f(2)]]).
 
 test(answers, [forall(expected(Name, Expected))]) :-
@@ -172,5 +190,10 @@ test(answers, [forall(expected(Name, Expected))]) :-
 test(meeting_time) :-
     example(meeting_relaxed, kept(_)-at(H)),
     assertion((H >= 13, H =< 17, H =\= 15, H =\= 12)).
+
+% The unsat core contains the minimal one.
+test(unsat_core_contains_minimal) :-
+    example(meeting_unsat_core, core(Core)-minimal(Minimal)),
+    assertion(subset(Minimal, Core)).
 
 :- end_tests(explanation_examples).
