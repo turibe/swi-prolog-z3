@@ -20,6 +20,7 @@
               z3_eval/3,               % +Expression, +Completion, -Result  The same, with a completion flag
               z3_is_consistent/1,      % +Formula  Formula is consistent with the formulas pushed. Fails if l_undef.
               z3_is_implied/1,         % +Formula  Formula follows from the formulas pushed. Fails if l_undef.
+              z3_label/1,              % +Vars  Binds Vars to values from models, a new solution on backtracking
               z3_model/1,              % -Model  A model of the formulas pushed. Fails if status is l_false.
               z3_model_assocs/1,       % -Model  The same, with assoc maps (less readable)
               z3_push/1,               % +Formula  Pushes Formula; fails if l_false or ill-typed
@@ -192,7 +193,7 @@ attribute_goals(V) :- get_attr(V, z3, Attr),
 
 %% Worth keeping an inverse map of "fake Z3 constants" to Prolog vars? Might need it for eval...
 attr_unify_hook(Attr, Var) :- get_attr(Var, z3, Other), !,
-                              report(informational, "Running hook for %w", [Other]),
+                              debug(z3(unify), "Unifying two Z3 variables, ~w and ~w", [Attr, Other]),
                               z3_push(==(Attr, Other), R),
                               \+ R = l_false.
 attr_unify_hook(Attr, Var) :- var(Var), !,
@@ -608,6 +609,36 @@ internal_assert_and_check_list(Solver, List, Status) :-
     Conj =.. [and | List],
     internal_assert_and_check(Solver, Conj, Status).
 */
+
+%! z3_label(+Vars) is nondet.
+%  Binds each Prolog variable in Vars to its value in a model of the formulas pushed so far, so that the
+%  variables satisfy them; on backtracking, gives another solution, with a different value for at least
+%  one of the variables, until there are no more. Elements of Vars that are already bound are left
+%  alone. Each unbound one must occur in a formula pushed so far (that gives it its Z3 constant);
+%  otherwise raises instantiation_error. Fails if the formulas are inconsistent, or Z3 cannot decide.
+%  With infinitely many solutions (x > 0 over the integers), it never runs out. Values of uninterpreted
+%  sorts, such as 'foo!val!0', do not work: given back to Z3, they are read as new constants.
+z3_label(Vars) :-
+    must_be(list, Vars),
+    include(var, Vars, Free),
+    maplist(variable_constant, Free, Constants),
+    label_constants(Free, Constants).
+
+variable_constant(V, C) :-
+    (   get_attr(V, z3, C)
+    ->  true
+    ;   instantiation_error(V)
+    ).
+
+label_constants([], []) :- !.
+label_constants(Vars, Constants) :-
+    z3_eval(Constants, true, Values),     % true: values even for constants no formula constrains
+    (   Vars = Values                     % binding pushes each Constant == Value (attr_unify_hook/2)
+    ;   maplist([C, V, not(C = V)]>>true, Constants, Values, Different),
+        Another =.. [or, false | Different],
+        z3_push(Another),                 % undone on backtracking, like any push
+        label_constants(Vars, Constants)
+    ).
 
 %! z3_push_and_print(+Formula, -Status)
 %  Pushes the formula, and prints a model.
@@ -1359,6 +1390,64 @@ test(type_error) :-
 :- end_tests(z3pl_arrays).
 
 % Quantifiers through z3.pl: bound variables are typed in scope, and not declared.
+
+:- begin_tests(z3pl_label, [setup(reset_globals), cleanup(free_globals)]).
+
+test(all_solutions) :-
+    z3_reset,
+    findall(X-Y, (z3_push(X:int > 0 and Y:int > 0 and X + Y = 5), z3_label([X, Y])), L),
+    msort(L, Sorted),
+    assertion(Sorted == [1-4, 2-3, 3-2, 4-1]).
+
+test(bound_elements_left_alone) :-
+    z3_reset,
+    findall(X, (z3_push(X:int > 2 and X < 5), Y = 1, z3_label([X, Y])), L),
+    msort(L, Sorted),
+    assertion(Sorted == [3, 4]).
+
+test(only_the_given_variables) :-
+    z3_reset,
+    findall(X-U, (z3_push(X:int >= 0 and X < 2 and U:int > 7), z3_label([X])), L),
+    assertion(length(L, 2)),
+    forall(member(_-U, L), assertion(var(U))).
+
+test(irrational) :-
+    z3_reset,
+    z3_push(Q:real * Q = 2.0 and Q > 0.0),
+    z3_label([Q]),
+    assertion(Q = algebraic(_, root([-2, 0, 1], 2))).
+
+test(strings) :-
+    z3_reset,
+    findall(T, (z3_push(str_len(T:string) = 1 and str_lt(T, "b") and str_lt("_", T)), z3_label([T])), L),
+    msort(L, Sorted),
+    assertion(Sorted == ["`", "a"]).
+
+test(inconsistent, [fail]) :-
+    z3_reset,
+    z3_push(X:int > 1, _),
+    z3_push(X < 0, _),
+    z3_label([X]).
+
+test(unconstrained_variable, [error(instantiation_error)]) :-
+    z3_reset,
+    z3_label([_]).
+
+test(nothing_to_label, [true(N == 1)]) :-
+    z3_reset,
+    aggregate_all(count, z3_label([]), N).
+
+% Labeling pushes formulas, which are undone on backtracking: afterwards, the solver is as it was.
+test(solver_unchanged) :-
+    z3_reset,
+    z3_push(x:int > 0 and x < 3),
+    raw_solver_scopes(S0),
+    \+ \+ (z3_push(X:int = x), findall(X, z3_label([X]), _)),
+    z3_push(true),
+    raw_solver_scopes(S1),
+    assertion(S1 =:= S0 + 1).
+
+:- end_tests(z3pl_label).
 
 :- begin_tests(z3pl_quantifiers, [setup((reset_globals, z3_set_timeout(2000))),
                                   cleanup((z3_set_timeout(0), free_globals))]).

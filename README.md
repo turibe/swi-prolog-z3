@@ -209,6 +209,25 @@ z3_push(X > b), z3_push(b > c), member(X, [a,b,c,d])
 ```
 will only succeed for `X = a` and `X = d`.
 
+So Prolog can generate values, with `member/2`, `between/3` or anything else, and Z3 rejects each one
+as soon as it is bound, as a CLP solver does. In the other direction, `z3_label(Vars)` binds the
+variables to values from a model, and gives another solution on backtracking:
+
+```prolog
+?- z3_push(X:int > 0 and Y:int > 0 and X + Y = 3), z3_label([X, Y]).
+X = 2, Y = 1 ;
+X = 1, Y = 2 ;
+false.
+```
+
+Each variable to label must occur in a formula pushed so far. Values of uninterpreted sorts do not
+work with `z3_label/1`: given back to Z3, they are read as new constants. Unifying two variables
+that both stand for Z3 constants is traced under the debug topic `z3(unify)`.
+
+[examples/attributed_variables.pl](examples/attributed_variables.pl) has worked examples: SEND + MORE =
+MONEY and map coloring with Prolog choosing values, words and floating-point candidates filtered by
+Z3, labeling, and a schedule where Prolog chooses an order and Z3 the times.
+
 ### High-level, stateful: stateful_repl.pl
 
 With `z3.pl`, all assertions and type declarations (except for enums) are reset from one query to the
