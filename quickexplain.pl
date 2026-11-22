@@ -181,5 +181,89 @@ test(check_relax, true(R == [(X #> 2), (X#>4), (Y#<5)])) :-
 test(check_relax2, [true(R == consistent)]) :-
     check_relax(call, [Y #> 0], [X#<5, Y#<5, X#>2], R).
 
+% Edge cases.
+
+test(explain_empty, [true(R == [])]) :-
+    qexplain(call, [], R).
+
+test(relax_empty, [true(R == [])]) :-
+    qrelax(call, [], R).
+
+test(explain_single, [true(R == [fail])]) :-
+    qexplain(call, [fail], R).
+
+test(relax_single, [true(R == [])]) :-
+    qrelax(call, [fail], R).
+
+% An inconsistent base needs none of the constraints.
+test(explain_base_inconsistent, [true(R == [])]) :-
+    qexplain(call, [fail], [true, X = 1, X = 2], R).
+
+test(relax_base_inconsistent, [true(R == [])]) :-
+    qrelax(call, [fail], [true, true], R).
+
+% qexplain assumes Base + Constraints are inconsistent; if not, it returns all the Constraints
+% (check_explain/3 checks first).
+test(explain_consistent_returns_all, [true(R == [true, true])]) :-
+    qexplain(call, [true, true], R).
+
+% With two separate conflicts, one is reported: the one whose last constraint comes first.
+test(explain_two_conflicts, [true(R =@= [X = 1, X = 2])]) :-
+    qexplain(call, [X = 1, Y = 1, X = 2, Y = 2], R).
+
+% When constraints conflict, qrelax keeps the later ones.
+test(relax_keeps_later, [true(R =@= [X = 2])]) :-
+    qrelax(call, [X = 1, X = 2], R).
+
+% Randomized checks against the definitions. The constraints are unary CLP(FD) constraints on one
+% variable, for which propagation decides consistency exactly. For each random set:
+%   qexplain: the result is inconsistent with the base, and removing any constraint makes it consistent;
+%   qrelax: the result is consistent with the base, and adding any other constraint makes it inconsistent.
+
+random_constraint(X, C) :-
+    random_between(0, 9, K),
+    random_member(Op, [#>=, #=<, #\=, #=]),
+    C =.. [Op, X, K].
+
+random_problem(Base, Constraints) :-
+    random_between(1, 8, N),
+    length(Constraints, N),
+    Base = [X in 0..9],
+    maplist(random_constraint(X), Constraints).
+
+holds(Cs) :- \+ \+ maplist(call, Cs).
+
+minimal_conflict(Base, Core) :-
+    \+ holds_all(Base, Core),
+    forall(select(_, Core, Rest), holds_all(Base, Rest)).
+
+maximal_consistent(Base, Constraints, Kept) :-
+    holds_all(Base, Kept),
+    forall(( member(C, Constraints), \+ (member(K, Kept), K == C) ),
+           \+ holds_all(Base, [C|Kept])).
+
+holds_all(Base, Cs) :- append(Base, Cs, All), holds(All).
+
+subset_eq(Sub, Set) :- forall(member(S, Sub), (member(T, Set), T == S)).
+
+test(random_explain_minimal, [setup(set_random(seed(1)))]) :-
+    forall(between(1, 300, _),
+           (   random_problem(Base, Cs),
+               (   holds_all(Base, Cs)
+               ->  true
+               ;   qexplain(call, Base, Cs, R),
+                   assertion(subset_eq(R, Cs)),
+                   assertion(minimal_conflict(Base, R))
+               )
+           )).
+
+test(random_relax_maximal, [setup(set_random(seed(2)))]) :-
+    forall(between(1, 300, _),
+           (   random_problem(Base, Cs),
+               qrelax(call, Base, Cs, R),
+               assertion(subset_eq(R, Cs)),
+               assertion(maximal_consistent(Base, Cs, R))
+           )).
+
 
 :- end_tests(quickexplain_tests).

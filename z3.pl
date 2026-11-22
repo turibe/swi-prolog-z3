@@ -355,7 +355,9 @@ z3_minimal_core(Formulas, Core) :-
 %  them (or Z3 cannot decide). Uses QuickXplain (quickexplain.pl) with z3_push, but first types all of
 %  Formulas together: pushed one at a time, a formula can get other types than with the rest (in
 %  f(a) = f(b), a and f have no numeric type yet, so a = 1 alone is then a type error), and
-%  qexplain(z3_push, ...) would take that type error for a conflict. The solver is left as it was.
+%  qexplain(z3_push, ...) would take that type error for a conflict. If the formulas pushed so far are
+%  inconsistent by themselves, Core is []. Raises a type_error if Formulas are not well typed together.
+%  The solver is left as it was.
 z3_explain(Formulas, Core) :-
     typed_quickxplain(explain, Formulas, Core).
 
@@ -363,7 +365,9 @@ z3_explain(Formulas, Core) :-
 %  Kept is a maximal subset of Formulas, in their order, that is consistent with the formulas pushed so
 %  far: adding any other formula of Formulas makes it inconsistent. When formulas conflict, earlier
 %  ones are preferred, so list the most important first. Kept is Formulas if they are consistent.
-%  Like z3_explain/2, it types all of Formulas together first. The solver is left as it was.
+%  Like z3_explain/2, it types all of Formulas together first, and raises a type_error if they are not
+%  well typed together. Kept is [] if the formulas pushed so far are inconsistent by themselves. The
+%  solver is left as it was.
 z3_relax(Formulas, Kept) :-
     typed_quickxplain(relax, Formulas, Kept).
 
@@ -373,9 +377,11 @@ z3_relax(Formulas, Kept) :-
 typed_quickxplain(Mode, Formulas, Result) :-
     must_be(list, Formulas),
     length(Formulas, N),
-    numlist(1, N, Is),
+    numlist(0, N, [0|Is]),                           % numlist(1, 0, _) fails, so start from 0
     pairs_keys_values(Numbered, Is, Formulas),
-    findall(Numbers, quickxplain_numbers(Mode, Formulas, Numbered, Numbers), Found),
+    catch(findall(Numbers, quickxplain_numbers(Mode, Formulas, Numbered, Numbers), Found),
+          Error,
+          ( resolve_solver_depth(_), throw(Error) )),
     resolve_solver_depth(_),
     Found = [Numbers],
     % Not findall/3, which would copy: the result must be the caller's own terms, in their order.
@@ -384,25 +390,43 @@ typed_quickxplain(Mode, Formulas, Result) :-
 
 quickxplain_numbers(Mode, Formulas, Numbered, Numbers) :-
     Conjunction =.. [and, true | Formulas],
-    push_formula(Conjunction, types_only, l_true),   % types and declares all the symbols together
-    quickxplain_mode(Mode, Conjunction, Numbered, Chosen),
+    (   push_formula(Conjunction, types_only, l_true)    % types and declares all the symbols together
+    ->  true
+    ;   type_error(well_typed_formulas, Formulas)
+    ),
+    (   \+ \+ z3_push(true, l_false)
+    ->  Chosen = []                                      % the pushed formulas are inconsistent by themselves
+    ;   conjunction_status(Conjunction, Formulas, Status),
+        quickxplain_mode(Mode, Status, Numbered, Chosen)
+    ),
     pairs_keys(Chosen, Numbers).
 
-quickxplain_mode(explain, Conjunction, Numbered, Core) :-
-    \+ \+ z3_push(Conjunction, l_false),             % Formulas are inconsistent (with what was pushed)
-    qexplain(push_consistent, Numbered, Core).
-quickxplain_mode(relax, _Conjunction, Numbered, Kept) :-
-    reverse(Numbered, Reversed),                     % qrelax keeps later formulas over earlier ones
-    qrelax(push_consistent, Reversed, Kept).
+% Status is the status of pushing Conjunction. Pushing it also makes Z3 check what type inference
+% cannot, such as sorts it only infers itself; a formula Z3 cannot build is a type error, which
+% QuickXplain would otherwise take for a conflict.
+conjunction_status(Conjunction, Formulas, Status) :-
+    findall(S, z3_push(Conjunction, S), Statuses),
+    (   Statuses = [Status], Status \== l_type_error
+    ->  true
+    ;   type_error(well_typed_formulas, Formulas)
+    ).
 
-% The push QuickXplain uses: fails only if the solver becomes inconsistent. A type error cannot
-% happen once all the formulas are typed together, but would raise an error rather than look like a
-% conflict.
+quickxplain_mode(explain, l_false, Numbered, Core) :-   % fails unless Formulas are inconsistent
+    qexplain(push_consistent, Numbered, Core).
+quickxplain_mode(relax, Status, Numbered, Kept) :-
+    (   Status == l_true
+    ->  Kept = Numbered                                % consistent: keep them all
+    ;   reverse(Numbered, Reversed),                   % qrelax keeps later formulas over earlier ones
+        qrelax(push_consistent, Reversed, Kept)
+    ).
+
+% The push QuickXplain uses: fails only if the solver becomes inconsistent. Every formula was
+% checked as part of the conjunction, so a type error should not happen, but would raise an error
+% rather than look like a conflict.
 push_consistent(_-F) :-
-    z3_push(F, Status),
-    (   Status == l_type_error
-    ->  type_error(well_typed_formula, F)
-    ;   Status \== l_false
+    (   z3_push(F, Status), Status \== l_type_error
+    ->  Status \== l_false
+    ;   type_error(well_typed_formula, F)
     ).
 
 numlist_labels(0, []) :- !.
@@ -1133,6 +1157,105 @@ test(explain_prolog_variables) :-
     z3_explain([X > 10, X < 5, Y > 0], Core),
     assertion(Core == [X > 10, X < 5]),                     % the caller's terms, not copies
     assertion(var(Y)).
+
+test(explain_empty, [fail]) :-
+    z3_reset,
+    z3_explain([], _).
+
+test(relax_empty) :-
+    z3_reset,
+    z3_relax([], Kept),
+    assertion(Kept == []).
+
+% If the formulas pushed so far conflict by themselves, none of the new ones is to blame.
+test(explain_pushed_inconsistent) :-
+    z3_reset,
+    z3_push(x:int > 1),
+    z3_push(x < 0, _),
+    z3_explain([y:int > 0], Core),
+    assertion(Core == []).
+
+test(relax_pushed_inconsistent) :-
+    z3_reset,
+    z3_push(x:int > 1),
+    z3_push(x < 0, _),
+    z3_relax([y:int > 0], Kept),
+    assertion(Kept == []).
+
+test(explain_two_conflicts) :-
+    z3_reset,
+    z3_explain([x:int > 5, y:int > 5, x < 3, y < 3], Core),
+    assertion(Core == [x:int > 5, x < 3]).
+
+test(relax_two_conflicts) :-
+    z3_reset,
+    z3_relax([x:int > 5, y:int > 5, x < 3, y < 3], Kept),
+    assertion(Kept == [x:int > 5, y:int > 5]).
+
+% Formulas that are not well typed together are an error, not a conflict.
+test(explain_type_error, [error(type_error(well_typed_formulas, _))]) :-
+    z3_reset,
+    z3_explain([x:int > 1, x = true], _).
+
+test(relax_type_error, [error(type_error(well_typed_formulas, _))]) :-
+    z3_reset,
+    z3_relax([x:int > 1, x = true], _).
+
+test(type_error_leaves_solver_unchanged) :-
+    z3_reset,
+    z3_push(y:int > 5),
+    raw_solver_scopes(S0),
+    catch(z3_relax([x:int > 1, x = true], _), error(type_error(_, _), _), true),
+    raw_solver_scopes(S1),
+    assertion(S1 == S0),
+    z3_push(y < 9).
+
+% Randomized checks against the definitions, over small sets of integer bounds:
+%   z3_explain: the core is inconsistent, and removing any formula makes it consistent;
+%   z3_relax: the kept formulas are consistent, and adding any other one makes them inconsistent;
+%   both return a sublist of the input, in its order.
+
+random_bound(F) :-
+    random_member(V, [x, y]),
+    random_between(0, 5, K),
+    random_member(Op, [>, <, >=, =<, =, <>]),
+    F0 =.. [Op, V:int, K],
+    F = F0.
+
+random_bounds(Fs) :-
+    random_between(1, 6, N),
+    length(Fs, N),
+    maplist(random_bound, Fs).
+
+consistent_formulas(Fs) :-
+    Conjunction =.. [and, true | Fs],
+    \+ \+ z3_push(Conjunction).
+
+sublist_of([], _).
+sublist_of([X|Xs], [Y|Ys]) :- ( X == Y -> sublist_of(Xs, Ys) ; sublist_of([X|Xs], Ys) ).
+
+test(random_explain_minimal, [setup(set_random(seed(3)))]) :-
+    forall(between(1, 60, _),
+           (   random_bounds(Fs),
+               z3_reset,
+               (   z3_explain(Fs, Core)
+               ->  assertion(sublist_of(Core, Fs)),
+                   assertion(\+ consistent_formulas(Core)),
+                   assertion(forall(select(_, Core, Rest), consistent_formulas(Rest)))
+               ;   assertion(consistent_formulas(Fs))
+               )
+           )).
+
+test(random_relax_maximal, [setup(set_random(seed(4)))]) :-
+    forall(between(1, 60, _),
+           (   random_bounds(Fs),
+               z3_reset,
+               z3_relax(Fs, Kept),
+               assertion(sublist_of(Kept, Fs)),
+               assertion(consistent_formulas(Kept)),
+               assertion(forall(( member(F, Fs), \+ (member(K, Kept), K == F) ),
+                                \+ consistent_formulas([F|Kept])))
+           )).
 
 :- end_tests(z3pl_cores).
 
