@@ -48,6 +48,8 @@ Notes:
 %% F has been defined:
 declared(F) :- signature(F, _, _).
 declared(F) :- comparison_operator(F).
+declared(F) :- arithmetic_operator(F).
+declared(between).
 
 declare(Functor, ArgTypes, Result) :-
     must_be(atomic, Functor),
@@ -58,7 +60,7 @@ signature(/, A, B) :- signature(div, A, B).
 signature(==, A, B) :- signature(=, A, B).
 signature(equal, A, B) :- signature(=, A, B).
 signature(equals, A, B) :- signature(=, A, B).
-signature(minus, A, B) :- signature(-, A, B).
+signature(alldifferent, A, B) :- signature(distinct, A, B).
 signature(',', A, B) :- signature(and, A, B).
 signature(; , A, B) :- signature(or, A, B).
 signature(-> , A, B) :- signature(implies, A, B).
@@ -82,11 +84,7 @@ signature(^, A, B) :- signature(power, A, B).
 :- declare(<>, [bool, real], bool).
 :- declare(<>, [bool, int], bool).
 
-:- declare(between, [T, T, T], bool).
-:- declare(between, [int, real, real], bool).
-:- declare(between, [int, int, real], bool).
-:- declare(between, [int, real, int], bool).
-:- declare(between, [int, real, real], bool).
+% between/3 is typed by a rule in typecheck/4: its three arguments are numeric, in any combination.
 
 :- declare(distinct, all(_T), bool).
 
@@ -95,24 +93,7 @@ signature(^, A, B) :- signature(power, A, B).
 % :- declare(+, oneof(real), real).
 % :- declare(*, oneof(real), real).
 
-:- declare(+, all(T), T).
-:- declare(*, all(T), T).
-:- declare(-, all(T), T).
-
-:- declare(+, [real, _T], real).
-:- declare(+, [_T, real], real).
-:- declare(*, [real, _T], real).
-:- declare(*, [_T, real], real).
-:- declare(-, [_T, real], real).
-:- declare(-, [real, _T], real).
-
-:- declare(+, [int, bool], int).
-:- declare(+, [bool, int], int).
-:- declare(+, [bool, bool], int).
-
-:- declare(*, [int, bool], int).
-:- declare(*, [bool, int], int).
-:- declare(*, [bool, bool], int).
+% +, *, - and minus are typed by a rule in typecheck/4 (see arithmetic_operator/1), not by signatures.
 
 :- declare(power, [int, int], int).
 :- declare(power, [real, int], real).
@@ -171,8 +152,8 @@ signature(^, A, B) :- signature(power, A, B).
 :- declare(bvnor, [bv(N), bv(N)], bv(N)).
 :- declare(bvnot, [bv(N)], bv(N)).
 :- declare(bvor, [bv(N), bv(N)], bv(N)).
-:- declare(bvredand, [bv(N)], bv(N)).
-:- declare(bvredor, [bv(N)], bv(N)).
+:- declare(bvredand, [bv(_N)], bv(1)).  % reductions give a single bit
+:- declare(bvredor, [bv(_N)], bv(1)).
 :- declare(bvsdiv, [bv(N), bv(N)], bv(N)).
 :- declare(bvsdiv_no_overflow, [bv(N), bv(N)], bool).
 :- declare(bvsge, [bv(N), bv(N)], bool).
@@ -202,8 +183,9 @@ signature(^, A, B) :- signature(power, A, B).
 :- declare(atleast, allthen(bool, int), bool).
 :- declare(atmost, allthen(bool, int), bool).
 
-% isoneof(x, v1, v2, ...) is expanded to (x = v1 or x = v2 or ...):
-:- declare(isoneof, T, all(T)).
+% isoneof(x, v1, v2, ...) is expanded to (x = v1 or x = v2 or ...) before typechecking, but typing it
+% directly gives the same result:
+:- declare(isoneof, all(_T), bool).
 
 :- declare(mk_rational, [int, int], real).
 
@@ -257,10 +239,10 @@ typecheck(X, real, E, E) :- float(X), !.
 typecheck(X, real, E, E) :- rational(X), \+ integer(X), !.
 typecheck(X, string, E, E) :- string(X), !.
 typecheck(X, real, E, E) :- algebraic_value(X), !.
-typecheck(T, bv(N), E, E) :- functor(T, int2bv, _), !,
+typecheck(T, bv(N), Envin, Envout) :- functor(T, int2bv, _), !,
                              T = int2bv(N, I),
-                             integer(N),
-                             integer(I).
+                             integer(N), N > 0,
+                             typecheck(I, int, Envin, Envout).   % any integer expression, not just a literal
 typecheck(T, Type, Envin, Envout) :- functor(T, mk_numeral, N), !,
                                      N = 2,
                                      T = mk_numeral(String, Type),
@@ -278,6 +260,18 @@ typecheck(T, Type, E, E) :- functor(T, bv_numeral, 1),
                             is_list(L),
                             length(L, N),
                             Type = bv(N).
+%% Arithmetic, with any number of arguments: each argument is numeric (bool, int or real), and the
+%% result is int, or real if some argument is real. Booleans count as 0 or 1, as in Z3.
+%% This is one rule rather than overlapping signatures, so that each typing is found once: with the
+%% overlapping signatures, a type error near a long sum of reals took exponential time to report.
+typecheck(T, Type, Envin, Envout) :- compound(T), functor(T, F, Arity), Arity >= 1,
+                                     arithmetic_operator(F), !,
+                                     T =.. [F|Args],
+                                     member(Type, [int, real]),
+                                     arithmetic_args(Args, Type, Envin, Envout, false, SawReal),
+                                     ( Type == real -> SawReal == true ; true ).
+typecheck(between(X, Low, High), bool, Envin, Envout) :- !,
+                                     numeric_args([X, Low, High], Envin, Envout).
 typecheck(X, T, Envin, Envout) :- atomic_mappable(X), !,
                                   (get_assoc(X/0, Envin, T1) ->
                                        T = T1, %% unify_or_error(T, T1), % print error if this fails
@@ -320,7 +314,23 @@ typecheck(T, Type, Envin, Envout) :-
                              
 
 comparison_operator(F) :- member(F, [<, >, =<, >=, geq, leq]).
+arithmetic_operator(F) :- memberchk(F, [+, *, -, minus]).
 numeric_type(T) :- member(T, [int, real, bool]).
+
+% Arguments of an arithmetic operation whose result has type Type: an argument's type is at most Type
+% (bool < int < real), tried from Type down. SawReal says whether some argument is real.
+arithmetic_args([], _, E, E, SawReal, SawReal).
+arithmetic_args([A|As], Type, Ein, Eout, SawReal0, SawReal) :-
+    arithmetic_arg_type(Type, ArgType),
+    typecheck(A, ArgType, Ein, E1),
+    ( ArgType == real -> SawReal1 = true ; SawReal1 = SawReal0 ),
+    arithmetic_args(As, Type, E1, Eout, SawReal1, SawReal).
+
+arithmetic_arg_type(int, T) :- member(T, [int, bool]).
+arithmetic_arg_type(real, T) :- member(T, [real, int, bool]).
+
+numeric_args([], E, E).
+numeric_args([A|As], Ein, Eout) :- numeric_type(N), typecheck(A, N, Ein, E1), numeric_args(As, E1, Eout).
 
 check_signature([], allthen(_,_), E, E).
 check_signature([Arg], allthen(_,T), Ein, Eout) :- !, typecheck(Arg, T, Ein, Eout).
@@ -428,5 +438,86 @@ test(basic_eq, set(T == [int, real])) :-
     typecheck(a = b:int, bool, t, R),
     get_assoc(a/0, R, T),
     get_assoc(b/0, R, int).
+
+% Number of distinct typings of Term (as Type and map), to check that each is found once.
+count_typings(Term, Type, N) :-
+    findall(Type-L, (typecheck(Term, Type, M), assoc_to_list(M, L)), Sols),
+    length(Sols, N).
+
+% Arithmetic is typed by one rule, so each typing is found once (overlapping signatures used to give
+% a:real + b:real three identical typings).
+test(arith_typings_once, [forall(member(Term-N, [ (a:real) + (b:real) - 1,
+                                                    (a:int) + (b:real) - 1,
+                                                    (a:int) * (b:int) - 1,
+                                                    -(a:real) - 1,
+                                                    +(a:int, b:int, c:real) - 1 ]))]) :-
+    count_typings(Term, _, Count),
+    assertion(Count == N).
+
+test(arith_result_types, [forall(member(Term-Type, [ (a:int) + (b:real) - real,
+                                                       (a:bool) + (b:bool) - int,
+                                                       (a:bool) * (b:real) - real,
+                                                       minus(a:int, 1) - int,
+                                                       +(a:int, b:int, c:real) - real ]))]) :-
+    typecheck(Term, T, _),
+    !,
+    assertion(T == Type).
+
+% An unknown argument can be anything numeric no larger than the result.
+test(arith_unknown_arg, set(T == [bool, int, real])) :-
+    typecheck((a:real) + b, real, M),
+    get_assoc(b/0, M, T).
+
+% Arithmetic needs numbers: it used to accept any sort, and booleans as results.
+test(arith_not_numeric, [fail]) :-
+    typecheck((a:foo) + b, _, _).
+
+test(arith_no_bool_result, [fail]) :-
+    typecheck((a:bool) + (b:bool), bool, _).
+
+% A type error near a long sum used to take exponential time (3 s for 12 terms).
+test(arith_type_error_fast) :-
+    numlist(1, 20, Is),
+    foldl([I, S0, S0 + (V:real)]>>format(atom(V), "x~w", [I]), Is, 0.0, Sum),
+    % The time limit makes the old behavior fail the test rather than run for hours.
+    catch(call_with_time_limit(2, \+ typecheck(and(Sum > 0.0, p:int = q:bool), bool, _)), E, true),
+    assertion(var(E)).
+
+% between/3 takes numeric arguments in any combination; [int, real, real] used to be declared twice,
+% and [real, int, int] not at all.
+test(between_typings, [forall(member(Term, [ between(a:int, b:real, c:real),
+                                             between(a:real, b:int, c:int),
+                                             between(a:int, b:int, c:int) ]))]) :-
+    count_typings(Term, bool, Count),
+    assertion(Count == 1).
+
+test(between_not_numeric, [fail]) :-
+    typecheck(between(a:foo, 1, 2), bool, _).
+
+% int2bv used to accept only an integer literal.
+test(int2bv_expression) :-
+    typecheck(int2bv(8, (b:int) + 1), T, M),
+    assertion(T == bv(8)),
+    assertion(get_assoc(b/0, M, int)).
+
+test(int2bv_bad_width, [fail]) :-
+    typecheck(int2bv(0, 5), _, _).
+
+% Bit reductions give one bit, not a vector of the argument's width.
+test(bit_reductions, [forall(member(Op, [bvredand, bvredor]))]) :-
+    T =.. [Op, x:bv(8)],
+    typecheck(T, Type, _),
+    assertion(Type == bv(1)).
+
+% isoneof was declared with a meaningless type; alldifferent had no type at all.
+test(isoneof_bool) :-
+    typecheck(isoneof(x, 1, 2), T, M),
+    assertion(T == bool),
+    assertion(get_assoc(x/0, M, int)).
+
+test(alldifferent_like_distinct) :-
+    typecheck(alldifferent(a:int, b, c), T, M),
+    assertion(T == bool),
+    assertion(get_assoc(c/0, M, int)).
 
 :- end_tests(type_inference_tests).
