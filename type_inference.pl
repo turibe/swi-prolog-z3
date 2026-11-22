@@ -178,6 +178,21 @@ signature(isoneof, all(_T), bool).
 
 signature(mk_rational, [int, int], real).
 
+%%%% Strings (argument orders as in SMT-LIB)
+signature(str_concat, all(string), string).
+signature(str_len, [string], int).
+signature(str_substr, [string, int, int], string).        % (s, offset, length)
+signature(str_at, [string, int], string).                 % the one-character string at an index
+signature(str_contains, [string, string], bool).          % (container, containee)
+signature(str_prefixof, [string, string], bool).          % (prefix, s)
+signature(str_suffixof, [string, string], bool).          % (suffix, s)
+signature(str_indexof, [string, string, int], int).       % (s, substring, start); -1 if absent
+signature(str_replace, [string, string, string], string). % (s, from, to), first occurrence
+signature(str_lt, [string, string], bool).                % lexicographic
+signature(str_le, [string, string], bool).
+signature(str_to_int, [string], int).                     % -1 unless all digits
+signature(int_to_str, [int], string).                     % "" for negative numbers
+
 % "mappable" are non-declared atoms or functions whose type signature needs to be inferred; that is, not pre-defined.
 atomic_mappable(X) :- atom(X).
 
@@ -522,6 +537,15 @@ typing("a string", string, []).
 typing(bvadd(x:bv(8), y), bv(8), [y/0-bv(8)]).
 typing(bvsub_no_underflow(x:bv(8), y, s), bool, [y/0-bv(8), s/0-bool]).
 typing(bv2int(x:bv(8), true), int, [x/0-bv(8)]).
+typing(str_concat("a", s, t), string, [s/0-string, t/0-string]).
+typing(str_len(s), int, [s/0-string]).
+typing(str_substr(s, i, 2), string, [s/0-string, i/0-int]).
+typing(str_contains(s, "x"), bool, [s/0-string]).
+typing(str_indexof(s, "x", 0), int, [s/0-string]).
+typing(str_replace(s, "a", "b"), string, [s/0-string]).
+typing(str_lt(s, "b"), bool, [s/0-string]).
+typing(str_to_int(s), int, [s/0-string]).
+typing(int_to_str(n), string, [n/0-int]).
 
 test(typings, [forall(typing(Term, Type, Symbols)), nondet]) :-
     typecheck(Term, T, M),
@@ -537,6 +561,8 @@ ill_typed(bv_numeral([1, x])).              % a bit that is not a bit
 ill_typed(bv_numeral([])).                  % no bits
 ill_typed(not(_)).                          % unbound subterms are errors, see below
 ill_typed(and(p, 3)).                       % 3 is not a bool
+ill_typed(str_len(3)).                      % not a string
+ill_typed(str_concat("a", 1)).             % not a string
 
 test(ill_typed, [forall(ill_typed(Term))]) :-
     \+ catch(typecheck(Term, _, _), error(instantiation_error, _), fail).

@@ -26,7 +26,13 @@ Z3 can give a decimal approximation (`Z3_get_numeral_decimal_string`) or bounds
 (`Z3_get_algebraic_number_lower` / `Z3_get_algebraic_number_upper`). Returning one of those, or a term
 such as `root(Polynomial, Index)` for the exact value, would replace the silent `'RootObject'`.
 
-### 2. A string sort and string operations (moderate)
+### 2. A string sort and string operations (done, except regular expressions)
+
+There is now a `string` sort, with the operations listed under Reserved names in the README
+(`str_len`, `str_concat`, `str_contains`, ...). Strings are passed by code point, so non-ASCII
+characters and backslashes are kept exactly. Regular expressions (`Z3_mk_re_*`, `Z3_mk_seq_in_re`)
+are still to do. What follows describes the problem as it was.
+
 
 String literals are converted to Z3 strings, but there is no `string` sort, so `s:string` creates an
 unrelated uninterpreted sort:

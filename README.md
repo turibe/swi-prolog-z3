@@ -250,7 +250,7 @@ constants or functions (with the arities shown, where they matter).
   - `isoneof/N` and `alldifferent/N`, macros (see above).
 - Constants: `true`, `false`.
 - Sort names, in `Term:Sort` and declarations: `int` or `integer`, `real`, `float` or `double`
-  (all three are Z3's reals), `bool` or `boolean`, `bv(N)`, and the names of declared enumeration sorts.
+  (all three are Z3's reals), `bool` or `boolean`, `bv(N)`, `string`, and the names of declared enumeration sorts.
   Any other atom names an uninterpreted sort.
 - Logic: `and`, `or`, `not`, `implies`, `iff`, `xor`, `ite`, and the operators `,`, `;`, `->`, `<=>`.
 - Equality and comparison: `=`, `==`, `equal`, `equals`, `<>`, `distinct`, `<`, `>`, `=<`, `>=`,
@@ -258,6 +258,11 @@ constants or functions (with the arities shown, where they matter).
 - Arithmetic: `+`, `-`, `minus`, `*`, `/`, `div`, `mod`, `rem`, `divides`, `power`, `**`, `^`,
   `is_int`, `int2real`, `real2int`.
 - Pseudo-Boolean: `atleast`, `atmost`.
+- Strings, with arguments in the SMT-LIB order: `str_concat/N`, `str_len/1`, `str_substr/3` (string, offset,
+  length), `str_at/2` (the one-character string at an index), `str_contains/2` (container, containee),
+  `str_prefixof/2` and `str_suffixof/2` (prefix or suffix first), `str_indexof/3` (string, substring, start;
+  -1 if absent), `str_replace/3` (the first occurrence), `str_lt/2` and `str_le/2` (lexicographic),
+  `str_to_int/1` (-1 unless all digits), `int_to_str/1` ("" for negative numbers).
 - Bit vectors:
   - arithmetic: `bvadd`, `bvsub`, `bvmul`, `bvudiv`, `bvsdiv`, `bvurem`, `bvsrem`, `bvsmod`, `bvneg`;
   - bitwise: `bvand`, `bvor`, `bvxor`, `bvnand`, `bvnor`, `bvxnor`, `bvnot`, `bvredand`, `bvredor`;

@@ -1171,3 +1171,88 @@ test(malformed, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)),
     \+ z3_assert(H, (w:real) = A).
 
 :- end_tests(algebraic_numbers).
+
+% The string sort and string operations (named str_..., argument orders as in SMT-LIB).
+% Type annotations are parenthesized, so these tests do not depend on z3.pl's op(299, xfy, :).
+
+:- begin_tests(strings).
+
+% Formula holds whenever the string w is "hello": asserting its negation is unsatisfiable.
+hello_implies(Formula) :-
+    setup_call_cleanup(z3_new_handle(H),
+                       ( z3_assert(H, (w:string) = "hello"),
+                         z3_assert(H, not(Formula)),
+                         z3_check(H, l_false) ),
+                       z3_free_handle(H)).
+
+string_fact(str_len(w) = 5).
+string_fact(str_concat(w, " ", "world") = "hello world").
+string_fact(str_at(w, 1) = "e").
+string_fact(str_substr(w, 1, 3) = "ell").
+string_fact(str_contains(w, "ell")).
+string_fact(not(str_contains(w, "z"))).
+string_fact(str_prefixof("he", w)).
+string_fact(str_suffixof("lo", w)).
+string_fact(str_indexof(w, "l", 0) = 2).
+string_fact(str_indexof(w, "l", 3) = 3).
+string_fact(str_indexof(w, "z", 0) = -1).
+string_fact(str_replace(w, "l", "L") = "heLlo").           % the first occurrence only
+string_fact(str_lt("abc", w)).
+string_fact(str_le(w, w)).
+string_fact(not(str_lt(w, w))).
+string_fact(str_to_int("123") = 123).
+string_fact(str_to_int("12a") = -1).
+string_fact(int_to_str(42) = "42").
+string_fact(int_to_str(-1) = "").
+
+test(operations, [forall(string_fact(F))]) :-
+    hello_implies(F).
+
+string_model(Formulas, Constants) :-
+    setup_call_cleanup(z3_new_handle(H),
+                       ( maplist(z3_assert(H), Formulas),
+                         z3_check(H, l_true),
+                         z3_model_lists(H, Model),
+                         Constants = Model.constants ),
+                       z3_free_handle(H)).
+
+test(solve_for_strings) :-
+    string_model([(s:string) = str_concat("ab", t:string), str_len(s:string) = 5, str_contains(s:string, "bc")], C),
+    memberchk(s = S, C), memberchk(t = T, C),
+    assertion(string_concat("ab", T, S)),
+    assertion(string_length(S, 5)),
+    assertion(sub_string(S, _, _, _, "bc")).
+
+test(solve_through_int_conversion) :-
+    string_model([str_to_int(x:string) = 7, str_len(x:string) = 3], C),
+    assertion(C == [x = "007"]).
+
+% Strings go to Z3 and back by code point: non-ASCII characters, and backslashes, which
+% Z3_mk_string would read as the start of an escape such as \u{41}, are kept exactly.
+test(round_trip_exact, [forall(member(Text, ["héllo wörld ✓", "back\\slash \\u{41} tab\t", ""]))]) :-
+    string_model([(u:string) = Text], C),
+    assertion(C == [u = Text]).
+
+test(length_in_code_points) :-
+    string_model([(u:string) = "héllo ✓", str_len(u:string) = n:int], C),
+    assertion(memberchk(n = 7, C)).
+
+% Terms come back with the Prolog names, not Z3's str.len and so on, so they can be asserted again.
+test(names_round_trip, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))]) :-
+    z3_simplify(H, str_len(str_concat("ab", y:string)), S),
+    assertion(S == 2 + str_len(y)),
+    Formula = str_prefixof("p", str_replace(y:string, "a", int_to_str(str_to_int(y:string)))),
+    z3_assert(H, Formula),
+    z3_solver_assertions(H, [Back]),
+    assertion(Back == str_prefixof("p", str_replace(y, "a", int_to_str(str_to_int(y))))),
+    z3_assert(H, Back).
+
+malformed_string_formula(str_len(w:string, w:string) = 1).   % wrong arity
+malformed_string_formula(str_len(3) = 1).                    % not a string
+malformed_string_formula((w:string) = 3).                    % sort mismatch
+
+test(malformed, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)),
+                 forall(malformed_string_formula(F))]) :-
+    \+ z3_assert(H, F).
+
+:- end_tests(strings).
