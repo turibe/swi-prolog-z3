@@ -7,12 +7,12 @@ functions and sorts, enumeration sorts, and quantifiers; and finding unsat cores
 and relaxations of conflicting constraints, optimization, and timeouts. Not yet supported: algebraic
 datatypes, regular expressions, and SMT-LIB2 import and export (see [FUTURE-WORK.md](FUTURE-WORK.md)).
 
-With the high-level API in `z3.pl`,
-Z3 asserts are incremental and backtrackable, and the Z3 solver context is pushed and popped automatically.
-This can be used to search for solutions to Prolog queries, that is, instantiations of the Prolog variables, in the usual Prolog way.
+With the high-level API in `z3.pl`, Z3 works like a Prolog constraint solver: each formula is added to
+the solver incrementally, and is removed again when Prolog backtracks. This lets you search for
+solutions to a query, that is, for values of its Prolog variables, in the usual Prolog way.
 
-Alternatively, `stateful_repl.pl` accumulates state from one query to the next.
-This more procedural, intended for interactive exploration to understand the capabilities of Z3.
+Alternatively, `stateful_repl.pl` keeps formulas and declarations from one query to the next, like the
+Z3 prompt or Z3's Python API. It is more procedural, and meant for exploring Z3 interactively.
 
 ### Contact
 
