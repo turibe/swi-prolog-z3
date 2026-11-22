@@ -1697,3 +1697,164 @@ test(mixed_arithmetic_round_trip, [setup(quantified_handle(H)), cleanup(z3_free_
     z3_check(H, l_true).
 
 :- end_tests(quantifiers).
+
+% IEEE floating point at the low level: sorts, values, operations and conversions.
+
+:- begin_tests(floating_point).
+
+fp_handle(H) :-
+    z3_new_handle(H),
+    forall(member(N:S, [x:float32, y:float32, d:float64, q:float128, h:float16, c:fp(4, 6),
+                        m:roundingmode, b:bv(8), w:bv(32)]),
+           z3_declare_function(H, N, S)).
+
+% The value of constant Name in a model of Formulas.
+fp_model_value(Formulas, Name, Value) :-
+    setup_call_cleanup(fp_handle(H),
+                       ( forall(member(F, Formulas), z3_assert(H, F)),
+                         z3_check(H, l_true),
+                         z3_model_lists(H, M),
+                         memberchk(Name = Value, M.constants) ),
+                       z3_free_handle(H)).
+
+% Formula holds whenever Facts do: asserting its negation is unsatisfiable.
+fp_implied(Facts, Formula) :-
+    setup_call_cleanup(fp_handle(H),
+                       ( forall(member(F, Facts), z3_assert(H, F)),
+                         z3_assert(H, not(Formula)),
+                         z3_check(H, l_false) ),
+                       z3_free_handle(H)).
+
+test(sorts) :-
+    setup_call_cleanup(fp_handle(H), z3_declarations(H, Ds), z3_free_handle(H)),
+    forall(member(N-S, [x-float32, d-float64, q-float128, h-float16, c-fp(4, 6), m-roundingmode]),
+           assertion(memberchk((N/0):S, Ds))).
+
+% float and double once meant real: now neither is a sort.
+test(float_double_not_sorts, [forall(member(S, [float, double]))]) :-
+    setup_call_cleanup(z3_new_handle(H),
+                       assertion(\+ catch(z3_declare_function(H, z, S), _, fail)),
+                       z3_free_handle(H)).
+
+test(bad_fp_widths, [fail]) :-
+    setup_call_cleanup(z3_new_handle(H), z3_declare_function(H, z, fp(1, 2)), z3_free_handle(H)).
+
+% Values, special ones included, come back as fp_value(Value, Sort).
+fp_value_case([fp_is_nan(x)], x, fp_value(nan, float32)).
+fp_value_case([x = fp_value(-inf, float32)], x, fp_value(-inf, float32)).
+fp_value_case([x = fp_value(inf, float32)], x, fp_value(inf, float32)).
+fp_value_case([fp_is_zero(x), fp_is_negative(x)], x, fp_value(-0.0, float32)).
+fp_value_case([x = fp_value(1.5, float32)], x, fp_value(1.5, float32)).
+fp_value_case([h = fp_div(rne, fp_value(1, float16), fp_value(3, float16))], h, fp_value(0.333251953125, float16)).
+fp_value_case([c = fp_value(1.5, fp(4, 6))], c, fp_value(1.5, fp(4, 6))).
+fp_value_case([fp_is_subnormal(d), fp_is_positive(d), fp_lt(d, fp_value(1.0e-323, float64))], d, fp_value(5.0e-324, float64)).
+fp_value_case([m = rtp], m, rtp).
+
+test(values, [forall(fp_value_case(Formulas, Name, Expected))]) :-
+    fp_model_value(Formulas, Name, Value),
+    assertion(Value == Expected).
+
+% fp_value(V, Sort) rounds V to the nearest value of Sort: 0.1 as a float32 is not 0.1 as a double.
+test(nearest_value) :-
+    fp_model_value([x = fp_value(0.1, float32)], x, fp_value(V, float32)),
+    assertion(V =:= 0.100000001490116119384765625).
+
+% Formats larger than a double give exact integers or rationals.
+test(float128_exact) :-
+    fp_model_value([q = fp_div(rne, fp_value(1, float128), fp_value(3, float128))], q, fp_value(V, float128)),
+    assertion(rational(V)),
+    assertion(abs(V - 1r3) < 1r10000000000000000000000000000000000).
+
+% Values from models can be asserted again, with the same meaning.
+test(round_trip, [forall(member(F, [fp_add(rne, x, fp_value(0.1, float32)) = fp_value(0.3, float32),
+                                     fp_is_nan(x), fp_is_subnormal(x), fp_is_zero(x) and fp_is_negative(x)]))]) :-
+    fp_model_value([F], x, V),
+    assertion(fp_implied([x = V], F)).
+
+test(float128_round_trip) :-
+    Q = fp_div(rne, fp_value(1, float128), fp_value(3, float128)),
+    fp_model_value([q = Q], q, V),
+    assertion(fp_implied([q = V], q = Q)).
+
+% IEEE equality (fp_eq) is not structural equality (=): NaN is not fp_eq to itself, and the two
+% zeros are fp_eq but not =.
+test(fp_eq_vs_equality) :-
+    assertion(fp_implied([fp_is_nan(x)], not(fp_eq(x, x)))),
+    assertion(fp_implied([fp_is_nan(x)], x = x)),
+    assertion(fp_implied([], fp_eq(fp_value(0.0, float32), fp_value(-0.0, float32)))),
+    assertion(fp_implied([], not(fp_value(0.0, float32) = fp_value(-0.0, float32)))).
+
+fp_fact(fp_eq(fp_add(rne, fp_value(1, float32), fp_value(2, float32)), fp_value(3, float32))).
+fp_fact(fp_eq(fp_sub(rne, fp_value(1, float32), fp_value(2, float32)), fp_value(-1, float32))).
+fp_fact(fp_eq(fp_mul(rne, fp_value(3, float32), fp_value(2, float32)), fp_value(6, float32))).
+fp_fact(fp_eq(fp_div(rne, fp_value(1, float32), fp_value(4, float32)), fp_value(0.25, float32))).
+fp_fact(fp_eq(fp_fma(rne, fp_value(2, float32), fp_value(3, float32), fp_value(1, float32)), fp_value(7, float32))).
+fp_fact(fp_eq(fp_sqrt(rne, fp_value(9, float32)), fp_value(3, float32))).
+fp_fact(fp_eq(fp_rem(fp_value(7, float32), fp_value(4, float32)), fp_value(-1, float32))).   % IEEE remainder
+fp_fact(fp_eq(fp_round_to_integral(rtz, fp_value(2.7, float32)), fp_value(2, float32))).
+fp_fact(fp_eq(fp_round_to_integral(rne, fp_value(2.5, float32)), fp_value(2, float32))).   % ties to even
+fp_fact(fp_eq(fp_round_to_integral(rna, fp_value(2.5, float32)), fp_value(3, float32))).
+fp_fact(fp_eq(fp_abs(fp_value(-2, float32)), fp_value(2, float32))).
+fp_fact(fp_eq(fp_neg(fp_value(2, float32)), fp_value(-2, float32))).
+fp_fact(fp_eq(fp_min(fp_value(1, float32), fp_value(2, float32)), fp_value(1, float32))).
+fp_fact(fp_eq(fp_max(fp_value(1, float32), fp_value(2, float32)), fp_value(2, float32))).
+fp_fact(fp_lt(fp_value(1, float32), fp_value(2, float32))).
+fp_fact(fp_leq(fp_value(2, float32), fp_value(2, float32))).
+fp_fact(fp_gt(fp_value(inf, float32), fp_value(1.0e38, float32))).
+fp_fact(fp_geq(fp_value(2, float32), fp_value(-inf, float32))).
+fp_fact(not(fp_lt(fp_value(nan, float32), fp_value(1, float32)))).      % NaN is unordered
+fp_fact(fp_is_normal(fp_value(1, float32))).
+fp_fact(fp_is_subnormal(fp_value(1.0e-40, float32))).
+fp_fact(fp_is_infinite(fp_mul(rne, fp_value(1.0e38, float32), fp_value(10, float32)))). % overflow
+fp_fact(fp_is_zero(fp_value(1.0e-50, float32))).                         % underflow
+fp_fact(fp_is_positive(fp_value(1, float32))).
+fp_fact(fp_is_negative(fp_value(-1, float32))).
+fp_fact(fp_to_real(fp_value(0.5, float32)) = 1r2).
+fp_fact(fp_eq(to_fp(rne, 3, float32), fp_value(3, float32))).
+fp_fact(fp_eq(to_fp(rne, fp_value(0.5, float64), float32), fp_value(0.5, float32))).
+fp_fact(fp_eq(to_fp(rne, int2bv(8, -3), float32), fp_value(-3, float32))).          % signed
+fp_fact(fp_eq(to_fp_unsigned(rne, int2bv(8, -3), float32), fp_value(253, float32))). % unsigned
+fp_fact(fp_to_sbv(rtz, fp_value(-7.9, float32), 8) = int2bv(8, -7)).
+fp_fact(fp_to_ubv(rtz, fp_value(7.9, float32), 8) = int2bv(8, 7)).
+fp_fact(fp_to_ieee_bv(fp_value(1, float32)) = int2bv(32, 1065353216)).
+fp_fact(fp_eq(fp_from_ieee_bv(int2bv(32, 1065353216), float32), fp_value(1, float32))).
+
+test(operations, [forall(fp_fact(F))]) :-
+    assertion(fp_implied([], F)).
+
+% The rounding mode matters: 1 + 2^-30 is 1 to nearest, but not toward positive infinity.
+test(rounding_modes) :-
+    Tiny = fp_value(9.313225746154785e-10, float32),
+    assertion(fp_implied([], fp_add(rne, fp_value(1, float32), Tiny) = fp_value(1, float32))),
+    assertion(fp_implied([], fp_gt(fp_add(rtp, fp_value(1, float32), Tiny), fp_value(1, float32)))).
+
+% Floating-point addition is commutative (with =; with fp_eq, NaN breaks it), but not associative.
+test(commutative_not_associative) :-
+    assertion(fp_implied([], fp_add(rne, x, y) = fp_add(rne, y, x))),
+    assertion(\+ fp_implied([], fp_add(rne, fp_add(rne, h, h), fp_value(1, float16))
+                                 = fp_add(rne, h, fp_add(rne, h, fp_value(1, float16))))).
+
+% Assertions with floating-point terms come back with the Prolog names, so they can be asserted again.
+test(assertions_round_trip, [setup(fp_handle(H)), cleanup(z3_free_handle(H))]) :-
+    z3_assert(H, fp_lt(fp_add(rne, x, fp_value(0.5, float32)), y)),
+    z3_assert(H, w = fp_to_sbv(rtz, to_fp(rne, d, float32), 32)),
+    z3_assert(H, fp_eq(to_fp_unsigned(rtn, b, float32), fp_from_ieee_bv(w, float32))),
+    z3_solver_assertions(H, As),                                % newest first
+    assertion(As == [fp_eq(to_fp_unsigned(rtn, b, float32), fp_from_ieee_bv(w, float32)),
+                     w = fp_to_sbv(rtz, to_fp(rne, d, float32), 32),
+                     fp_lt(fp_add(rne, x, fp_value(0.5, float32)), y)]),
+    forall(member(A, As), z3_assert(H, A)),
+    z3_check(H, l_true).
+
+bad_fp_formula(fp_add(rne, x, d)).               % different formats
+bad_fp_formula(fp_value(1.0, real) = x).          % not a floating-point sort
+bad_fp_formula(fp_value(foo, float32) = x).       % not a value
+bad_fp_formula(x = to_fp(rne, "s", float32)).     % not convertible
+bad_fp_formula(b = fp_to_sbv(rtz, x, 0)).         % no bits
+
+test(bad_formulas, [forall(bad_fp_formula(F))]) :-
+    setup_call_cleanup(fp_handle(H),
+                       assertion(\+ z3_assert(H, F)),
+                       z3_free_handle(H)).
+
+:- end_tests(floating_point).

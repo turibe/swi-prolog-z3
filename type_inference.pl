@@ -7,7 +7,8 @@
               typecheck_to_list/3, % convenience
               mappable_symbol/1, % true if arg is not a pre-declared atom or function symbol
               algebraic_value/1, % true for an algebraic(Approx, root(Coefficients, Index)) number
-              quantifier/3       % quantifier(+Q, -BoundVariables, -Body) for forall/2 and exists/2
+              quantifier/3,      % quantifier(+Q, -BoundVariables, -Body) for forall/2 and exists/2
+              canonical_sort/2   % canonical_sort(+Sort, -Canonical): float32 is fp(8, 24), and so on
           ]).
 
 /** <module> Type inference for Z3 expressions.
@@ -50,6 +51,8 @@ declared(between).
 declared(const_array).
 declared(forall).
 declared(exists).
+declared(F) :- fp_special(F).
+declared(F) :- rounding_mode(F).
 
 %! signature(?Functor, ?ArgTypes, ?Result) is nondet.
 %  Types of the built-in functions and predicates that are not typed by a rule in typecheck/4.
@@ -201,6 +204,76 @@ signature(int_to_str, [int], string).                     % "" for negative numb
 signature(select, [array(I, V), I], V).                   % (array, index)
 signature(store, [array(I, V), I, V], array(I, V)).       % (array, index, value)
 
+%%%% IEEE floating point. Sorts are fp(Ebits, Sbits), float16, float32, float64 or float128 (see
+%%%% canonical_sort/2); the rounding mode, roundingmode, comes first, as in SMT-LIB. Constants
+%%%% (fp_value/2) and the conversions with a sort or width argument are typed by rules in
+%%%% typecheck/4 (see fp_special/1). +, <, and so on are for int and real only.
+signature(fp_abs, [fp(E, S)], fp(E, S)).
+signature(fp_neg, [fp(E, S)], fp(E, S)).
+signature(fp_add, [roundingmode, fp(E, S), fp(E, S)], fp(E, S)).
+signature(fp_sub, [roundingmode, fp(E, S), fp(E, S)], fp(E, S)).
+signature(fp_mul, [roundingmode, fp(E, S), fp(E, S)], fp(E, S)).
+signature(fp_div, [roundingmode, fp(E, S), fp(E, S)], fp(E, S)).
+signature(fp_fma, [roundingmode, fp(E, S), fp(E, S), fp(E, S)], fp(E, S)).   % x * y + z, rounded once
+signature(fp_sqrt, [roundingmode, fp(E, S)], fp(E, S)).
+signature(fp_rem, [fp(E, S), fp(E, S)], fp(E, S)).
+signature(fp_round_to_integral, [roundingmode, fp(E, S)], fp(E, S)).
+signature(fp_min, [fp(E, S), fp(E, S)], fp(E, S)).
+signature(fp_max, [fp(E, S), fp(E, S)], fp(E, S)).
+signature(fp_leq, [fp(E, S), fp(E, S)], bool).
+signature(fp_lt, [fp(E, S), fp(E, S)], bool).
+signature(fp_geq, [fp(E, S), fp(E, S)], bool).
+signature(fp_gt, [fp(E, S), fp(E, S)], bool).
+signature(fp_eq, [fp(E, S), fp(E, S)], bool).          % IEEE equality: NaN is not fp_eq to itself
+signature(fp_is_normal, [fp(_, _)], bool).
+signature(fp_is_subnormal, [fp(_, _)], bool).
+signature(fp_is_zero, [fp(_, _)], bool).
+signature(fp_is_infinite, [fp(_, _)], bool).
+signature(fp_is_nan, [fp(_, _)], bool).
+signature(fp_is_negative, [fp(_, _)], bool).
+signature(fp_is_positive, [fp(_, _)], bool).
+signature(fp_to_real, [fp(_, _)], real).
+
+%! rounding_mode(?Name) is nondet.
+%  The IEEE rounding modes: to nearest, ties to even or away from zero; toward positive or negative
+%  infinity; toward zero.
+rounding_mode(rne).
+rounding_mode(rna).
+rounding_mode(rtp).
+rounding_mode(rtn).
+rounding_mode(rtz).
+
+% Floating-point terms typed by rules in typecheck/4, rather than by signature/3.
+fp_special(fp_value).
+fp_special(to_fp).
+fp_special(to_fp_unsigned).
+fp_special(fp_from_ieee_bv).
+fp_special(fp_to_sbv).
+fp_special(fp_to_ubv).
+fp_special(fp_to_ieee_bv).
+
+%! canonical_sort(+Sort, -Canonical) is det.
+%  Canonical is Sort with each IEEE format name replaced by its fp(Ebits, Sbits) form, so that
+%  float32 and fp(8, 24) are the same sort. float and double are errors: they once meant real.
+canonical_sort(S, S) :- var(S), !.
+canonical_sort(float16, fp(5, 11)) :- !.
+canonical_sort(float32, fp(8, 24)) :- !.
+canonical_sort(float64, fp(11, 53)) :- !.
+canonical_sort(float128, fp(15, 113)) :- !.
+canonical_sort(S, _) :- memberchk(S, [float, double]), !,
+    domain_error(sort, S, "use real, or IEEE floating point float16, float32, float64, float128 or fp(Ebits, Sbits)").
+canonical_sort(array(I, V), array(CI, CV)) :- !, canonical_sort(I, CI), canonical_sort(V, CV).
+canonical_sort(S, S).
+
+% domain_error/2 with a hint about what to use instead.
+domain_error(Type, Value, Hint) :- throw(error(domain_error(Type, Value), context(_, Hint))).
+
+% An fp_value/2 value: a number, nan, inf or -inf.
+fp_constant(V) :- number(V), !.
+fp_constant(nan).
+fp_constant(inf).
+fp_constant(-(inf)).
+
 % "mappable" are non-declared atoms or functions whose type signature needs to be inferred; that is, not pre-defined.
 atomic_mappable(X) :- atom(X).
 
@@ -236,13 +309,54 @@ algebraic_value(T) :- compound(T), T = algebraic(_Approx, Root), compound(Root),
 %! typecheck(+Expression, -Type, +InputMap, +OutputMap)
 %  Given the types in InputMap, check/infer Type for Expression, and let OutputMap be the resulting type map.
 typecheck(F, _, _, _) :- var(F), !, instantiation_error(F).
-typecheck(Term:Type, T, Envin, Envout) :- !, Type = T,
-                                          typecheck(Term, Type, Envin, Envout).
+typecheck(Term:Type, T, Envin, Envout) :- !, canonical_sort(Type, T),
+                                          typecheck(Term, T, Envin, Envout).
 typecheck(X, int, E, E) :- integer(X), !.
 %% Type is unified after the cut: with typecheck(true, bool, ...) in the head, true expected as an int
 %% fell through to the clause for symbols, and became an int constant named true.
 typecheck(true, Type, E, E) :- !, Type = bool.
 typecheck(false, Type, E, E) :- !, Type = bool.
+typecheck(RM, Type, E, E) :- atom(RM), rounding_mode(RM), !, Type = roundingmode.
+% fp_value(Value, Sort): the value of the floating-point Sort nearest to Value. Its arguments are
+% neither typechecked nor declared.
+typecheck(fp_value(V, Sort), Type, E, E) :- !,
+                                     fp_constant(V),
+                                     ground(Sort),
+                                     canonical_sort(Sort, Type),
+                                     Type = fp(_, _).
+% to_fp(RM, X, Sort): X, a real, integer, floating-point number or signed bit vector, as Sort.
+typecheck(to_fp(RM, X, Sort), Type, Envin, Envout) :- !,
+                                     ground(Sort),
+                                     canonical_sort(Sort, Type),
+                                     Type = fp(_, _),
+                                     typecheck(RM, roundingmode, Envin, E1),
+                                     member(XType, [real, int, fp(_, _), bv(_)]),
+                                     typecheck(X, XType, E1, Envout).
+typecheck(to_fp_unsigned(RM, X, Sort), Type, Envin, Envout) :- !,
+                                     ground(Sort),
+                                     canonical_sort(Sort, Type),
+                                     Type = fp(_, _),
+                                     typecheck(RM, roundingmode, Envin, E1),
+                                     typecheck(X, bv(_), E1, Envout).
+% fp_from_ieee_bv(BV, Sort): the number whose IEEE bits are BV, of Ebits + Sbits bits.
+typecheck(fp_from_ieee_bv(BV, Sort), Type, Envin, Envout) :- !,
+                                     ground(Sort),
+                                     canonical_sort(Sort, Type),
+                                     Type = fp(E, S),
+                                     N is E + S,
+                                     typecheck(BV, bv(N), Envin, Envout).
+typecheck(fp_to_ieee_bv(X), Type, Envin, Envout) :- !,
+                                     typecheck(X, fp(E, S), Envin, Envout),
+                                     integer(E), integer(S),      % the format must be known by now
+                                     N is E + S,
+                                     Type = bv(N).
+% fp_to_sbv(RM, X, Width), fp_to_ubv(RM, X, Width): X rounded to an integer, as a bit vector.
+typecheck(T, Type, Envin, Envout) :- compound(T), compound_name_arguments(T, F, [RM, X, W]),
+                                     memberchk(F, [fp_to_sbv, fp_to_ubv]), !,
+                                     integer(W), W > 0,
+                                     Type = bv(W),
+                                     typecheck(RM, roundingmode, Envin, E1),
+                                     typecheck(X, fp(_, _), E1, Envout).
 %% We could allow integer constants  to be real, but this leads to duplicate answers.
 %% Without this, we must use, e.g., 2.0 instead of 2 when warranted.
 %% typecheck(X, real, E, E) :- integer(X).
@@ -286,7 +400,8 @@ typecheck(T, Type, Envin, Envout) :- compound(T), functor(T, F, Arity), Arity >=
 % const_array(IndexSort, Value): the array with Value at every index.
 typecheck(const_array(IndexSort, Value), Type, Envin, Envout) :- !,
                                      ground(IndexSort),
-                                     Type = array(IndexSort, ValueType),
+                                     canonical_sort(IndexSort, Index),
+                                     Type = array(Index, ValueType),
                                      typecheck(Value, ValueType, Envin, Envout).
 % forall(Vars, Body) and exists(Vars, Body): Body is typed with each bound variable in scope, shadowing
 % any constant of the same name; afterwards, each name means again what it meant before (or nothing).
@@ -346,7 +461,8 @@ bind_variables([V|Vs], Ein, Eout, [Name-Old|Saved]) :-
     ( V = Name:Sort -> true ; V = Name ),
     must_be(atom, Name),
     ( get_assoc(Name/0, Ein, OldType) -> Old = type(OldType) ; Old = none ),
-    put_assoc(Name/0, Ein, Sort, E1),
+    canonical_sort(Sort, Canonical),
+    put_assoc(Name/0, Ein, Canonical, E1),
     bind_variables(Vs, E1, Eout, Saved).
 
 restore_variables([], E, E).
@@ -595,6 +711,23 @@ typing(const_array(int, 0), array(int, int), []).
 typing(select(const_array(bv(8), "s"), b), string, [b/0-bv(8)]).
 typing(forall([x:int], f(x) > x), bool, [f/1-lambda([int], int)]).
 typing(and(x:bool, exists([x:real], x > 0.0)), bool, [x/0-bool]).   % the outer x keeps its type
+typing(fp_add(rne, x:float32, y), fp(8, 24), [x/0-fp(8, 24), y/0-fp(8, 24)]).
+typing(fp_add(m, x:fp(8, 24), y:float32), fp(8, 24), [m/0-roundingmode]).   % the same sort
+typing(fp_value(0.1, float64), fp(11, 53), []).
+typing(fp_value(-inf, float16), fp(5, 11), []).
+typing(fp_value(nan, fp(4, 6)), fp(4, 6), []).
+typing(fp_lt(x:float32, fp_value(1, float32)), bool, [x/0-fp(8, 24)]).
+typing(fp_is_nan(x:float64), bool, [x/0-fp(11, 53)]).
+typing(fp_fma(rtz, x:float32, y, z), fp(8, 24), [z/0-fp(8, 24)]).
+typing(to_fp(rne, r, float32), fp(8, 24), [r/0-real]).          % an unknown argument is real
+typing(to_fp(rne, x:float64, float32), fp(8, 24), [x/0-fp(11, 53)]).
+typing(to_fp(rne, b:bv(8), float32), fp(8, 24), [b/0-bv(8)]).
+typing(fp_to_sbv(rtz, x:float32, 16), bv(16), [x/0-fp(8, 24)]).
+typing(fp_to_ieee_bv(x:float32), bv(32), [x/0-fp(8, 24)]).
+typing(fp_from_ieee_bv(b, float64), fp(11, 53), [b/0-bv(64)]).
+typing(fp_to_real(x:float16), real, [x/0-fp(5, 11)]).
+typing(select(a:array(int, float32), i), fp(8, 24), [a/0-array(int, fp(8, 24))]).
+typing(forall([x:float32], fp_leq(x, x)), bool, []).
 
 test(typings, [forall(typing(Term, Type, Symbols)), nondet]) :-
     typecheck(Term, T, M),
@@ -617,9 +750,26 @@ ill_typed(store(a:array(int, int), 1, 2.0)). % value of the wrong sort
 ill_typed(const_array(_, 0)).               % index sort unknown
 ill_typed(forall([x:int], and(x, p))).      % x is not a bool
 ill_typed(exists([x:int], x + 1)).          % the body is not a formula
+ill_typed((x:float32) + 1).                 % arithmetic is for int and real; use fp_add
+ill_typed(x:float32 < y).                   % likewise; use fp_lt
+ill_typed(fp_add(rne, x:float32, y:float64)). % different formats
+ill_typed(fp_add(x:float32, x, x)).         % the rounding mode comes first
+ill_typed(fp_value(1.0, real)).             % not a floating-point sort
+ill_typed(fp_value(foo, float32)).          % not a number, nan, inf or -inf
+ill_typed(fp_from_ieee_bv(b:bv(16), float32)). % float32 has 32 bits
+ill_typed(fp_to_ieee_bv(x)).                % the format is unknown
 
 test(ill_typed, [forall(ill_typed(Term))]) :-
     \+ catch(typecheck(Term, _, _), error(instantiation_error, _), fail).
+
+% float and double once meant real; they are now errors, as is fp_add(rne, ...) with them.
+test(float_and_double_removed, [forall(member(S, [float, double])),
+                                throws(error(domain_error(sort, S), _))]) :-
+    typecheck(x:S > 1.0, _, _).
+
+test(canonical_sorts) :-
+    canonical_sort(array(float32, float128), S),
+    assertion(S == array(fp(8, 24), fp(15, 113))).
 
 test(unbound_term, [throws(error(instantiation_error, _))]) :-
     typecheck(_, _, _).
