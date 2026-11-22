@@ -28,6 +28,9 @@
               z3_push_and_print/1,     % +Formula  Pushes and prints a model; fails unless l_true
               z3_push_and_print/2,     % +Formula, ?Status  Pushes and prints a model
               z3_reset/0,              % Resets everything: a new handle, no declarations or enums
+              z3_smtlib2/1,            % -String  The formulas pushed so far, as SMT-LIB2
+              z3_smtlib2_formulas/2,   % +String, -Formulas  An SMT-LIB2 script's assertions, typed for z3_push
+              z3_push_smtlib2/1,       % +String  Pushes an SMT-LIB2 script's assertions
               free_globals/0,          % Frees the global handle
 
               op(750, xfy, and), % =, >, etc. are 700
@@ -68,7 +71,8 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
               ]).
 
 :- use_module(type_inference, [
-                  mappable_symbol/1
+                  mappable_symbol/1,
+                  quantifier/3
               ]).
 
 :- use_module(z3_utils, [
@@ -117,7 +121,9 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
                   z3_optimize/5,
                   z3_solver_pop/3,
                   z3_solver_push/2,
-                  z3_solver_scopes/2
+                  z3_solver_scopes/2,
+                  z3_solver_smtlib2/2,
+                  z3_parse_smtlib2/4
               ]).
 
 :- initialization(new_global_handle(_)).
@@ -642,6 +648,87 @@ label_constants(Vars, Constants) :-
         Another =.. [or, false | Different],
         z3_push(Another),                 % undone on backtracking, like any push
         label_constants(Vars, Constants)
+    ).
+
+%! z3_smtlib2(-String) is det.
+%  String is the formulas pushed so far, as an SMT-LIB2 benchmark: the declarations they need, then
+%  the `assert`s (see z3_solver_smtlib2/2 in z3_swi_foreign). Other SMT solvers can read it.
+z3_smtlib2(String) :-
+    resolve_solver_depth(_),            % drop formulas undone by backtracking
+    get_global_handle(H),
+    z3_solver_smtlib2(H, String).
+
+%! z3_smtlib2_formulas(+String, -Formulas) is semidet.
+%  Formulas is the assertions of String, an SMT-LIB2 script, as formulas for z3_push/1, in order: each
+%  use of a function or constant the script declares is annotated with its sort (x:int,
+%  f(A:int):real), so that type inference gives every symbol the script's sort. String must declare
+%  everything it uses, except built-ins; it is parsed on its own, without the formulas pushed so far.
+%  Its enumeration sorts (`declare-datatypes` with constructors without arguments) are declared, as
+%  by z3_declare_enum/2, unless they already are, with the same values; like z3_declare_enum/2, this
+%  is not undone by backtracking. Other datatypes are not supported. Fails, printing Z3's message, if
+%  String does not parse.
+z3_smtlib2_formulas(String, Formulas) :-
+    setup_call_cleanup(z3_new_handle(H),
+                       z3_parse_smtlib2(H, String, Formulas0, Declarations),
+                       z3_free_handle(H)),
+    forall(member(enum(Sort, Values), Declarations), ensure_enum(Sort, Values)),
+    maplist(annotate_formula(Declarations), Formulas0, Formulas).
+
+% Declares the enumeration sort Sort, with Values, unless it is declared already; an existing one
+% must have the same values. The values are also added to the current type map, which otherwise
+% only gets the enumerations at the first push of a query.
+ensure_enum(Sort, Values) :-
+    z3_enum_declarations(Ds),
+    findall(V, member((V/0):Sort, Ds), Existing),
+    (   Existing == []
+    ->  z3_declare_enum(Sort, Values),
+        get_type_inference_map(Map0),
+        foldl([V, M0, M]>>put_assoc(V/0, M0, Sort, M), Values, Map0, Map),
+        set_type_inference_map(Map)
+    ;   msort(Existing, E), msort(Values, E)
+    ->  true
+    ;   domain_error(enumeration(Sort, Existing), Values)
+    ).
+
+%! z3_push_smtlib2(+String) is semidet.
+%  Pushes the assertions of String, an SMT-LIB2 script (see z3_smtlib2_formulas/2), one at a time.
+%  Fails if one of them is inconsistent with the formulas pushed so far, or ill-typed with them.
+z3_push_smtlib2(String) :-
+    z3_smtlib2_formulas(String, Formulas),
+    maplist(z3_push, Formulas).
+
+% Annotates each use of a declared constant or function in F with its sort. Declarations are
+% Name:Sort and Name(ArgSort, ...):Sort, as from z3_parse_smtlib2/4. A quantifier's bound variables
+% shadow constants of the same name.
+annotate_formula(Declarations, F, Annotated) :-
+    annotate(F, Declarations, Annotated).
+
+annotate(X, Ds, A) :-
+    atom(X), !,
+    (   memberchk(X:Sort, Ds), atom(X)
+    ->  A = (X:Sort)
+    ;   A = X
+    ).
+annotate(X, _, X) :- \+ compound(X), !.
+annotate(Q, Ds, A) :-
+    quantifier(Q, Vars, Body), !,
+    findall(Name, (member(V, Vars), (V = Name:_ -> true ; V = Name)), Bound),
+    exclude([N:_]>>memberchk(N, Bound), Ds, Inner),
+    annotate(Body, Inner, Body1),
+    Q =.. [Quantifier, _, _],
+    A =.. [Quantifier, Vars, Body1].
+annotate(fp_value(V, S), _, fp_value(V, S)) :- !.            % a constant whose arguments are not terms
+annotate(X, Ds, A) :-
+    compound_name_arguments(X, Name, Args),
+    maplist([Arg, Arg1]>>annotate(Arg, Ds, Arg1), Args, Args1),
+    length(Args, N),
+    length(ArgSorts, N),
+    Template =.. [Name|ArgSorts],
+    (   N > 0, memberchk(Template:Range, Ds)
+    ->  maplist([Arg, S, (Arg:S)]>>true, Args1, ArgSorts, Typed),
+        X1 =.. [Name|Typed],
+        A = (X1:Range)
+    ;   A =.. [Name|Args1]
     ).
 
 %! z3_push_and_print(+Formula, -Status)
@@ -1464,6 +1551,73 @@ test(integers_divide_as_integers) :-
     assertion(z3_is_implied(x / 2 = 3)).
 
 :- end_tests(z3pl_division).
+
+:- begin_tests(z3pl_smtlib2, [setup(reset_globals), cleanup(free_globals)]).
+
+test(export_after_backtracking) :-
+    z3_reset,
+    z3_push(x:int > 2),
+    (   z3_push(y:int > x), fail
+    ;   true
+    ),
+    z3_smtlib2(S),
+    assertion(sub_string(S, _, _, _, "(assert (> x 2))")),
+    assertion(\+ sub_string(S, _, _, _, "y")).
+
+% Each use of a declared symbol is annotated with its sort, so that z3_push types it as the script did.
+test(formulas_annotated) :-
+    z3_smtlib2_formulas("(declare-const r Real) (declare-fun f (Int) Real) (assert (> r 2.0)) (assert (= r (f 3)))", Fs),
+    assertion(Fs == [r:real > 2.0, r:real = f(3:int):real]).
+
+% A bound variable shadows a constant of the same name.
+test(quantifier_shadowing) :-
+    z3_smtlib2_formulas("(declare-const x Int) (declare-fun h (Int) Int) (assert (forall ((x Int)) (> (h x) x))) (assert (= x 5))", Fs),
+    assertion(Fs == [forall([x:int], h(x:int):int > x), x:int = 5]).
+
+test(round_trip) :-
+    z3_reset,
+    z3_push(x:int > 2 and x < 4),
+    z3_push(r:real = int2real(x) / 2.0),
+    z3_push(s:string = str_concat("a", "b")),
+    z3_push(q:float16 = fp_add(rne, fp_value(1, float16), fp_value(1, float16))),
+    z3_smtlib2(S),
+    z3_reset,
+    z3_push_smtlib2(S),
+    z3_model(M),
+    assertion(memberchk(x = 3, M.constants)),
+    assertion(memberchk(r = 3/2, M.constants)),
+    assertion(memberchk(s = "ab", M.constants)),
+    assertion(memberchk(q = fp_value(2.0, float16), M.constants)).
+
+test(uninterpreted_sorts) :-
+    z3_reset,
+    z3_push_smtlib2("(declare-sort U 0) (declare-const a U) (declare-const b U) (declare-fun g (U) Int) (assert (distinct a b)) (assert (> (g a) (g b)))"),
+    assertion(z3_is_implied(a <> b)).
+
+test(inconsistent_fails, [fail]) :-
+    z3_reset,
+    z3_push(x:int > 5),
+    z3_push_smtlib2("(declare-const x Int) (assert (< x 2))").
+
+% Enumeration sorts are declared, and keep their values distinct, even after earlier pushes.
+test(enumerations) :-
+    z3_reset,
+    z3_push(y:int > 0),
+    z3_push_smtlib2("(declare-datatypes ((shade 0)) (((light) (dark)))) (declare-const s shade) (assert (not (= s light)))"),
+    assertion(z3_is_implied(s = dark)),
+    z3_enum_declarations(Ds),
+    assertion(memberchk((dark/0):shade, Ds)).
+
+test(enumeration_round_trip) :-
+    z3_reset,
+    z3_declare_enum(tone, [high, low]),
+    z3_push(t:tone = high),
+    z3_smtlib2(S),
+    z3_reset,
+    z3_push_smtlib2(S),
+    assertion(z3_is_implied(t <> low)).
+
+:- end_tests(z3pl_smtlib2).
 
 :- begin_tests(z3pl_label, [setup(reset_globals), cleanup(free_globals)]).
 

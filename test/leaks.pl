@@ -84,6 +84,7 @@ iteration(I) :-
     optimization(I),
     quantifiers,
     floating_point,
+    smtlib2,
     z3_model_lists(H, _),
     z3_model_assocs(H, _),
     z3_get_model(H, M),
@@ -143,6 +144,26 @@ floating_point :-
     \+ z3_assert(H, fp_add(rne, fx, fd) = fx),                % different formats
     \+ z3_assert(H, fp_value(foo, float32) = fx),             % not a value
     z3_free_handle(H).
+
+% SMT-LIB2: exporting, parsing (with the handle's declarations and enums, typed numerals and a
+% floating-point literal), and running a script; and a parse error and a redeclaration.
+smtlib2 :-
+    z3_new_handle(H),
+    z3_declare_enum(H, scolor, [sred, sgreen]),
+    forall(member(N:S, [sx:int, sr:real, sw:bv(8), sq:float32, sc:scolor]), z3_declare_function(H, N, S)),
+    z3_assert(H, sx > 2 and sr = 1.5 and sw = int2bv(8, 7) and sq = fp_value(0.5, float32) and sc = sred),
+    z3_solver_smtlib2(H, String),
+    z3_parse_smtlib2(H, "(declare-const sy Int) (assert (> sy sx)) (assert (= sc sgreen))", _, _),
+    z3_free_handle(H),
+    z3_new_handle(H2),
+    z3_parse_smtlib2(H2, String, Fs, _),
+    forall(member(F, Fs), z3_assert(H2, F)),
+    z3_solver_assertions(H2, _),
+    \+ z3_parse_smtlib2(H2, "(assert (> z", _, _),
+    \+ z3_parse_smtlib2(H2, "(declare-const sx Real) (assert (> sx 1.0))", _, _),
+    z3_free_handle(H2),
+    z3_eval_smtlib2("(declare-const a Int) (assert (> a 5)) (check-sat) (get-model)", _),
+    \+ z3_eval_smtlib2("(assert (> undeclared 5))", _).
 
 % Formulas and arguments that fail or raise errors part-way through conversion.
 error_paths(H) :-

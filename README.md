@@ -464,6 +464,38 @@ results (for NaN, or out of range), under Z3's own name.
 equal to itself, where `x + 1 = x`, rounding modes, associativity and summation order, an overflowing
 midpoint and its fixes, and `sqrt(x * x)`. Run it with `./examples/floating_point.pl`.
 
+### SMT-LIB2 import and export
+
+SMT-LIB2 is the standard text format of SMT solvers. `z3_smtlib2(String)` gives the formulas pushed so
+far in it: the declarations they need, then the `assert`s, for other solvers or for a bug report.
+`z3_push_smtlib2(String)` pushes the assertions of an SMT-LIB2 script, which must declare what it uses;
+`z3_smtlib2_formulas(String, Formulas)` gives them as formulas instead, with each declared symbol
+annotated with its sort (`r:real`, `f(A:int):real`), so that `z3_push` types it as the script did.
+
+```prolog
+?- z3_push(x:int > 2), z3_push(r:real = int2real(x) / 2.0), z3_smtlib2(S), format("~s", [S]).
+(declare-fun x () Int)
+(declare-fun r () Real)
+(assert (> x 2))
+(assert (= r (/ (to_real x) 2.0)))
+
+?- z3_push_smtlib2("(declare-const a Int) (assert (> a 5)) (assert (< a 7))"), z3_model(M).
+M = model{constants:[a=6], functions:[]}.
+```
+
+Only the assertions in scope at the end of a script are taken; other commands, such as `check-sat`,
+are ignored. Enumeration sorts (`declare-datatypes` whose constructors have no arguments) are
+declared as by `z3_declare_enum/2`; other datatypes are not supported yet. At the lower level,
+`z3_solver_smtlib2/2` exports a handle's assertions, `z3_parse_smtlib2/4` parses a script into formulas
+and declarations, and `z3_eval_smtlib2(Script, Output)` runs a whole script, `check-sat` and `get-model`
+included, in a fresh Z3 context, giving Z3's output. In the stateful REPL, `smtlib2/1` and
+`add_smtlib2/1` do the same as `z3_smtlib2/1` and `z3_push_smtlib2/1`.
+
+Converting assertions back to Prolog (here, and in `z3_solver_assertions/2`) keeps numerals' sorts,
+so the formulas mean the same when pushed again: a real is a float (`2.0`), `int2real(N)` for an
+integer too large for a float to hold exactly, or a Prolog rational (`1r3`); a bit vector is
+`int2bv(Width, N)`. Model values stay plain numbers.
+
 ### Reserved names
 
 These names have a built-in meaning in formulas, so they cannot be used as names of your own

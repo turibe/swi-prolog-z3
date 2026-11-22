@@ -24,6 +24,8 @@
 
               save_formulas/1,
               add_formulas/1,
+              smtlib2/1,
+              add_smtlib2/1,
 
               z3_help/0,
 
@@ -67,6 +69,7 @@ only if it is consistent with the formulas added before; otherwise it fails and 
                   z3_solver_pop/3,
                   z3_solver_push/2,
                   z3_solver_scopes/2,
+                  z3_solver_smtlib2/2,
                   z3_model_assocs/2
               ]).
 
@@ -87,7 +90,8 @@ only if it is consistent with the formulas added before; otherwise it fails and 
                   z3_unsat_core/2,
                   z3_explain/2,
                   z3_relax/2,
-                  z3_optimize/2
+                  z3_optimize/2,
+                  z3_smtlib2_formulas/2
               ]).
 
 :- use_module(library(assoc)).
@@ -114,6 +118,8 @@ z3_help :- format(
                                soft(F), soft(F, Weight))
            save_formulas(File) Save the formulas added so far to File
            add_formulas(File)  Add the formulas saved in File
+           smtlib2(S)          S: the formulas added so far, as SMT-LIB2
+           add_smtlib2(S)      Add the assertions of S, an SMT-LIB2 script, one at a time
            reset               Remove all formulas and declarations (the timeout is kept)~n").
 
 :- initialization(reset_globals).
@@ -384,6 +390,21 @@ add_formulas(Filename) :-
     maplist(add, L),
     show_status.
 
+%! smtlib2(-String) is det.
+%  String is the formulas added so far as an SMT-LIB2 benchmark, for other SMT solvers
+%  (see z3_solver_smtlib2/2).
+smtlib2(String) :-
+    get_repl_handle(H),
+    z3_solver_smtlib2(H, String).
+
+%! add_smtlib2(+String) is semidet.
+%  Adds the assertions of String, an SMT-LIB2 script that declares what it uses, one at a time, as
+%  add/1 does (see z3_smtlib2_formulas/2). Fails at the first one that is inconsistent with the
+%  formulas added so far, or ill-typed; those before it stay added.
+add_smtlib2(String) :-
+    z3_smtlib2_formulas(String, Formulas),
+    maplist(add, Formulas).
+
 %! show_status
 %  Prints summary of current status.
 show_status :-
@@ -526,5 +547,23 @@ test(save_and_restore, [setup(tmp_file_stream(text, File, S)), cleanup(delete_fi
     add_formulas(File),
     formulas(L),
     assertion(L == [s:string = "héllo", b:int = 2, c:int > b]).
+
+test(smtlib2_round_trip) :-
+    reset,
+    add(x:int > 3),
+    add(r:real = x / 2.0),
+    add(b:bv(8) = int2bv(8, 7)),
+    smtlib2(S),
+    assertion(sub_string(S, _, _, _, "(declare-fun x () Int)")),
+    reset,
+    add_smtlib2(S),
+    formulas(L),
+    assertion(length(L, 3)),
+    assertion(implied(r > 1.5)).
+
+test(add_smtlib2_inconsistent, [fail]) :-
+    reset,
+    add(x:int > 3),
+    add_smtlib2("(declare-const x Int) (assert (< x 2))").
 
 :- end_tests(repl_tests).

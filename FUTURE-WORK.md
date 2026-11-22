@@ -127,7 +127,13 @@ which Z3 does not support.
 
 ## Smaller conveniences
 
-### 10. SMT-LIB2 import and export (small)
+### 10. SMT-LIB2 import and export (done)
+
+There is now `z3_smtlib2/1`, `z3_push_smtlib2/1` and `z3_smtlib2_formulas/2` in `z3.pl`, and
+`z3_solver_smtlib2/2`, `z3_parse_smtlib2/4` and `z3_eval_smtlib2/2` at the lower level; see the README.
+Enumeration sorts are imported; other datatypes wait for item 6. What follows describes the plan as it
+was.
+
 
 `Z3_solver_to_string` and `Z3_eval_smtlib2_string`, to dump the current assertions for other solvers or
 load benchmarks.
