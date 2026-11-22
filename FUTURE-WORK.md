@@ -93,7 +93,13 @@ a second kind of object beside the solver, probably held by the handle.
 a real Z3 datatype rather than an uninterpreted function. Needs a declaration syntax, constructors,
 accessors and recognizers, and conversion of datatype values back to Prolog.
 
-### 7. Arrays (moderate)
+### 7. Arrays (done)
+
+There is now an `array(IndexSort, ValueSort)` sort, with `select/2`, `store/3` and `const_array/2`; model
+values are `store` chains over `const_array`, as Z3 gives them, and can be used in formulas again; see the
+README. Not handled: array values that Z3 gives as references to a function interpretation (`as-array`),
+which did not occur without quantifiers. What follows describes the plan as it was.
+
 
 `select` and `store`, with an `array(Index, Value)` sort. Mostly sort handling and type inference in
 `type_inference.pl`, plus converting array values in models back to Prolog.

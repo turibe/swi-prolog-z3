@@ -1075,6 +1075,15 @@ bool z3_sort_to_term(Z3_context ctx, Z3_sort sort, term_t result) {
       return FALSE;
     }
     break;
+  case Z3_ARRAY_SORT: {
+    term_t parts = PL_new_term_refs(2);
+    if (!z3_sort_to_term(ctx, Z3_get_array_sort_domain(ctx, sort), parts)
+        || !z3_sort_to_term(ctx, Z3_get_array_sort_range(ctx, sort), parts + 1)
+        || !PL_cons_functor(cons_term, PL_new_functor(PL_new_atom("array"), 2), parts, parts + 1)) {
+      return FALSE;
+    }
+    break;
+  }
   default:
     {
       Z3_string sname_string = Z3_get_symbol_string(ctx, sname);
@@ -1477,6 +1486,30 @@ static int algebraic_to_term(const Z3_context ctx, Z3_ast ast, term_t term) {
     && PL_unify(term, result);
 }
 
+// A sort as written in formulas (see mk_sort): int, real, bool, string, bv(N), array(I, V), or the
+// sort's name for enumeration and uninterpreted sorts.
+static int prolog_sort_term(Z3_context ctx, Z3_sort sort, term_t term) {
+  switch (Z3_get_sort_kind(ctx, sort)) {
+  case Z3_INT_SORT:  return PL_put_atom_chars(term, "int");
+  case Z3_REAL_SORT: return PL_put_atom_chars(term, "real");
+  case Z3_BOOL_SORT: return PL_put_atom_chars(term, "bool");
+  case Z3_BV_SORT: {
+    term_t width = PL_new_term_ref();
+    return PL_put_int64(width, Z3_get_bv_sort_size(ctx, sort))
+      && PL_cons_functor(term, PL_new_functor(PL_new_atom("bv"), 1), width);
+  }
+  case Z3_ARRAY_SORT: {
+    term_t parts = PL_new_term_refs(2);
+    return prolog_sort_term(ctx, Z3_get_array_sort_domain(ctx, sort), parts)
+      && prolog_sort_term(ctx, Z3_get_array_sort_range(ctx, sort), parts + 1)
+      && PL_cons_functor(term, PL_new_functor(PL_new_atom("array"), 2), parts, parts + 1);
+  }
+  default:
+    if (Z3_is_string_sort(ctx, sort)) return PL_put_atom_chars(term, "string");
+    return PL_put_atom_chars(term, Z3_get_symbol_string(ctx, Z3_get_sort_name(ctx, sort)));
+  }
+}
+
 // The Prolog name of a Z3 string operation (see the str_ cases in compound_to_ast), or NULL.
 // Z3 prints these with SMT-LIB names such as str.len, which Prolog code would have to quote.
 static const char *string_operation_name(Z3_decl_kind kind) {
@@ -1571,6 +1604,14 @@ foreign_t z3_ast_to_term_internal(const Z3_context ctx, Z3_ast ast, term_t term)
     Z3_symbol symbol = Z3_get_decl_name(ctx, decl);
     term_t t = PL_new_term_ref();
     functor_t func;
+    if (Z3_get_decl_kind(ctx, decl) == Z3_OP_CONST_ARRAY) {
+      // const_array(IndexSort, Value), as accepted by term_to_ast; the sort is not an argument in Z3.
+      term_t sort_and_value = PL_new_term_refs(2);
+      return prolog_sort_term(ctx, Z3_get_array_sort_domain(ctx, Z3_get_sort(ctx, ast)), sort_and_value)
+        && PL_put_term(sort_and_value + 1, subterms)
+        && PL_cons_functor(t, PL_new_functor(PL_new_atom("const_array"), 2), sort_and_value, sort_and_value + 1)
+        && PL_unify(term, t);
+    }
     const char *prolog_name = string_operation_name(Z3_get_decl_kind(ctx, decl));
     if (prolog_name != NULL) {
       func = PL_new_functor(PL_new_atom(prolog_name), arity);
@@ -2624,9 +2665,7 @@ Z3_sort mk_sort(handle h, term_t expression) {
   case PL_TERM:
     assert(PL_is_compound(expression));
 
-    char *formula_string = NULL;
-    int res = PL_get_chars(expression, &formula_string, CVT_WRITE);
-    DEBUG("mk_sort got compound term %s\n", formula_string);
+    int res;
 
     atom_t name;
     size_t arity;
@@ -2639,6 +2678,16 @@ Z3_sort mk_sort(handle h, term_t expression) {
     const char *name_string = PL_atom_nchars(name, NULL);
     // INFO("sort expression %s has arity %lu\n", name_string, arity);
 
+    if (strcmp(name_string, "array") == 0) { // array(IndexSort, ValueSort)
+      CHECK_ARITY(name_string, 2, arity);
+      term_t index = PL_new_term_ref(), value = PL_new_term_ref();
+      if (!PL_get_arg(1, expression, index) || !PL_get_arg(2, expression, value)) return NULL;
+      Z3_sort index_sort = mk_sort(h, index);
+      if (index_sort == NULL) return NULL;
+      Z3_sort value_sort = mk_sort(h, value);
+      if (value_sort == NULL) return NULL;
+      return Z3_mk_array_sort(ctx, index_sort, value_sort);
+    }
     if (strcmp(name_string, "bv")==0) {
       CHECK_ARITY(name_string, 1, arity);
       term_t a = PL_new_term_ref();
@@ -2802,6 +2851,15 @@ static Z3_ast compound_to_ast(const handle h, decl_map declaration_map, const ch
   }
   // ********************************************* strings ****************************************/
   // Argument orders follow SMT-LIB (str.prefixof, str.contains, str.substr, ...).
+  // ********************************************* arrays ****************************************/
+  else if (strcmp(name_string, "select") == 0) { // (array, index)
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_select(ctx, subterms[0], subterms[1]);
+  }
+  else if (strcmp(name_string, "store") == 0) { // (array, index, value): the array with index set to value
+    CHECK_ARITY(name_string, 3, arity);
+    result = Z3_mk_store(ctx, subterms[0], subterms[1], subterms[2]);
+  }
   else if (strcmp(name_string, "str_concat") == 0) {
     if (arity < 1) return NULL;
     result = arity == 1 ? subterms[0] : Z3_mk_seq_concat(ctx, (unsigned) arity, subterms);
@@ -3455,6 +3513,17 @@ Z3_ast term_to_ast(const handle h, decl_map declaration_map, const term_t formul
 
     // See also prolog's getbit/2.
     // replace by int2bv, have bv_numeral take a list of bools?
+
+    if (strcmp(name_string, "const_array") == 0) { // const_array(IndexSort, Value): Value everywhere
+      CHECK_ARITY(name_string, 2, arity);
+      term_t sort_term = PL_new_term_ref(), value_term = PL_new_term_ref();
+      if (!PL_get_arg(1, formula, sort_term) || !PL_get_arg(2, formula, value_term)) return NULL;
+      Z3_sort index_sort = mk_sort(h, sort_term);
+      if (index_sort == NULL) return NULL;
+      Z3_ast value = term_to_ast(h, declaration_map, value_term);
+      if (value == NULL) return NULL;
+      return Z3_mk_const_array(ctx, index_sort, value);
+    }
 
     if (strcmp(name_string, "algebraic") == 0 && arity == 2) { // an algebraic number from a model
       return algebraic_from_term(h, formula);
