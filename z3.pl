@@ -798,6 +798,24 @@ test(bvsub_no_underflow) :-
 
 :- end_tests(builtin_names).
 
+% Strings through z3.pl's type inference.
+
+:- begin_tests(z3pl_strings, [setup(reset_globals), cleanup(free_globals)]).
+
+test(string_constraints) :-
+    z3_push(s:string = str_concat("ab", t)),
+    z3_push(str_len(s) = 5),
+    z3_push(str_contains(s, "bc")),
+    z3_model(M),
+    memberchk(s = S, M.constants),
+    assertion(string_length(S, 5)).
+
+test(string_type_error) :-
+    z3_push(str_len(x:int) = 3, R),
+    assertion(R == l_type_error).
+
+:- end_tests(z3pl_strings).
+
 
 :- begin_tests(enums).
 

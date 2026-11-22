@@ -169,7 +169,7 @@ struct HandleStruct {
   decl_map enum_declarations; // declarations that typechecker will need
   decl_map declarations; // standard declarations
   long handle_id; // used as a unique ID for the context
-  Z3_sort int_sort, bool_sort, real_sort;
+  Z3_sort int_sort, bool_sort, real_sort, string_sort;
 
   pthread_mutex_t lock;          // held for the whole of any predicate that uses this handle
   atomic_int refcount;           // handle blob + one per live model blob
@@ -231,6 +231,7 @@ void initialize_handle(handle handle) {
   handle->int_sort = Z3_mk_int_sort(ctx);
   handle->bool_sort = Z3_mk_bool_sort(ctx);
   handle->real_sort = Z3_mk_real_sort(ctx);
+  handle->string_sort = Z3_mk_string_sort(ctx);
 
 }
 
@@ -1377,6 +1378,27 @@ static int algebraic_to_term(const Z3_context ctx, Z3_ast ast, term_t term) {
     && PL_unify(term, result);
 }
 
+// The Prolog name of a Z3 string operation (see the str_ cases in compound_to_ast), or NULL.
+// Z3 prints these with SMT-LIB names such as str.len, which Prolog code would have to quote.
+static const char *string_operation_name(Z3_decl_kind kind) {
+  switch (kind) {
+  case Z3_OP_SEQ_CONCAT:   return "str_concat";
+  case Z3_OP_SEQ_LENGTH:   return "str_len";
+  case Z3_OP_SEQ_EXTRACT:  return "str_substr";
+  case Z3_OP_SEQ_AT:       return "str_at";
+  case Z3_OP_SEQ_CONTAINS: return "str_contains";
+  case Z3_OP_SEQ_PREFIX:   return "str_prefixof";
+  case Z3_OP_SEQ_SUFFIX:   return "str_suffixof";
+  case Z3_OP_SEQ_INDEX:    return "str_indexof";
+  case Z3_OP_SEQ_REPLACE:  return "str_replace";
+  case Z3_OP_STRING_LT:    return "str_lt";
+  case Z3_OP_STRING_LE:    return "str_le";
+  case Z3_OP_STR_TO_INT:   return "str_to_int";
+  case Z3_OP_INT_TO_STR:   return "int_to_str";
+  default:                 return NULL;
+  }
+}
+
 foreign_t z3_ast_to_term_internal(const Z3_context ctx, Z3_ast ast, term_t term) {
   if (Z3_is_algebraic_number(ctx, ast)) {
     return algebraic_to_term(ctx, ast, term);
@@ -1419,9 +1441,20 @@ foreign_t z3_ast_to_term_internal(const Z3_context ctx, Z3_ast ast, term_t term)
   }
   DEBUG("non-numeral case\n");
   if (Z3_is_string(ctx, ast)) {
-    Z3_string s = Z3_get_string(ctx, ast);
-    DEBUG("got string %s", s);
-    return PL_unify_string_chars(term, s);
+    // By code point, the inverse of the conversion in term_to_ast; Z3_get_string would escape
+    // backslashes and non-ASCII characters.
+    unsigned len = Z3_get_string_length(ctx, ast);
+    unsigned *code_points = malloc((len > 0 ? len : 1) * sizeof(unsigned));
+    pl_wchar_t *chars = malloc((len > 0 ? len : 1) * sizeof(pl_wchar_t));
+    if (code_points == NULL || chars == NULL) {
+      free(code_points); free(chars);
+      return PL_resource_error("memory");
+    }
+    Z3_get_string_contents(ctx, ast, len, code_points);
+    for (unsigned i = 0; i < len; i++) chars[i] = (pl_wchar_t) code_points[i];
+    int ok = PL_unify_wchars(term, PL_STRING, len, chars);
+    free(code_points); free(chars);
+    return ok;
   }
 
   if (Z3_get_ast_kind(ctx, ast) == Z3_APP_AST) {
@@ -1439,7 +1472,11 @@ foreign_t z3_ast_to_term_internal(const Z3_context ctx, Z3_ast ast, term_t term)
     Z3_symbol symbol = Z3_get_decl_name(ctx, decl);
     term_t t = PL_new_term_ref();
     functor_t func;
-    {
+    const char *prolog_name = string_operation_name(Z3_get_decl_kind(ctx, decl));
+    if (prolog_name != NULL) {
+      func = PL_new_functor(PL_new_atom(prolog_name), arity);
+    }
+    else {
       Z3_string str = Z3_get_symbol_string(ctx, symbol);
       func = PL_new_functor(PL_new_atom(str), arity);
     }
@@ -2133,6 +2170,9 @@ Z3_sort mk_sort(handle h, term_t expression) {
       return h->real_sort; // not the same as a floating point number in Z3
       // return Z3_mk_fpa_sort_double(ctx);
     }
+    if (strcmp(name_string, "string") == 0) {
+      return h->string_sort;
+    }
     // Check if there's an enumeration sort for it:
     Z3_ast key = mk_ast_key(ctx, name_string, 0);
     DEBUG("Looking for enum sort declaration for %s, key %s\n", name_string, Z3_ast_to_string(ctx, key));
@@ -2329,6 +2369,60 @@ static Z3_ast compound_to_ast(const handle h, decl_map declaration_map, const ch
   }
   else if (strcmp(name_string, "distinct") == 0 ) {
     result = Z3_mk_distinct(ctx, arity, subterms);
+  }
+  // ********************************************* strings ****************************************/
+  // Argument orders follow SMT-LIB (str.prefixof, str.contains, str.substr, ...).
+  else if (strcmp(name_string, "str_concat") == 0) {
+    if (arity < 1) return NULL;
+    result = arity == 1 ? subterms[0] : Z3_mk_seq_concat(ctx, (unsigned) arity, subterms);
+  }
+  else if (strcmp(name_string, "str_len") == 0) {
+    CHECK_ARITY(name_string, 1, arity);
+    result = Z3_mk_seq_length(ctx, subterms[0]);
+  }
+  else if (strcmp(name_string, "str_substr") == 0) { // (s, offset, length)
+    CHECK_ARITY(name_string, 3, arity);
+    result = Z3_mk_seq_extract(ctx, subterms[0], subterms[1], subterms[2]);
+  }
+  else if (strcmp(name_string, "str_at") == 0) { // (s, index): the one-character string at index
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_seq_at(ctx, subterms[0], subterms[1]);
+  }
+  else if (strcmp(name_string, "str_contains") == 0) { // (container, containee)
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_seq_contains(ctx, subterms[0], subterms[1]);
+  }
+  else if (strcmp(name_string, "str_prefixof") == 0) { // (prefix, s)
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_seq_prefix(ctx, subterms[0], subterms[1]);
+  }
+  else if (strcmp(name_string, "str_suffixof") == 0) { // (suffix, s)
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_seq_suffix(ctx, subterms[0], subterms[1]);
+  }
+  else if (strcmp(name_string, "str_indexof") == 0) { // (s, substring, start): -1 if not found
+    CHECK_ARITY(name_string, 3, arity);
+    result = Z3_mk_seq_index(ctx, subterms[0], subterms[1], subterms[2]);
+  }
+  else if (strcmp(name_string, "str_replace") == 0) { // (s, from, to): the first occurrence
+    CHECK_ARITY(name_string, 3, arity);
+    result = Z3_mk_seq_replace(ctx, subterms[0], subterms[1], subterms[2]);
+  }
+  else if (strcmp(name_string, "str_lt") == 0) { // lexicographic
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_str_lt(ctx, subterms[0], subterms[1]);
+  }
+  else if (strcmp(name_string, "str_le") == 0) {
+    CHECK_ARITY(name_string, 2, arity);
+    result = Z3_mk_str_le(ctx, subterms[0], subterms[1]);
+  }
+  else if (strcmp(name_string, "str_to_int") == 0) { // -1 if not a sequence of digits
+    CHECK_ARITY(name_string, 1, arity);
+    result = Z3_mk_str_to_int(ctx, subterms[0]);
+  }
+  else if (strcmp(name_string, "int_to_str") == 0) { // "" for negative numbers
+    CHECK_ARITY(name_string, 1, arity);
+    result = Z3_mk_int_to_str(ctx, subterms[0]);
   }
   else if (strcmp(name_string, "divides") == 0) {
     CHECK_ARITY(name_string, 2, arity);
@@ -2759,16 +2853,23 @@ Z3_ast term_to_ast(const handle h, decl_map declaration_map, const term_t formul
     break;
   }
   case PL_STRING: {
-    char *string;
+    // By code point (Z3_mk_u32string), not Z3_mk_string, which would read \u{...} escapes in the
+    // text, so backslashes and non-ASCII characters reach Z3 as they are.
+    pl_wchar_t *chars;
     size_t len;
-    if (!PL_get_string_chars(formula, &string, &len)) {
+    if (!PL_get_wchars(formula, &len, &chars, CVT_STRING)) {
       ERROR("Could not convert string\n");
+      return NULL;
     }
-    else {
-      return Z3_mk_string(ctx, string);
+    unsigned *code_points = malloc((len > 0 ? len : 1) * sizeof(unsigned));
+    if (code_points == NULL) {
+      PL_resource_error("memory");
+      return NULL;
     }
-    return NULL;
-    break;
+    for (size_t i = 0; i < len; i++) code_points[i] = (unsigned) chars[i];
+    result = Z3_mk_u32string(ctx, (unsigned) len, code_points);
+    free(code_points);
+    return result;
   }
   case PL_INTEGER:
     if (PL_get_long(formula, &lval)) {
