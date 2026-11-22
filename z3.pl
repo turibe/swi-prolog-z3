@@ -462,6 +462,7 @@ labelled_subset([L|Ls], [F|Fs], CoreLabels, Core) :-
 %  Do a solver check and return the status, one of `{l_true, l_false, l_undef}`
 z3_check(Status) :-
     check_status_arg(Status),
+    resolve_solver_depth(_),          % drop formulas undone by backtracking
     get_global_handle(S),
     z3_check(S, Status).
 
@@ -469,6 +470,7 @@ z3_check(Status) :-
 %  Prints a model if status is not `l_false` (that is, known to be unsat).
 z3_check_and_print(Status) :-
     check_status_arg(Status),
+    resolve_solver_depth(_),
     get_global_handle(Solver),
     z3_check_and_print(Solver, Status).
 
@@ -562,6 +564,7 @@ solve(L, M) :- maplist(z3_push, L), z3_model(M).
 %  Evaluates the expression in a current model. CompletionFlag is one of `true, false`.
 z3_eval(Expression, Completion, Result) :-
     \+ is_list(Expression), !,
+    resolve_solver_depth(_),
     get_global_handle(S),
     z3_check(S, l_true),
     replace_var_attributes(Expression, E1),
@@ -580,6 +583,7 @@ z3_eval(Expression, Result) :- z3_eval(Expression, false, Result).
 
 %% Map eval on a list:
 z3_eval_list(L, Completion, Result) :- must_be(list, L),
+                                       resolve_solver_depth(_),
                                        get_global_handle(S),
                                        z3_check(S, l_true),
                                        replace_var_attributes(L, L1),
@@ -651,7 +655,18 @@ z3_push_and_print(F) :- z3_push_and_print(F, l_true).
 %! z3_is_consistent(+Formula) is semidet.
 %  Succeeds if Formula is known to be consistent with the formulas pushed so far (status `l_true`). Fails
 %  if it is not, or if Z3 cannot decide. Pushes nothing.
-z3_is_consistent(F) :- z3_push(F, l_true), popn(1).
+z3_is_consistent(F) :-
+    check_and_pop(F, l_true).
+
+% Pushes F, succeeding if the status is Status, then pops it again, restoring solver_depth: popping
+% alone left solver_depth one too high, so that a later backtrack could leave a formula asserted.
+% F's types stay in the type map, as its symbols stay declared in Z3, which does not undo
+% declarations within a query.
+check_and_pop(F, Status) :-
+    b_getval(solver_depth, Depth),
+    z3_push(F, Status),
+    popn(1),
+    b_setval(solver_depth, Depth).
 
 %% to handle type errors correctly, need to distiguish failure-by-type-error from failure-by-inconsistency:
 
@@ -659,17 +674,8 @@ z3_is_consistent(F) :- z3_push(F, l_true), popn(1).
 %  Succeeds if Formula is known to be implied by the formulas pushed so far (its negation is
 %  inconsistent with them). Fails if it is not, if Z3 cannot decide, or if Formula is ill-typed. Pushes
 %  nothing.
-z3_is_implied(F) :- z3_push(not(F), Status),
-                    (Status == l_true -> (popn(1) , fail)
-                    ;
-                    (Status == l_undef -> (popn(1) , fail)
-                    ;
-                    (Status == l_type_error -> fail
-                    ;
-                    (
-                        assertion(Status == l_false),
-                        popn(1)
-                    )))).
+z3_is_implied(F) :-
+    check_and_pop(not(F), l_false).
 
 %% does not work if there are type errors:
 %% z3_is_implied(F) :- \+ z3_is_consistent(not(F)).
@@ -1390,6 +1396,59 @@ test(type_error) :-
 :- end_tests(z3pl_arrays).
 
 % Quantifiers through z3.pl: bound variables are typed in scope, and not declared.
+
+:- begin_tests(z3pl_solver_depth, [setup(reset_globals), cleanup(free_globals)]).
+
+% After resolving, Z3's scopes match the pushes on the current branch.
+depth_matches :-
+    resolve_solver_depth(D),
+    raw_solver_scopes(N),
+    assertion(D == N).
+
+% Backtracking to a point between two pushes, after a consistency check, undoes the later push.
+% (z3_is_consistent/1 and z3_is_implied/1 popped Z3 without lowering solver_depth, so x = 7
+% stayed asserted.)
+test(check_then_backtrack, [forall(member(Check, [z3_is_consistent(x > 5), z3_is_implied(x > -1)]))]) :-
+    z3_reset,
+    z3_push(x:int > 0),
+    call(Check),
+    depth_matches,
+    z3_push(x < 10),
+    member(K, [1, 2]),
+    (   K == 1
+    ->  z3_push(x = 7), fail
+    ;   true
+    ),
+    assertion(z3_is_consistent(x = 3)),
+    depth_matches.
+
+% The checks push nothing; their formulas' types stay, as Z3 keeps the declarations.
+test(checks_leave_nothing) :-
+    z3_reset,
+    z3_push(x:int > 0),
+    z3_is_consistent(y:int > 0),               % not in assertion/1, which would undo the types
+    z3_is_implied(x > -1),
+    \+ z3_is_consistent(x < 0),
+    \+ z3_is_implied(x > 3),
+    depth_matches,
+    get_global_handle(H),
+    z3_swi_foreign:z3_solver_assertions(H, As),
+    assertion(As == [x > 0]),
+    z3_push(y:real > 0.5, Status),               % y is an int, from the check above
+    assertion(Status == l_type_error).
+
+% After backtracking, z3_check/1, z3_eval/2 and z3_model/1 see only the current branch.
+test(no_stale_assertions) :-
+    z3_reset,
+    z3_push(x:int > 0),
+    (   z3_push(x < 0, _), fail
+    ;   true
+    ),
+    z3_check(S), assertion(S == l_true),
+    z3_eval(x, V), assertion(V > 0),
+    z3_model(M), assertion(memberchk(x = _, M.constants)).
+
+:- end_tests(z3pl_solver_depth).
 
 :- begin_tests(z3pl_label, [setup(reset_globals), cleanup(free_globals)]).
 
