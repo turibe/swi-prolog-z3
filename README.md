@@ -126,7 +126,8 @@ swipl -g run_tests -t halt z3.pl stateful_repl.pl z3_swi_foreign.pl
 
 On macOS, `make leaks` checks the C code for memory leaks. It runs a workload that exercises most of
 `z3_swi_foreign.c` (`test/leaks.pl`) under macOS's `leaks` tool, and fails if any leaked block was
-allocated from `z3_swi_foreign.so`. Set `LEAK_ITERATIONS` to change the workload size (default 2000).
+allocated from `z3_swi_foreign.so`. Set `LEAK_ITERATIONS` to change the workload size (default 100;
+every line and branch of the C code that the workload reaches is already reached in 100 iterations).
 It finds memory that is never freed, not objects that are kept alive longer than needed but are freed
 with their handle.
 
@@ -252,6 +253,30 @@ for a timeout, or `interrupted` after `z3_interrupt/1`.
 ?- z3_set_timeout(1000), z3_push(HardFormula, Status), z3_reason_unknown(Reason).
 Status = l_undef, Reason = timeout.       % or canceled, depending on which part of Z3 stops
 ```
+
+### Optimization
+
+`z3_optimize(Objectives, Model)` finds a model of the formulas pushed so far that is optimal for
+`Objectives`, a list in priority order (earlier objectives take precedence) of:
+
+- `minimize(T)` and `maximize(T)`, for an arithmetic or bit-vector term `T`;
+- `soft(F)` and `soft(F, Weight)`, for a formula `F` that should hold if possible, with a positive
+  integer or float `Weight` (1 by default). All soft constraints together form one objective, at the
+  position of the first one, minimizing the total weight of those that are violated.
+
+The model has an extra key, `objectives`, with each objective's value: the optimum, or for a soft
+constraint whether it holds.
+
+```prolog
+?- z3_push(x:int >= 0 and y:int >= 0 and x + y =< 10), z3_optimize([maximize(2*x + y)], M).
+M = model{constants:[x=10, y=0], functions:[], objectives:[maximize(2*x+y)=20]}.
+```
+
+Optima can be infinite or not attained, so values can contain `oo` (infinity) and `epsilon` (an
+infinitesimal): `maximize(x) = oo` when `x` is unbounded, or `minimize(x) = epsilon` for `x > 0` over the
+reals. `z3_optimize/2` fails if the formulas are inconsistent, or if Z3 cannot decide (for example after a
+timeout). At the lower level, `z3_optimize(Handle, Objectives, Status, Values, Model)` returns the status,
+the values and a model of the handle's solver.
 
 ### Reserved names
 

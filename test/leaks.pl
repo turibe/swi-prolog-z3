@@ -23,7 +23,7 @@
 :- initialization(main, main).
 
 main(Argv) :-
-    (   member(A, Argv), atom_number(A, N) -> true ; N = 2000 ),
+    (   member(A, Argv), atom_number(A, N) -> true ; N = 100 ),   % see LEAK_ITERATIONS in the Makefile
     (   getenv('MallocStackLogging', _)
     ->  true
     ;   format(user_error, "MallocStackLogging is not set; leaks cannot show call stacks.~n", []),
@@ -80,6 +80,7 @@ iteration(I) :-
     z3_assert(H, implies(t1:bool, (core_x:int) < 0)),
     z3_check_assumptions(H, [t1], _),
     z3_get_unsat_core(H, _),
+    optimization(I),
     z3_model_lists(H, _),
     z3_model_assocs(H, _),
     z3_get_model(H, M),
@@ -97,6 +98,18 @@ iteration(I) :-
     z3_reset_declarations(H),
     z3_free_handle(H),
     (   I mod 10 =:= 0 -> z3_new_handle(_Dropped) ; true ).   % left for garbage collection
+
+% Optimization, on a handle of its own: on the handle above, which has nonlinear and string
+% constraints, the optimizer can take until the timeout.
+optimization(I) :-
+    z3_new_handle(H),
+    z3_assert(H, (u:int) >= 0),
+    z3_assert(H, (u:int) + (v:int) =< I),
+    z3_optimize(H, [maximize(u + 2*v), soft((v:int) > 3, 2), minimize(u)], _, _, M),
+    ( M == none -> true ; z3_model_lists(H, M, _), z3_free_model(H, M) ),
+    z3_optimize(H, [soft(w:bool)], _, _, _),               % model left for garbage collection
+    catch(z3_optimize(H, [foo], _, _, _), _, true),         % a bad objective, after the optimizer exists
+    z3_free_handle(H).
 
 % Formulas and arguments that fail or raise errors part-way through conversion.
 error_paths(H) :-

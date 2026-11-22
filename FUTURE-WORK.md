@@ -74,7 +74,12 @@ What follows describes the plan as it was.
 core would give it a fast first approximation, or replace it in simple cases, and could be tested
 against it.
 
-### 5. Optimization (moderate to large)
+### 5. Optimization (done)
+
+There is now a one-shot `z3_optimize/2` in `z3.pl`, and `z3_optimize/5` at the lower level, with
+`minimize`, `maximize` and weighted soft constraints; see the README. A persistent, incremental
+optimizer per handle was not added. What follows describes the plan as it was.
+
 
 `Z3_optimize`: `minimize` and `maximize` objectives, and weighted soft constraints. Today only
 satisfiability can be checked, so this would open up problems such as scheduling and assignment. It needs

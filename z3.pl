@@ -10,6 +10,7 @@
               z3_reason_unknown/1,     % -Reason  Why the last check returned l_undef
               z3_unsat_core/2,         % +Formulas, -Core  A subset of Formulas inconsistent with the solver
               z3_minimal_core/2,       % +Formulas, -Core  The same, minimal (using QuickXplain)
+              z3_optimize/2,           % +Objectives, -Model  An optimal model of the formulas pushed so far
               z3_declarations/1,       % -Declarations  Get declarations so far, or those used in the previous query (reset on a new push).
               z3_declare_enum/2,       % +EnumName, +EnumValues. Not backtrackable.
               z3_enum_declarations/1,
@@ -106,6 +107,7 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
                   z3_reason_unknown/2,
                   z3_check_assumptions/3,
                   z3_get_unsat_core/2,
+                  z3_optimize/5,
                   z3_solver_pop/3,
                   z3_solver_push/2,
                   z3_solver_scopes/2
@@ -280,6 +282,43 @@ z3_set_timeout(Ms) :-
 z3_reason_unknown(Reason) :-
     get_global_handle(H),
     z3_reason_unknown(H, Reason).
+
+%! z3_optimize(+Objectives, -Model) is semidet.
+%  Model is an optimal model of the formulas pushed so far, for Objectives: a list, in priority
+%  order, of `minimize(T)`, `maximize(T)`, `soft(F)` and `soft(F, Weight)` (see z3_optimize/5 in
+%  z3_swi_foreign). Model is like z3_model/1's, with an extra key, `objectives`, pairing each
+%  objective with its value: `[maximize(2*x+y) = 20]`. Values can contain `oo` (infinity) and
+%  `epsilon` (an infinitesimal) for optima that are infinite or not attained. Fails if the formulas
+%  are inconsistent, or Z3 cannot decide (status `l_undef`, for example after a timeout). The
+%  solver is left as it was.
+z3_optimize(Objectives, Model) :-
+    must_be(list, Objectives),
+    % findall/3 undoes the push that typechecks and declares the objectives. Only ground results
+    % come out, and they are paired with the Objectives themselves, which may contain variables.
+    findall(M-Values, optimal_model(Objectives, M, Values), Found),
+    resolve_solver_depth(_),
+    Found = [Model0-Values],
+    maplist([O, V, O = V]>>true, Objectives, Values, Pairs),
+    Model = Model0.put(objectives, Pairs).
+
+optimal_model(Objectives, Model, Values) :-
+    maplist(objective_formula, Objectives, Formulas),
+    Conjunction =.. [and, true | Formulas],
+    z3_push(Conjunction, Status),            % types and declares the objectives' symbols
+    memberchk(Status, [l_true, l_undef]),
+    ground_version(Objectives, Grounded, _),
+    remove_type_annotations(Grounded, Plain),
+    get_global_handle(H),
+    z3_optimize(H, Plain, l_true, Values, M),
+    z3_swi_foreign:z3_model_lists(H, M, Model),
+    z3_free_model(H, M).
+
+% A tautology that mentions an objective's expression, so typechecking gives its symbols types.
+objective_formula(minimize(T), T = T) :- !.
+objective_formula(maximize(T), T = T) :- !.
+objective_formula(soft(F), or(F, not(F))) :- !.
+objective_formula(soft(F, _Weight), or(F, not(F))) :- !.
+objective_formula(O, _) :- domain_error(z3_objective, O).
 
 %! z3_unsat_core(+Formulas, -Core) is semidet.
 %  Core is a subset of Formulas, in their order, that is inconsistent with the formulas pushed so far.
@@ -967,6 +1006,58 @@ test(minimal_core_like_qexplain) :-
     assertion(Core == Expected).
 
 :- end_tests(z3pl_cores).
+
+% z3_optimize/2.
+
+:- begin_tests(z3pl_optimize, [setup(reset_globals), cleanup(free_globals)]).
+
+test(maximize) :-
+    z3_reset,
+    z3_push(x:int >= 0 and y:int >= 0 and x + y =< 10),
+    z3_optimize([maximize(2*x + y)], M),
+    assertion(M.constants == [x = 10, y = 0]),
+    assertion(M.objectives == [maximize(2*x + y) = 20]).
+
+test(soft) :-
+    z3_reset,
+    z3_push(not(p:bool and q:bool)),
+    z3_optimize([soft(p, 2), soft(q)], M),
+    assertion(M.objectives == [soft(p, 2) = true, soft(q) = false]).
+
+% Symbols that only appear in objectives are typed and declared.
+test(new_symbols) :-
+    z3_reset,
+    z3_push(x:int >= 0 and x =< 3),
+    z3_optimize([soft(z:int =< 1), maximize(x + z)], M),
+    assertion(M.objectives == [soft(z:int =< 1) = true, maximize(x + z) = 4]).
+
+test(inconsistent, [fail]) :-
+    z3_reset,
+    z3_push(x:int > 0, _),
+    z3_push(x < 0, _),
+    z3_optimize([maximize(x)], _).
+
+test(solver_unchanged) :-
+    z3_reset,
+    z3_push(x:int > 0),
+    raw_solver_scopes(S0),
+    z3_optimize([maximize(x), soft(y:int = 1)], _),
+    raw_solver_scopes(S1),
+    assertion(S1 == S0),
+    get_global_handle(H),
+    z3_solver_assertions(H, As),
+    assertion(As == [x > 0]).
+
+test(prolog_variables) :-
+    z3_reset,
+    z3_push(X >= 0),
+    z3_push(X =< 5),
+    z3_optimize([maximize(X)], M),
+    M.objectives = [Objective = Value],
+    assertion(Objective == maximize(X)),                    % the caller's variable, not a copy
+    assertion(Value == 5).
+
+:- end_tests(z3pl_optimize).
 
 
 :- begin_tests(enums).
