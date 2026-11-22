@@ -22,6 +22,14 @@
 SWI Prolog implementation of Ulrich Junker's Quickxplain (https://cdn.aaai.org/AAAI/2004/AAAI04-027.pdf),
 for finding minimally unsatisfiable subsets, and maximally satisfiable ones.
 
+Each predicate takes Assert, a predicate that adds one constraint: Assert(C) succeeds if C can be
+added consistently to the constraints added so far, and fails if not. Its effects must be undone on
+backtracking, as for CLP constraints (call/1) or z3.pl's z3_push/1, since constraint sets are tried
+inside \+ \+. Assert should fail only on inconsistency: a failure for another reason, such as a type
+error, is taken for a conflict (z3.pl's z3_explain/2 and z3_relax/2 avoid this for Z3 formulas).
+
+Base is a list of constraints that always hold; it is added first in each check.
+
 @author Tomas Uribe
 @license MIT
 */
@@ -47,14 +55,17 @@ debuginfo(_X, _Y) :- true.
 %% if they are not, Output = Constraints, which is fine for relax but confusing for explain.
 %% use the "check_" procedures to check consistency first.
 
-%! qexplain(:Assert, +Base, +Constraints, -Result)
-%  Assuming Base + Constraints is unsat, Result is a minimal unsat subset of Constraints.
+%! qexplain(:Assert, +Base, +Constraints, -Result) is det.
+%  Assuming Base + Constraints is unsat, Result is a minimal subset of Constraints, in their order, that
+%  is unsat with Base: removing any constraint from it makes it consistent. Of several such subsets, it
+%  is the one whose last constraint comes earliest. Result is [] if Base is unsat by itself; if Base +
+%  Constraints is consistent, Result is all of Constraints (check_explain/4 checks first).
 qexplain(_Assert, _Base, [], Output) :- !, Output = [].
 qexplain(Assert, Base, Constraints, Output) :-
     rec_qexplain(Assert, Base, Base, Constraints, Output).
 
-%! qexplain(:Assert, +Constraints, -Result)
-%  Assuming Constraints is unsat, Result is a minimal unsat subset of Constraints.
+%! qexplain(:Assert, +Constraints, -Result) is det.
+%  qexplain/4 with an empty Base.
 qexplain(Assert, Constraints, Result) :- qexplain(Assert, [], Constraints, Result).
 
 %% non_empty(Delta) is there to avoid an extra consistency check at the start.
@@ -70,23 +81,27 @@ rec_qexplain(Assert, B, Delta, C, Output) :-
         )
      )).
 
-%! check_explain(:Assert, +Base, +Constraints, -Result)
-%  Checks whether Base + Constraints is unsat. If so, calls qexplain; otherwise, Result is `consistent`.
+%! check_explain(:Assert, +Base, +Constraints, -Result) is det.
+%  Checks whether Base + Constraints is unsat. If so, Result is as for qexplain/4; otherwise, Result is
+%  `consistent`.
 check_explain(Assert, Base, Constraints, Output) :-
     consistent(Assert, Base, Constraints) -> Output = consistent; qexplain(Assert, Base, Constraints, Output).
 
-%! check_explain(:Assert, +Constraints, -Result)
-%  Checks whether Constraints is unsat. If so, calls qexplain; otherwise, Result is `consistent`.
+%! check_explain(:Assert, +Constraints, -Result) is det.
+%  check_explain/4 with an empty Base.
 check_explain(Assert, Constraints, Output) :- check_explain(Assert, [], Constraints, Output).
 
-%! qrelax(:Assert, +Base, +Constraints, -Result)
-%  Assuming Base + Constraints is unsat, Result is a maximal satisfiable subset of Constraints, given Base.
+%! qrelax(:Assert, +Base, +Constraints, -Result) is det.
+%  Result is a maximal subset of Constraints that is consistent with Base: adding any other constraint
+%  makes it inconsistent. When constraints conflict, later ones are kept over earlier ones. Result is
+%  not in the order of Constraints. If Base + Constraints is consistent, Result is Constraints; if
+%  Base is inconsistent by itself, it is [].
 qrelax(_Assert, _B, [], Result) :- !, Result = [].
 qrelax(Assert, B, Constraints, Result) :-
     rec_qrelax(Assert, B, Constraints, Result).
 
-%! qrelax(:Assert, +Constraints, -Result)
-%  Assuming Constraints is unsat, Result is a maximal satisfiable subset of Constraints.
+%! qrelax(:Assert, +Constraints, -Result) is det.
+%  qrelax/4 with an empty Base.
 qrelax(Assert, Constraints, Result) :- qrelax(Assert, [], Constraints, Result).
 
 rec_qrelax(Assert, B, C, Result) :-
@@ -101,13 +116,14 @@ rec_qrelax(Assert, B, C, Result) :-
         append(Delta1, Delta2, Result)
      )))).
 
-%! check_relax(:Assert, +Base, +Constraints, -Result)
-%  Assuming Base + Constraints is unsat, Result is a maximal satisfiable subset of Constraints, given Base.
+%! check_relax(:Assert, +Base, +Constraints, -Result) is det.
+%  Checks whether Base + Constraints is consistent. If so, Result is `consistent`; otherwise, it is as
+%  for qrelax/4.
 check_relax(Assert, Base, Constraints, Output) :-
     consistent(Assert, Base, Constraints) -> Output = consistent; qrelax(Assert, Base, Constraints, Output).
 
-%! check_relax(:Assert, +Constraints, -Result)
-%  Assuming Constraints is unsat, Result is a maximal satisfiable subset of Constraints.
+%! check_relax(:Assert, +Constraints, -Result) is det.
+%  check_relax/4 with an empty Base.
 check_relax(Assert, Constraints, Output) :- check_relax(Assert, [], Constraints, Output).
 
 inconsistent(Assert, L) :- \+ checksat(Assert, L).

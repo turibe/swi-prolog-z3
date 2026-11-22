@@ -56,12 +56,12 @@ add_pair(Pair, A1, A2) :-
     Pair =.. [_, K, V],
     put_assoc(K,A1,V,A2).
 
-/**
+/* An older, recursive version:
 pair_list_to_assoc([], t).
 pair_list_to_assoc([X|Rest], M) :- % TODO: better recursion here.
     pair_list_to_assoc(Rest, M1),
     add_pair(X, M1, M).
-**/
+*/
 
 %! pair_list_to_assoc(+List, -Map)
 %  Creates an assoc map from a list of pairs (binary terms, any function symbol is allowed).
