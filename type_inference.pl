@@ -239,8 +239,10 @@ typecheck(F, _, _, _) :- var(F), !, instantiation_error(F).
 typecheck(Term:Type, T, Envin, Envout) :- !, Type = T,
                                           typecheck(Term, Type, Envin, Envout).
 typecheck(X, int, E, E) :- integer(X), !.
-typecheck(true, bool, E, E) :- !.
-typecheck(false, bool, E, E) :- !.
+%% Type is unified after the cut: with typecheck(true, bool, ...) in the head, true expected as an int
+%% fell through to the clause for symbols, and became an int constant named true.
+typecheck(true, Type, E, E) :- !, Type = bool.
+typecheck(false, Type, E, E) :- !, Type = bool.
 %% We could allow integer constants  to be real, but this leads to duplicate answers.
 %% Without this, we must use, e.g., 2.0 instead of 2 when warranted.
 %% typecheck(X, real, E, E) :- integer(X).
@@ -638,5 +640,14 @@ test(overloading_by_arity, [nondet]) :-
 % (Booleans are allowed in arithmetic, so and(p, p + 1 = 2) does type.)
 test(symbol_type_conflict, [fail]) :-
     typecheck(and(p, p = 3), bool, _).
+
+% true and false are Booleans, never constants of another sort.
+test(true_false_only_bool, [forall(member(C-T, [true-int, false-real, true-string]))]) :-
+    empty_assoc(E),
+    assertion(\+ typecheck(C, T, E, _)).
+
+test(true_not_int_in_equality) :-
+    empty_assoc(E),
+    assertion(\+ typecheck(x:int = true, bool, E, _)).
 
 :- end_tests(type_inference_tests).
