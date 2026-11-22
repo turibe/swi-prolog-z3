@@ -27,7 +27,8 @@ Utilities shared by z3.pl and stateful_repl.pl
 :- use_module(type_inference, [
                   typecheck/4,
                   mappable_symbol/1,
-                  algebraic_value/1
+                  algebraic_value/1,
+                  quantifier/3
                   ]).
 
 :- initialization(reset_var_counts).
@@ -114,6 +115,13 @@ ground_version(X, X, S) :- number(X), !, ord_empty(S).
 ground_version(X, X, [X/0]) :- atom(X), mappable_symbol(X), !, true.
 ground_version(X, X, S) :- atomic(X), !, ord_empty(S).
 ground_version(X, X, S) :- algebraic_value(X), !, ord_empty(S).   % a number, not a function application
+% A quantifier's bound variables are not symbols to declare; its body's other symbols are.
+ground_version(Q, G, Result) :- quantifier(Q, Vars, Body), !,
+                                ground_version(Body, GBody, BodySymbols),
+                                findall(Name/0, (member(V, Vars), (V = Name:_ -> true ; V = Name)), Bound),
+                                ord_subtract(BodySymbols, Bound, Result),
+                                Q =.. [F, _, _],
+                                G =.. [F, Vars, GBody].
 ground_version(C, XG:T, Result) :- compound(C), C = X:T, !,
                                    %% type checking can instantiate the types, so we don't require them to be ground at this point.
                                    %% (ground(T) -> true ; type_error(ground, T)),
@@ -134,6 +142,13 @@ ground_version([], [], []).
 %  Removes all F:T type annotations from Term.
 
 remove_type_annotations(X, X) :- atomic(X), !.
+% A quantifier keeps its bound variables' sorts, which the C code needs; a sort still unknown after
+% type inference is uninterpreted.
+remove_type_annotations(Q, Q1) :- quantifier(Q, Vars, Body), !,
+                                  maplist([N:S, N:S]>>ground_sort(S), Vars, Vars1),
+                                  remove_type_annotations(Body, Body1),
+                                  Q =.. [F, _, _],
+                                  Q1 =.. [F, Vars1, Body1].
 remove_type_annotations(X:_T, X1) :- mapargs(remove_type_annotations, X, X1), !.
 remove_type_annotations(F, F1) :- compound(F), !, mapargs(remove_type_annotations, F, F1).
 
@@ -173,6 +188,11 @@ z3_enum_declarations_assoc(H, M) :-
     z3_enum_declarations(H, L),
     add_enums(L, t, M).                                   
 
+% Gives each unannotated bound variable of a quantifier an unknown sort, x:_, for type inference to fill in.
+expand_macros(Q, R) :- quantifier(Q, Vars, Body), !,
+                       maplist([V, V1]>>(V = _:_ -> V1 = V ; V1 = V:_), Vars, Vars1),
+                       Q =.. [F, _, _],
+                       R =.. [F, Vars1, Body].
 expand_macros(F, R) :- functor(F, isoneof, _N), !,
                        F =.. [isoneof | [X | Rest]],
                        maplist({X}/[V,X=V]>>true, Rest, L),

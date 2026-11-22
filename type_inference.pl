@@ -6,7 +6,8 @@
               typecheck_formula_list/3, % convenience
               typecheck_to_list/3, % convenience
               mappable_symbol/1, % true if arg is not a pre-declared atom or function symbol
-              algebraic_value/1  % true for an algebraic(Approx, root(Coefficients, Index)) number
+              algebraic_value/1, % true for an algebraic(Approx, root(Coefficients, Index)) number
+              quantifier/3       % quantifier(+Q, -BoundVariables, -Body) for forall/2 and exists/2
           ]).
 
 /** <module> Type inference for Z3 expressions.
@@ -47,6 +48,8 @@ declared(F) :- comparison_operator(F).
 declared(F) :- arithmetic_operator(F).
 declared(between).
 declared(const_array).
+declared(forall).
+declared(exists).
 
 %! signature(?Functor, ?ArgTypes, ?Result) is nondet.
 %  Types of the built-in functions and predicates that are not typed by a rule in typecheck/4.
@@ -214,6 +217,12 @@ check_length(allthen(_,_), _) :- !, true.
 check_length(L, Arity) :- length(L, Arity).
 
 
+%! quantifier(@Term, -Vars, -Body) is semidet.
+%  True if Term is forall(Vars, Body) or exists(Vars, Body), with Vars a list of bound variables:
+%  names, each optionally annotated with a sort (x, or x:int).
+quantifier(T, Vars, Body) :- compound(T), compound_name_arity(T, Q, 2), memberchk(Q, [forall, exists]),
+                             arg(1, T, Vars), is_list(Vars), arg(2, T, Body).
+
 %! algebraic_value(@Term) is semidet.
 %  True if Term has the form of an algebraic number, algebraic(Approx, root(Coefficients, Index)),
 %  as Z3 models return for irrational values. It denotes the Index-th smallest real root of the
@@ -277,6 +286,13 @@ typecheck(const_array(IndexSort, Value), Type, Envin, Envout) :- !,
                                      ground(IndexSort),
                                      Type = array(IndexSort, ValueType),
                                      typecheck(Value, ValueType, Envin, Envout).
+% forall(Vars, Body) and exists(Vars, Body): Body is typed with each bound variable in scope, shadowing
+% any constant of the same name; afterwards, each name means again what it meant before (or nothing).
+% An annotated variable (x:int) has that sort; for an unannotated one, the sort is inferred.
+typecheck(Q, bool, Envin, Envout) :- quantifier(Q, Vars, Body), !,
+                                     bind_variables(Vars, Envin, Inner, Saved),
+                                     typecheck(Body, bool, Inner, Inner1),
+                                     restore_variables(Saved, Inner1, Envout).
 typecheck(between(X, Low, High), bool, Envin, Envout) :- !,
                                      numeric_args([X, Low, High], Envin, Envout).
 typecheck(X, T, Envin, Envout) :- atomic_mappable(X), !,
@@ -320,6 +336,21 @@ typecheck(T, Type, Envin, Envout) :-
                              
 
 comparison_operator(F) :- member(F, [<, >, =<, >=, geq, leq]).
+
+% Puts each bound variable in the map, with its sort (a fresh variable if not annotated). Saved lists
+% each name with what it meant before, or none.
+bind_variables([], E, E, []).
+bind_variables([V|Vs], Ein, Eout, [Name-Old|Saved]) :-
+    ( V = Name:Sort -> true ; V = Name ),
+    must_be(atom, Name),
+    ( get_assoc(Name/0, Ein, OldType) -> Old = type(OldType) ; Old = none ),
+    put_assoc(Name/0, Ein, Sort, E1),
+    bind_variables(Vs, E1, Eout, Saved).
+
+restore_variables([], E, E).
+restore_variables([Name-Old|Saved], Ein, Eout) :-
+    ( Old = type(T) -> put_assoc(Name/0, Ein, T, E1) ; del_assoc(Name/0, Ein, _, E1) ),
+    restore_variables(Saved, E1, Eout).
 arithmetic_operator(F) :- memberchk(F, [+, *, -, minus]).
 numeric_type(T) :- member(T, [int, real, bool]).
 
@@ -560,6 +591,8 @@ typing(select(a:array(int, real), i), real, [a/0-array(int, real), i/0-int]).
 typing(store(a:array(int, bool), 1, p), array(int, bool), [p/0-bool]).
 typing(const_array(int, 0), array(int, int), []).
 typing(select(const_array(bv(8), "s"), b), string, [b/0-bv(8)]).
+typing(forall([x:int], f(x) > x), bool, [f/1-lambda([int], int)]).
+typing(and(x:bool, exists([x:real], x > 0.0)), bool, [x/0-bool]).   % the outer x keeps its type
 
 test(typings, [forall(typing(Term, Type, Symbols)), nondet]) :-
     typecheck(Term, T, M),
@@ -580,6 +613,8 @@ ill_typed(str_concat("a", 1)).             % not a string
 ill_typed(select(a:array(int, int), "x")).  % index of the wrong sort
 ill_typed(store(a:array(int, int), 1, 2.0)). % value of the wrong sort
 ill_typed(const_array(_, 0)).               % index sort unknown
+ill_typed(forall([x:int], and(x, p))).      % x is not a bool
+ill_typed(exists([x:int], x + 1)).          % the body is not a formula
 
 test(ill_typed, [forall(ill_typed(Term))]) :-
     \+ catch(typecheck(Term, _, _), error(instantiation_error, _), fail).
@@ -588,6 +623,12 @@ test(unbound_term, [throws(error(instantiation_error, _))]) :-
     typecheck(_, _, _).
 
 % A function name can be used with different arities, each with its own type.
+% A quantifier's bound variable is not in the map afterwards.
+test(bound_not_in_map, [nondet]) :-
+    typecheck(forall([x], g(x) = 1), bool, M),
+    assertion(\+ get_assoc(x/0, M, _)),
+    assertion(get_assoc(g/1, M, lambda([_], int))).
+
 test(overloading_by_arity, [nondet]) :-
     typecheck(and(f(a:int) = 1, f(a, b:bool) = 2.0), bool, M),
     assertion(get_assoc(f/1, M, lambda([int], int))),

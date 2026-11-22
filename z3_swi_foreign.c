@@ -171,6 +171,8 @@ struct HandleStruct {
   long handle_id; // used as a unique ID for the context
   Z3_sort int_sort, bool_sort, real_sort, string_sort;
   unsigned timeout_ms;          // from z3_set_timeout/2, 0 for none; also given to optimizers
+  struct bound_variable *bound; // quantifier variables in scope while term_to_ast converts a body
+  size_t num_bound, max_bound;
 
   pthread_mutex_t lock;          // held for the whole of any predicate that uses this handle
   atomic_int refcount;           // handle blob + one per live model blob
@@ -180,6 +182,11 @@ struct HandleStruct {
 };
 
 typedef struct HandleStruct *handle;
+
+struct bound_variable {
+  atom_t name;
+  Z3_ast constant;  // the constant that Z3_mk_forall_const/exists_const binds
+};
 
 struct ModelStruct {
   Z3_model model; // NULL once freed
@@ -245,6 +252,7 @@ static void handle_release_ref(handle h) {
     pthread_mutex_destroy(&h->lock);
     pthread_mutex_destroy(&h->pending_lock);
     free(h->pending_models);
+    free(h->bound);
     free(h);
   }
 }
@@ -1510,8 +1518,9 @@ static int prolog_sort_term(Z3_context ctx, Z3_sort sort, term_t term) {
   }
 }
 
-// The Prolog name of a Z3 string operation (see the str_ cases in compound_to_ast), or NULL.
-// Z3 prints these with SMT-LIB names such as str.len, which Prolog code would have to quote.
+// The Prolog name of a Z3 operation whose Z3 name differs, or NULL: the string operations (see the
+// str_ cases in compound_to_ast), which Z3 prints with SMT-LIB names such as str.len that Prolog code
+// would have to quote, and the conversions Z3 inserts when integers and reals are mixed.
 static const char *string_operation_name(Z3_decl_kind kind) {
   switch (kind) {
   case Z3_OP_SEQ_CONCAT:   return "str_concat";
@@ -1527,11 +1536,80 @@ static const char *string_operation_name(Z3_decl_kind kind) {
   case Z3_OP_STRING_LE:    return "str_le";
   case Z3_OP_STR_TO_INT:   return "str_to_int";
   case Z3_OP_INT_TO_STR:   return "int_to_str";
+  case Z3_OP_TO_REAL:      return "int2real";   // Z3: to_real
+  case Z3_OP_TO_INT:       return "real2int";   // Z3: to_int
   default:                 return NULL;
   }
 }
 
+/*
+  While converting a quantifier's body back to Prolog, the names of the variables it binds, innermost
+  quantifier first. Z3 refers to a bound variable by a de Bruijn index: 0 is the last variable of
+  the innermost quantifier, then the ones before it, then the outer quantifiers' variables.
+*/
+struct scope {
+  const struct scope *outer;
+  unsigned num_names;
+  atom_t *names;
+};
+
+static foreign_t ast_to_term_scoped(const Z3_context ctx, Z3_ast ast, term_t term, const struct scope *scope);
+
 foreign_t z3_ast_to_term_internal(const Z3_context ctx, Z3_ast ast, term_t term) {
+  return ast_to_term_scoped(ctx, ast, term, NULL);
+}
+
+// forall(Vars, Body) or exists(Vars, Body), Vars a list of Name:Sort, as accepted by term_to_ast.
+static foreign_t quantifier_to_term(const Z3_context ctx, Z3_ast ast, term_t term, const struct scope *outer) {
+  if (Z3_is_lambda(ctx, ast)) {
+    INFO("z3_ast_to_term: lambda terms are not supported\n");
+    return FALSE;
+  }
+  unsigned n = Z3_get_quantifier_num_bound(ctx, ast);
+  atom_t *names = malloc((n > 0 ? n : 1) * sizeof(atom_t));
+  if (names == NULL) return PL_resource_error("memory");
+  term_t vars = PL_new_term_ref(), var = PL_new_term_ref(), sort = PL_new_term_ref(), name = PL_new_term_ref();
+  PL_put_nil(vars);
+  int ok = TRUE;
+  for (unsigned i = 0; i < n; i++) {
+    names[i] = PL_new_atom(Z3_get_symbol_string(ctx, Z3_get_quantifier_bound_name(ctx, ast, i)));
+  }
+  for (unsigned i = n; ok && i > 0; i--) { // build the list from the end
+    PL_put_atom(name, names[i - 1]);
+    ok = prolog_sort_term(ctx, Z3_get_quantifier_bound_sort(ctx, ast, i - 1), sort)
+      && PL_cons_functor(var, PL_new_functor(PL_new_atom(":"), 2), name, sort)
+      && PL_cons_list(vars, var, vars);
+  }
+  struct scope inner = { .outer = outer, .num_names = n, .names = names };
+  term_t body = PL_new_term_ref();
+  ok = ok && ast_to_term_scoped(ctx, Z3_get_quantifier_body(ctx, ast), body, &inner);
+  term_t result = PL_new_term_ref();
+  const char *q = Z3_is_quantifier_forall(ctx, ast) ? "forall" : "exists";
+  ok = ok && PL_cons_functor(result, PL_new_functor(PL_new_atom(q), 2), vars, body)
+          && PL_unify(term, result);
+  for (unsigned i = 0; i < n; i++) PL_unregister_atom(names[i]);
+  free(names);
+  return ok;
+}
+
+// A bound variable: its name, found from its de Bruijn index in the enclosing scopes.
+static foreign_t variable_to_term(const Z3_context ctx, Z3_ast ast, term_t term, const struct scope *scope) {
+  unsigned index = Z3_get_index_value(ctx, ast);
+  for (; scope != NULL; scope = scope->outer) {
+    if (index < scope->num_names) return PL_unify_atom(term, scope->names[scope->num_names - 1 - index]);
+    index -= scope->num_names;
+  }
+  INFO("z3_ast_to_term: a bound variable outside any quantifier\n");
+  return FALSE;
+}
+
+static foreign_t ast_to_term_scoped(const Z3_context ctx, Z3_ast ast, term_t term, const struct scope *scope) {
+  if (Z3_get_ast_kind(ctx, ast) == Z3_QUANTIFIER_AST) {
+    return quantifier_to_term(ctx, ast, term, scope);
+  }
+  if (Z3_get_ast_kind(ctx, ast) == Z3_VAR_AST) {
+    return variable_to_term(ctx, ast, term, scope);
+  }
   if (Z3_is_algebraic_number(ctx, ast)) {
     return algebraic_to_term(ctx, ast, term);
   }
@@ -1596,7 +1674,7 @@ foreign_t z3_ast_to_term_internal(const Z3_context ctx, Z3_ast ast, term_t term)
     term_t subterms = PL_new_term_refs(arity);
     for (int i=0; i<arity; ++i) {
       Z3_ast subterm_ast = Z3_get_app_arg(ctx, app, i);
-      if (!z3_ast_to_term_internal(ctx, subterm_ast, subterms+i)) {
+      if (!ast_to_term_scoped(ctx, subterm_ast, subterms+i, scope)) {
         return FALSE;
       }
     }
@@ -3281,6 +3359,76 @@ static Z3_ast algebraic_from_term(const handle h, const term_t formula) {
   return result;
 }
 
+// The constant for a variable named by the atom t, if an enclosing quantifier binds it, or NULL.
+// Innermost first, so an inner quantifier's variable shadows an outer one of the same name.
+static Z3_ast bound_variable(const handle h, term_t t) {
+  atom_t name;
+  if (h->num_bound == 0 || !PL_get_atom(t, &name)) return NULL;
+  for (size_t i = h->num_bound; i > 0; i--) {
+    if (h->bound[i - 1].name == name) return h->bound[i - 1].constant;
+  }
+  return NULL;
+}
+
+/*
+  forall(Vars, Body) and exists(Vars, Body): Vars is a list of Name:Sort, and Body a formula in which
+  the names refer to the bound variables, shadowing any constants of the same names. Like other
+  malformed formulas, a malformed quantifier fails with a message. (z3.pl infers the sorts of bound
+  variables that have none, and passes them on.)
+*/
+static Z3_ast quantifier_from_term(const handle h, decl_map declaration_map, const term_t formula, int is_forall) {
+  const Z3_context ctx = h->ctx;
+  term_t vars = PL_new_term_ref(), body = PL_new_term_ref();
+  size_t n;
+  if (!PL_get_arg(1, formula, vars) || !PL_get_arg(2, formula, body)
+      || PL_skip_list(vars, 0, &n) != PL_LIST || n == 0) {
+    ERROR("forall/exists: expected a non-empty list of Name:Sort bound variables\n");
+    return NULL;
+  }
+  Z3_app *apps = malloc(n * sizeof(Z3_app));
+  if (apps == NULL) { PL_resource_error("memory"); return NULL; }
+  size_t base = h->num_bound;
+  term_t head = PL_new_term_ref(), tail = PL_copy_term_ref(vars), name = PL_new_term_ref(), sort_term = PL_new_term_ref();
+  Z3_ast result = NULL;
+  int ok = TRUE;
+  for (size_t i = 0; ok && PL_get_list(tail, head, tail); i++) {
+    atom_t functor_name; size_t functor_arity; char *chars; atom_t a;
+    ok = PL_get_name_arity(head, &functor_name, &functor_arity) && functor_arity == 2
+      && strcmp(PL_atom_nchars(functor_name, NULL), ":") == 0
+      && PL_get_arg(1, head, name) && PL_get_arg(2, head, sort_term)
+      && PL_get_atom(name, &a) && PL_get_atom_chars(name, &chars);
+    if (!ok) { ERROR("forall/exists: each bound variable should be Name:Sort\n"); break; }
+    Z3_sort sort = mk_sort(h, sort_term);
+    if (sort == NULL) { ok = FALSE; break; }
+    Z3_ast constant = Z3_mk_const(ctx, Z3_mk_string_symbol(ctx, chars), sort);
+    apps[i] = Z3_to_app(ctx, constant);
+    if (h->num_bound == h->max_bound) {
+      size_t new_max = h->max_bound == 0 ? 8 : 2 * h->max_bound;
+      struct bound_variable *grown = realloc(h->bound, new_max * sizeof(struct bound_variable));
+      if (grown == NULL) { PL_resource_error("memory"); ok = FALSE; break; }
+      h->bound = grown;
+      h->max_bound = new_max;
+    }
+    h->bound[h->num_bound].name = a;
+    h->bound[h->num_bound].constant = constant;
+    h->num_bound++;
+  }
+  if (ok) {
+    Z3_ast b = term_to_ast(h, declaration_map, body);
+    if (b != NULL && Z3_get_sort_kind(ctx, Z3_get_sort(ctx, b)) != Z3_BOOL_SORT) {
+      ERROR("forall/exists: the body should be a formula\n");
+      b = NULL;
+    }
+    if (b != NULL) {
+      result = is_forall ? Z3_mk_forall_const(ctx, 0, (unsigned) n, apps, 0, NULL, b)
+                         : Z3_mk_exists_const(ctx, 0, (unsigned) n, apps, 0, NULL, b);
+    }
+  }
+  h->num_bound = base; // out of scope, on every path
+  free(apps);
+  return result;
+}
+
 /*
   Converts the Prolog term "formula" to a Z3 AST.
   Returns NULL if it fails:
@@ -3315,6 +3463,8 @@ Z3_ast term_to_ast(const handle h, decl_map declaration_map, const term_t formul
     }
     DEBUG("term_to_ast, atom %s\n", atom_string);
 
+    Z3_ast bound = bound_variable(h, formula);
+    if (bound != NULL) return bound; // shadows any declaration
     Z3_func_decl declaration = get_function_declaration(h->ctx, declaration_map, atom_string, 0);
     if (declaration == NULL) {
       DEBUG("did not find declaration for %s in declaration_map, trying enums\n", atom_string);
@@ -3494,6 +3644,14 @@ Z3_ast term_to_ast(const handle h, decl_map declaration_map, const term_t formul
         INFO("mk_sort for symbol is null\n");
         return NULL;
       }
+      Z3_ast bound = bound_variable(h, name_term);
+      if (bound != NULL) { // x:Sort for a variable bound by an enclosing quantifier
+        if (Z3_get_sort(ctx, bound) != sort) {
+          ERROR("a bound variable is used with another sort\n");
+          return NULL;
+        }
+        return bound;
+      }
       // We are converting PL to Z3. We call make_function_declaration
       // to catch inconsistent uses of the same constant.
       atom_t name_atom;
@@ -3513,6 +3671,10 @@ Z3_ast term_to_ast(const handle h, decl_map declaration_map, const term_t formul
 
     // See also prolog's getbit/2.
     // replace by int2bv, have bv_numeral take a list of bools?
+
+    if ((strcmp(name_string, "forall") == 0 || strcmp(name_string, "exists") == 0) && arity == 2) {
+      return quantifier_from_term(h, declaration_map, formula, name_string[0] == 'f');
+    }
 
     if (strcmp(name_string, "const_array") == 0) { // const_array(IndexSort, Value): Value everywhere
       CHECK_ARITY(name_string, 2, arity);

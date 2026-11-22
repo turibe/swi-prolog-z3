@@ -104,7 +104,12 @@ which did not occur without quantifiers. What follows describes the plan as it w
 `select` and `store`, with an `array(Index, Value)` sort. Mostly sort handling and type inference in
 `type_inference.pl`, plus converting array values in models back to Prolog.
 
-### 8. Quantifiers (moderate)
+### 8. Quantifiers (done)
+
+There is now `forall(Vars, Body)` and `exists(Vars, Body)`, with scoped bound variables in type inference
+and in the C conversion, and quantified assertions converted back to Prolog; see the README. Not added:
+patterns (triggers) for quantifier instantiation, and lambda terms. What follows describes the plan as it was.
+
 
 `forall` and `exists` over typed variables. The C side is small (`Z3_mk_forall_const`,
 `Z3_mk_exists_const`), but type inference needs scoped variables, and converting terms back needs to

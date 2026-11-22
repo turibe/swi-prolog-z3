@@ -82,6 +82,7 @@ iteration(I) :-
     z3_check_assumptions(H, [t1], _),
     z3_get_unsat_core(H, _),
     optimization(I),
+    quantifiers,
     z3_model_lists(H, _),
     z3_model_assocs(H, _),
     z3_get_model(H, M),
@@ -110,6 +111,19 @@ optimization(I) :-
     ( M == none -> true ; z3_model_lists(H, M, _), z3_free_model(H, M) ),
     z3_optimize(H, [soft(w:bool)], _, _, _),               % model left for garbage collection
     catch(z3_optimize(H, [foo], _, _, _), _, true),         % a bad objective, after the optimizer exists
+    z3_free_handle(H).
+
+% Quantifiers, on a handle of their own, for the same reason as optimization; reading the assertions
+% back converts quantifiers and their bound variables to Prolog.
+quantifiers :-
+    z3_new_handle(H),
+    z3_set_timeout(H, 2000),
+    z3_declare_function(H, qf(int), int),
+    z3_assert(H, forall([qx:int], exists([qy:int], qy > qx))),
+    z3_assert(H, forall([qx:int, qz:real], qf(qx) * 0 = 0 or qz > 0.0)),
+    z3_check(H, _),
+    z3_solver_assertions(H, _),
+    \+ z3_assert(H, forall([qx], qx > 0)),                  % malformed: no sort
     z3_free_handle(H).
 
 % Formulas and arguments that fail or raise errors part-way through conversion.

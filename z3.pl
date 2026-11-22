@@ -1094,6 +1094,49 @@ test(type_error) :-
 
 :- end_tests(z3pl_arrays).
 
+% Quantifiers through z3.pl: bound variables are typed in scope, and not declared.
+
+:- begin_tests(z3pl_quantifiers, [setup((reset_globals, z3_set_timeout(2000))),
+                                  cleanup((z3_set_timeout(0), free_globals))]).
+
+global_assertions(As) :- get_global_handle(H), z3_swi_foreign:z3_solver_assertions(H, As).
+
+test(inferred_sort) :-
+    z3_reset,
+    z3_push(forall([x], f(x) * 0 = x * 0), _),             % x is an int; valid, so decided at once
+    global_assertions(As),
+    assertion(As == [forall([x:int], f(x) * 0 = x * 0)]),
+    z3_declarations(Ds),
+    assertion(\+ memberchk((x/0):_, Ds)),                   % the bound x is not a constant
+    assertion(memberchk((f/1):'Int', Ds)).
+
+test(implied) :-
+    z3_reset,
+    z3_push(forall([x], f(x) = 2 * x), _),
+    assertion(z3_is_implied(f(5) = 10)).
+
+% A sort that the body does not determine is uninterpreted.
+test(unknown_sort) :-
+    z3_reset,
+    z3_push(forall([x], x = x), _),
+    global_assertions(As),
+    assertion(As == [forall([x:uninterpreted], x = x)]).
+
+test(shadowing) :-
+    z3_reset,
+    z3_push(x:bool),
+    z3_push(forall([x:int], x * 0 = 0), _),
+    z3_declarations(Ds),
+    assertion(memberchk((x/0):'Bool', Ds)),
+    assertion(z3_is_implied(x)).
+
+test(type_error_in_body) :-
+    z3_reset,
+    z3_push(forall([x:int], x and p), R),
+    assertion(R == l_type_error).
+
+:- end_tests(z3pl_quantifiers).
+
 
 :- begin_tests(enums).
 
