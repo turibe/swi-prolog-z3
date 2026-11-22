@@ -187,6 +187,13 @@ M = model{constants:[a-0, b- -1, c-5], functions:[f/1-else- -1, f(5)-1]}.
 
 - z3_eval(+Formula, -Result) : Evaluates `Formula` over a model for the assertions pushed so far, if there is one.
 
+`z3.pl` makes a new Z3 handle when it starts and on each `z3_reset/0`. To see these as they
+happen, turn on the debug topic `z3(handle)`:
+
+```prolog
+?- debug(z3(handle)).
+```
+
 ### Attributed Variables.
 
 Terms with Prolog variables can be asserted as well. Prolog attributes are used to associate each variable with a fresh Z3 constant,
