@@ -41,19 +41,17 @@ Notes:
 %% Note that assoc lists require ground keys.
 %% When typing a var, we can add an attribute to it, and then type the attribute.
 
-:- dynamic signature/3.
-
-:- retractall(signature(_,_,_)).
-
 %% F has been defined:
 declared(F) :- signature(F, _, _).
 declared(F) :- comparison_operator(F).
 declared(F) :- arithmetic_operator(F).
 declared(between).
 
-declare(Functor, ArgTypes, Result) :-
-    must_be(atomic, Functor),
-    assert(signature(Functor, ArgTypes, Result)).
+%! signature(?Functor, ?ArgTypes, ?Result) is nondet.
+%  Types of the built-in functions and predicates that are not typed by a rule in typecheck/4.
+%  ArgTypes is a list of argument types, all(T) for any number of arguments of type T, or
+%  allthen(T, U) for any number of arguments of type T followed by one of type U.
+%  Several facts for one Functor give alternative typings, tried in order.
 
 %% aliases:
 signature(/, A, B) :- signature(div, A, B).
@@ -70,115 +68,115 @@ signature(^, A, B) :- signature(power, A, B).
 
 % Notation: "all(T)" means there can be an arbitrary number of arguments, all of type T.
 
-:- declare(=, [T, T], bool).
+signature(=, [T, T], bool).
 % for more flexible arithmetic:
-% :- declare(=, [bool, real], bool). % not allowed by Z3
-% :- declare(=, [bool, int], bool). % not allowed by Z3
-:- declare(=, [real, int], bool). % works in Z3
-:- declare(=, [int, real], bool).
-:- declare(<>, [T, T], bool).
-:- declare(<>, [int, real], bool).
-:- declare(<>, [int, bool], bool).
-:- declare(<>, [real, int], bool).
-:- declare(<>, [real, bool], bool).
-:- declare(<>, [bool, real], bool).
-:- declare(<>, [bool, int], bool).
+% signature(=, [bool, real], bool). % not allowed by Z3
+% signature(=, [bool, int], bool). % not allowed by Z3
+signature(=, [real, int], bool). % works in Z3
+signature(=, [int, real], bool).
+signature(<>, [T, T], bool).
+signature(<>, [int, real], bool).
+signature(<>, [int, bool], bool).
+signature(<>, [real, int], bool).
+signature(<>, [real, bool], bool).
+signature(<>, [bool, real], bool).
+signature(<>, [bool, int], bool).
 
 % between/3 is typed by a rule in typecheck/4: its three arguments are numeric, in any combination.
 
-:- declare(distinct, all(_T), bool).
+signature(distinct, all(_T), bool).
 
 
 % +, *, - and minus are typed by a rule in typecheck/4 (see arithmetic_operator/1), not by signatures.
 
-:- declare(power, [int, int], int).
-:- declare(power, [real, int], real).
-:- declare(power, [int, real], real).
-:- declare(power, [real, real], real).
+signature(power, [int, int], int).
+signature(power, [real, int], real).
+signature(power, [int, real], real).
+signature(power, [real, real], real).
 
-:- declare(real2int, [real], int).
-:- declare(int2real, [int], real).
-:- declare(is_int, [real], bool).
+signature(real2int, [real], int).
+signature(int2real, [int], real).
+signature(is_int, [real], bool).
 
 % From the Z3 docs:
 % "The arguments must either both have int type or both have real type. If the arguments have int type, then the result type is an int type, otherwise the the result type is real."
-:- declare(div, [real, real], real).
-:- declare(div, [int, int], int).
-:- declare(div, [real, int], real).
-:- declare(div, [int, real], real).
+signature(div, [real, real], real).
+signature(div, [int, int], int).
+signature(div, [real, int], real).
+signature(div, [int, real], real).
 
-:- declare(divides, [int, int], bool).
-:- declare(rem, [int, int], int).
-:- declare(mod, [int, int], int).
+signature(divides, [int, int], bool).
+signature(rem, [int, int], int).
+signature(mod, [int, int], int).
 
 % Comparisons (<, >, =<, >=, leq, geq) are typed by a rule in typecheck/4 (see comparison_operator/1).
-:- declare(and, all(bool), bool).
-:- declare(or, all(bool), bool).
-:- declare(xor, all(bool), bool).
-:- declare(implies, [bool, bool], bool).
-:- declare(iff, [bool, bool], bool).
-:- declare(not, [bool], bool).
-:- declare(true, [], bool).
-:- declare(false, [], bool).
-:- declare(ite, [bool, T, T], T).
+signature(and, all(bool), bool).
+signature(or, all(bool), bool).
+signature(xor, all(bool), bool).
+signature(implies, [bool, bool], bool).
+signature(iff, [bool, bool], bool).
+signature(not, [bool], bool).
+signature(true, [], bool).
+signature(false, [], bool).
+signature(ite, [bool, T, T], T).
 
 %%%% Bit-vector declarations
-:- declare(bv2int, [bv(_N),bool], int).
+signature(bv2int, [bv(_N),bool], int).
 %% Note that bv2int and int2bv are not supported by the decision procedures.
 
 %%%% use "bool_const" instead of bool in the no_overflow defs that have a bool arg?
 
-:- declare(bvadd, [bv(N), bv(N)], bv(N)).
-:- declare(bvadd_no_overflow, [bv(N), bv(N), bool], bool).
-:- declare(bvadd_no_underflow, [bv(N), bv(N)], bool).
-:- declare(bvand, [bv(N), bv(N)], bv(N)).
-:- declare(bvashr, [bv(N), bv(N)], bv(N)).
-:- declare(bvlshr, [bv(N), bv(N)], bv(N)).
-:- declare(bvmul, [bv(N), bv(N)], bv(N)).
-:- declare(bvmul_no_overflow, [bv(N), bv(N), bool], bool).
-:- declare(bvmul_no_underflow, [bv(N), bv(N)], bool).
-:- declare(bvnand, [bv(N), bv(N)], bv(N)).
-:- declare(bvneg, [bv(N)], bv(N)).
-:- declare(bvneg_no_overflow, [bv(_N)], bool).
-:- declare(bvnor, [bv(N), bv(N)], bv(N)).
-:- declare(bvnot, [bv(N)], bv(N)).
-:- declare(bvor, [bv(N), bv(N)], bv(N)).
-:- declare(bvredand, [bv(_N)], bv(1)).  % reductions give a single bit
-:- declare(bvredor, [bv(_N)], bv(1)).
-:- declare(bvsdiv, [bv(N), bv(N)], bv(N)).
-:- declare(bvsdiv_no_overflow, [bv(N), bv(N)], bool).
-:- declare(bvsge, [bv(N), bv(N)], bool).
-:- declare(bvsgt, [bv(N), bv(N)], bool).
-:- declare(bvshl, [bv(N), bv(N)], bv(N)).
-:- declare(bvsle, [bv(N), bv(N)], bool).
-:- declare(bvslt, [bv(N), bv(N)], bool).
-:- declare(bvsmod, [bv(N), bv(N)], bv(N)).
-:- declare(bvsrem, [bv(N), bv(N)], bv(N)).
-:- declare(bvsub, [bv(N), bv(N)], bv(N)).
-:- declare(bvsub_no_overflow, [bv(N), bv(N)], bool).        % as Z3_mk_bvsub_no_overflow
-:- declare(bvsub_no_underflow, [bv(N), bv(N), bool], bool). % as Z3_mk_bvsub_no_underflow; bool: signed
-:- declare(bvudiv, [bv(N), bv(N)], bv(N)).
-:- declare(bvuge, [bv(N), bv(N)], bool).
-:- declare(bvugt, [bv(N), bv(N)], bool).
-:- declare(bvule, [bv(N), bv(N)], bool).
-:- declare(bvult, [bv(N), bv(N)], bool).
-:- declare(bvurem, [bv(N), bv(N)], bv(N)).
-:- declare(bvxnor, [bv(N), bv(N)], bv(N)).
-:- declare(bvxor, [bv(N), bv(N)], bv(N)).
+signature(bvadd, [bv(N), bv(N)], bv(N)).
+signature(bvadd_no_overflow, [bv(N), bv(N), bool], bool).
+signature(bvadd_no_underflow, [bv(N), bv(N)], bool).
+signature(bvand, [bv(N), bv(N)], bv(N)).
+signature(bvashr, [bv(N), bv(N)], bv(N)).
+signature(bvlshr, [bv(N), bv(N)], bv(N)).
+signature(bvmul, [bv(N), bv(N)], bv(N)).
+signature(bvmul_no_overflow, [bv(N), bv(N), bool], bool).
+signature(bvmul_no_underflow, [bv(N), bv(N)], bool).
+signature(bvnand, [bv(N), bv(N)], bv(N)).
+signature(bvneg, [bv(N)], bv(N)).
+signature(bvneg_no_overflow, [bv(_N)], bool).
+signature(bvnor, [bv(N), bv(N)], bv(N)).
+signature(bvnot, [bv(N)], bv(N)).
+signature(bvor, [bv(N), bv(N)], bv(N)).
+signature(bvredand, [bv(_N)], bv(1)).  % reductions give a single bit
+signature(bvredor, [bv(_N)], bv(1)).
+signature(bvsdiv, [bv(N), bv(N)], bv(N)).
+signature(bvsdiv_no_overflow, [bv(N), bv(N)], bool).
+signature(bvsge, [bv(N), bv(N)], bool).
+signature(bvsgt, [bv(N), bv(N)], bool).
+signature(bvshl, [bv(N), bv(N)], bv(N)).
+signature(bvsle, [bv(N), bv(N)], bool).
+signature(bvslt, [bv(N), bv(N)], bool).
+signature(bvsmod, [bv(N), bv(N)], bv(N)).
+signature(bvsrem, [bv(N), bv(N)], bv(N)).
+signature(bvsub, [bv(N), bv(N)], bv(N)).
+signature(bvsub_no_overflow, [bv(N), bv(N)], bool).        % as Z3_mk_bvsub_no_overflow
+signature(bvsub_no_underflow, [bv(N), bv(N), bool], bool). % as Z3_mk_bvsub_no_underflow; bool: signed
+signature(bvudiv, [bv(N), bv(N)], bv(N)).
+signature(bvuge, [bv(N), bv(N)], bool).
+signature(bvugt, [bv(N), bv(N)], bool).
+signature(bvule, [bv(N), bv(N)], bool).
+signature(bvult, [bv(N), bv(N)], bool).
+signature(bvurem, [bv(N), bv(N)], bv(N)).
+signature(bvxnor, [bv(N), bv(N)], bv(N)).
+signature(bvxor, [bv(N), bv(N)], bv(N)).
 
 %% the result type depends on the value of an arg, so can't quite do this:
-%% :- declare(int2bv, [int, int], bv(_N)).
+%% signature(int2bv, [int, int], bv(_N)).
 
 % atleast and atmost take any number of bools followed by an int:
 
-:- declare(atleast, allthen(bool, int), bool).
-:- declare(atmost, allthen(bool, int), bool).
+signature(atleast, allthen(bool, int), bool).
+signature(atmost, allthen(bool, int), bool).
 
 % isoneof(x, v1, v2, ...) is expanded to (x = v1 or x = v2 or ...) before typechecking, but typing it
 % directly gives the same result:
-:- declare(isoneof, all(_T), bool).
+signature(isoneof, all(_T), bool).
 
-:- declare(mk_rational, [int, int], real).
+signature(mk_rational, [int, int], real).
 
 % "mappable" are non-declared atoms or functions whose type signature needs to be inferred; that is, not pre-defined.
 atomic_mappable(X) :- atom(X).
