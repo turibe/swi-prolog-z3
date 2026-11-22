@@ -35,6 +35,11 @@ Utilities shared by z3.pl and stateful_repl.pl
 mk_uninterpreted(X) :- (var(X) -> X = uninterpreted ; true ).
 ground_arglist(L) :- maplist(mk_uninterpreted, L).
 
+% Binds the unknown parts of a sort term, such as V in array(int, V), to uninterpreted.
+ground_sort(T) :- var(T), !, T = uninterpreted.
+ground_sort(T) :- compound(T), !, T =.. [_|Args], maplist(ground_sort, Args).
+ground_sort(_).
+
 %%%%% Attribute (Prolog) variables %%%%%%%%%%
 
 %! reset_var_counts
@@ -79,6 +84,12 @@ z3_declare(H, F, T) :- atom(T), !,
 z3_declare(H, F, T) :- compound(T),
                     functor(T, bv, 1), !,
                     must_be(ground, T),
+                    z3_declare_function(H, F, T).
+% array(IndexSort, ValueSort); a still unknown part, as for an array only compared for equality,
+% becomes uninterpreted, as for function types.
+z3_declare(H, F, T) :- compound(T),
+                    functor(T, array, 2), !,
+                    ground_sort(T),
                     z3_declare_function(H, F, T).
 z3_declare(H, F, T) :- var(T), !,
                     T = uninterpreted,

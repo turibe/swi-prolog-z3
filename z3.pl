@@ -1059,6 +1059,41 @@ test(prolog_variables) :-
 
 :- end_tests(z3pl_optimize).
 
+% Arrays through z3.pl's type inference.
+
+:- begin_tests(z3pl_arrays, [setup(reset_globals), cleanup(free_globals)]).
+
+test(model_and_round_trip) :-
+    z3_reset,
+    z3_push(select(a:array(int, int), 1) = 5),
+    z3_push(select(a, 2) = 7),
+    z3_model(M),
+    memberchk(a = V, M.constants),
+    z3_reset,
+    z3_push(b:array(int, int) = V),
+    assertion(z3_is_implied(select(b, 1) = 5 and select(b, 2) = 7)).
+
+test(inferred_types) :-
+    z3_reset,
+    z3_push(select(store(c, 1, 2.5), i) > 2.0),
+    z3_declarations(Ds),
+    assertion(memberchk((c/0):array('Int', 'Real'), Ds)),
+    assertion(memberchk((i/0):'Int', Ds)).
+
+% An array whose element type is never determined gets an uninterpreted element sort.
+test(unknown_element_sort) :-
+    z3_reset,
+    z3_push(a:array(int, _) = b),
+    z3_declarations(Ds),
+    assertion(memberchk((a/0):array('Int', uninterpreted), Ds)).
+
+test(type_error) :-
+    z3_reset,
+    z3_push(select(e:array(int, int), "x") = 1, R),
+    assertion(R == l_type_error).
+
+:- end_tests(z3pl_arrays).
+
 
 :- begin_tests(enums).
 

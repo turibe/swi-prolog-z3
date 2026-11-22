@@ -278,6 +278,20 @@ reals. `z3_optimize/2` fails if the formulas are inconsistent, or if Z3 cannot d
 timeout). At the lower level, `z3_optimize(Handle, Objectives, Status, Values, Model)` returns the status,
 the values and a model of the handle's solver.
 
+### Arrays
+
+Arrays have the sort `array(IndexSort, ValueSort)`, and are used with `select/2`, `store/3` and
+`const_array/2` (see Reserved names). In models, an array's value is a chain of `store` terms over a
+constant array, which can be used in formulas again:
+
+```prolog
+?- z3_push(select(a:array(int, int), 1) = 5), z3_push(select(a, 2) = 7), z3_model(M).
+M = model{constants:[a=store(const_array(int, 7), 1, 5)], functions:[]}.
+```
+
+Here every element of `a` is 7, except the one at index 1. (Z3 chose 7 for the default, since only
+indices 1 and 2 are constrained.)
+
 ### Reserved names
 
 These names have a built-in meaning in formulas, so they cannot be used as names of your own
@@ -293,7 +307,8 @@ constants or functions (with the arities shown, where they matter).
   - `isoneof/N` and `alldifferent/N`, macros (see above).
 - Constants: `true`, `false`.
 - Sort names, in `Term:Sort` and declarations: `int` or `integer`, `real`, `float` or `double`
-  (all three are Z3's reals), `bool` or `boolean`, `bv(N)`, `string`, and the names of declared enumeration sorts.
+  (all three are Z3's reals), `bool` or `boolean`, `bv(N)`, `string`, `array(IndexSort, ValueSort)`, and the names
+  of declared enumeration sorts.
   Any other atom names an uninterpreted sort.
 - Logic: `and`, `or`, `not`, `implies`, `iff`, `xor`, `ite`, and the operators `,`, `;`, `->`, `<=>`.
 - Equality and comparison: `=`, `==`, `equal`, `equals`, `<>`, `distinct`, `<`, `>`, `=<`, `>=`,
@@ -301,6 +316,8 @@ constants or functions (with the arities shown, where they matter).
 - Arithmetic: `+`, `-`, `minus`, `*`, `/`, `div`, `mod`, `rem`, `divides`, `power`, `**`, `^`,
   `is_int`, `int2real`, `real2int`.
 - Pseudo-Boolean: `atleast`, `atmost`.
+- Arrays: `select(Array, Index)`, `store(Array, Index, Value)` (the array with `Index` set to `Value`), and
+  `const_array(IndexSort, Value)` (the array with `Value` at every index).
 - Strings, with arguments in the SMT-LIB order: `str_concat/N`, `str_len/1`, `str_substr/3` (string, offset,
   length), `str_at/2` (the one-character string at an index), `str_contains/2` (container, containee),
   `str_prefixof/2` and `str_suffixof/2` (prefix or suffix first), `str_indexof/3` (string, substring, start;

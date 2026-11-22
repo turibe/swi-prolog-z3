@@ -46,6 +46,7 @@ declared(F) :- signature(F, _, _).
 declared(F) :- comparison_operator(F).
 declared(F) :- arithmetic_operator(F).
 declared(between).
+declared(const_array).
 
 %! signature(?Functor, ?ArgTypes, ?Result) is nondet.
 %  Types of the built-in functions and predicates that are not typed by a rule in typecheck/4.
@@ -193,6 +194,10 @@ signature(str_le, [string, string], bool).
 signature(str_to_int, [string], int).                     % -1 unless all digits
 signature(int_to_str, [int], string).                     % "" for negative numbers
 
+%%%% Arrays (const_array/2 is typed by a rule in typecheck/4, since its first argument is a sort)
+signature(select, [array(I, V), I], V).                   % (array, index)
+signature(store, [array(I, V), I, V], array(I, V)).       % (array, index, value)
+
 % "mappable" are non-declared atoms or functions whose type signature needs to be inferred; that is, not pre-defined.
 atomic_mappable(X) :- atom(X).
 
@@ -267,6 +272,11 @@ typecheck(T, Type, Envin, Envout) :- compound(T), functor(T, F, Arity), Arity >=
                                      member(Type, [int, real]),
                                      arithmetic_args(Args, Type, Envin, Envout, false, SawReal),
                                      ( Type == real -> SawReal == true ; true ).
+% const_array(IndexSort, Value): the array with Value at every index.
+typecheck(const_array(IndexSort, Value), Type, Envin, Envout) :- !,
+                                     ground(IndexSort),
+                                     Type = array(IndexSort, ValueType),
+                                     typecheck(Value, ValueType, Envin, Envout).
 typecheck(between(X, Low, High), bool, Envin, Envout) :- !,
                                      numeric_args([X, Low, High], Envin, Envout).
 typecheck(X, T, Envin, Envout) :- atomic_mappable(X), !,
@@ -546,6 +556,10 @@ typing(str_replace(s, "a", "b"), string, [s/0-string]).
 typing(str_lt(s, "b"), bool, [s/0-string]).
 typing(str_to_int(s), int, [s/0-string]).
 typing(int_to_str(n), string, [n/0-int]).
+typing(select(a:array(int, real), i), real, [a/0-array(int, real), i/0-int]).
+typing(store(a:array(int, bool), 1, p), array(int, bool), [p/0-bool]).
+typing(const_array(int, 0), array(int, int), []).
+typing(select(const_array(bv(8), "s"), b), string, [b/0-bv(8)]).
 
 test(typings, [forall(typing(Term, Type, Symbols)), nondet]) :-
     typecheck(Term, T, M),
@@ -563,6 +577,9 @@ ill_typed(not(_)).                          % unbound subterms are errors, see b
 ill_typed(and(p, 3)).                       % 3 is not a bool
 ill_typed(str_len(3)).                      % not a string
 ill_typed(str_concat("a", 1)).             % not a string
+ill_typed(select(a:array(int, int), "x")).  % index of the wrong sort
+ill_typed(store(a:array(int, int), 1, 2.0)). % value of the wrong sort
+ill_typed(const_array(_, 0)).               % index sort unknown
 
 test(ill_typed, [forall(ill_typed(Term))]) :-
     \+ catch(typecheck(Term, _, _), error(instantiation_error, _), fail).

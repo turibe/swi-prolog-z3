@@ -1523,3 +1523,82 @@ test(not_a_number_objective, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)
     z3_optimize(H, [maximize(p:bool)], _, _, _).
 
 :- end_tests(optimization).
+
+% Arrays: the sort array(IndexSort, ValueSort), with select/2, store/3 and const_array/2.
+
+:- begin_tests(arrays).
+
+array_model(Formulas, Constants) :-
+    setup_call_cleanup(z3_new_handle(H),
+                       ( maplist(z3_assert(H), Formulas),
+                         z3_check(H, l_true),
+                         z3_model_lists(H, Model),
+                         Constants = Model.constants ),
+                       z3_free_handle(H)).
+
+% Formula holds given Assumptions: asserting its negation is unsatisfiable.
+holds(Assumptions, Formula) :-
+    setup_call_cleanup(z3_new_handle(H),
+                       ( maplist(z3_assert(H), Assumptions),
+                         z3_assert(H, not(Formula)),
+                         z3_check(H, l_false) ),
+                       z3_free_handle(H)).
+
+% Model values are store chains over a constant array, as Z3 gives them.
+test(model_value) :-
+    array_model([select(a:array(int, int), 1) = 5, select(a:array(int, int), 2) = 7], C),
+    C = [a = V],
+    assertion(V = store(const_array(int, _), _, _)).
+
+% A model value can be given back to Z3.
+test(model_value_round_trip) :-
+    array_model([select(a:array(int, int), 1) = 5, select(a:array(int, int), 2) = 7], [a = V]),
+    holds([(b:array(int, int)) = V], and(select(b:array(int, int), 1) = 5, select(b:array(int, int), 2) = 7)).
+
+array_fact(select(store(c:array(int, int), 1, 10), 1) = 10).
+array_fact(select(store(c:array(int, int), 1, 10), 2) = select(c:array(int, int), 2)).
+array_fact(select(const_array(int, 0), 42) = 0).
+array_fact(store(store(c:array(int, int), 1, 5), 1, 6) = store(c:array(int, int), 1, 6)).
+array_fact(select(select(store(const_array(int, const_array(int, 0)), 1, store(const_array(int, 0), 2, 3)), 1), 2) = 3).
+
+test(operations, [forall(array_fact(F))]) :-
+    holds([], F).
+
+test(extensionality) :-
+    holds([(a:array(int, int)) = b:array(int, int), select(a:array(int, int), 1) = 1],
+          select(b:array(int, int), 1) = 1).
+
+array_sort_model([select(p:array(int, bool), 0), not(select(p:array(int, bool), 1))], p, store(const_array(int, false), 0, true)).
+array_sort_model([(r:array(int, real)) = const_array(int, 1.5)], r, const_array(int, 3/2)).
+array_sort_model([select(s:array(int, string), 0) = "zero"], s, const_array(int, "zero")).
+array_sort_model([select(v:array(bv(4), bv(4)), int2bv(4, 1)) = int2bv(4, 9)], v, const_array(bv(4), 9)).
+array_sort_model([select(select(g:array(int, array(int, int)), 1), 2) = 3], g, const_array(int, const_array(int, 3))).
+
+test(other_sorts, [forall(array_sort_model(Formulas, Name, Expected))]) :-
+    array_model(Formulas, C),
+    assertion(memberchk(Name = Expected, C)).
+
+test(declarations, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))]) :-
+    z3_declare_function(H, d, array(int, array(int, real))),
+    z3_declarations(H, Ds),
+    assertion(Ds == [(d/0):array('Int', array('Int', 'Real'))]).
+
+% Simplified terms keep the Prolog names, so they can be asserted again.
+test(simplify, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))]) :-
+    z3_simplify(H, select(store(const_array(int, 0), 1, 5), 1), S1),
+    assertion(S1 == 5),
+    z3_simplify(H, store(store(const_array(int, 0), 1, 5), 1, 6), S2),
+    assertion(S2 == store(const_array(int, 0), 1, 6)),
+    z3_assert(H, (e:array(int, int)) = S2),
+    z3_check(H, l_true).
+
+malformed_array_formula(select(a:array(int, int)) = 1).                   % wrong arity
+malformed_array_formula(select(a:array(int, int), "x") = 1).              % index of the wrong sort
+malformed_array_formula(store(a:array(int, int), 1, "y") = a:array(int, int)). % value of the wrong sort
+malformed_array_formula(select(n:int, 1) = 2).                            % not an array
+malformed_array_formula(select(const_array(f(x), 0), 1) = 0).             % not a sort
+
+test(malformed, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)), forall(malformed_array_formula(F))]) :-
+    \+ z3_assert(H, F).
+
+:- end_tests(arrays).
