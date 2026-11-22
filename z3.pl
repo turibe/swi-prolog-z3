@@ -38,6 +38,12 @@
               % {}/1, % clashes with other CLP libraries
               ]).
 
+:- (   predicate_property(system:undo(_), defined)
+   ->  true
+   ;   throw(error(existence_error(procedure, undo/1),
+                   context(z3, 'z3.pl needs a SWI-Prolog with undo/1 (tested with 9.1.21)')))
+   ).
+
 /** <module> Z3 high-level integration (backtrackable version)
 
 This module builds on the basic functionality of z3_swi_foreign.pl to provide:
@@ -50,6 +56,8 @@ This module builds on the basic functionality of z3_swi_foreign.pl to provide:
 - Optimization, and timeouts.
 
 For incrementality, this module maintains a global_handle, where the push and pops happen.
+Each push registers its own pop with undo/1, so Prolog's backtracking undoes it: the solver always
+holds exactly the formulas pushed on the current branch, and the declarations of their symbols.
 So even though it is a single Z3 C object, kept in a non-backtrackable Prolog variable, it is meant to work as a backtrackable one.
 
 type_inference_global_backtrackable does keep a --- backtrackable --- type map.
@@ -107,6 +115,7 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
                   z3_model_lists/2,
                   z3_model_assocs/2,
                   z3_new_handle/1,
+                  z3_remove_declaration/3,
                   z3_reset_declarations/1,
                   z3_check/2,
                   z3_check_and_print/2,
@@ -137,7 +146,6 @@ free_handle :-
 %  Resets the entire Z3 context. All declarations, including enums, are cleared.
 %  Old models and solvers are invalidated.
 z3_reset :-
-    %% assertion(b_getval(solver_depth, 0)), %% test cleanup violates this
     free_handle,
     assertion(\+ get_global_handle(_)),
     new_global_handle(_).
@@ -149,9 +157,9 @@ free_globals :-
     true.
     
 
-%% To automatically pop the Z3 server when backtracking:
-%% solver_depth is a backtrackable variable, with the depth level.
-%% Before an assert, we check that variable, and pop the solver as many times as needed to match it.
+%% Backtracking undoes pushes: each push registers its pop with undo/1 (see push_solver/1), and the
+%% declarations of a pushed formula's new symbols register their removal (see push_formula/3), so
+%% Z3's state follows the current Prolog branch.
 
 %% indent according to solver pushes:
 report(K, T) :- indent(T, R),
@@ -160,7 +168,7 @@ report(K, T) :- indent(T, R),
 report(K, F, Vars) :- swritef(String, F, Vars),
                       report(K, String).
 
-indent(Message, R) :- assert_depth(N),
+indent(Message, R) :- raw_solver_scopes(N),
                       repeat_string("----", N, S),
                       atomics_to_string([S,Message], R).
 
@@ -214,15 +222,12 @@ new_global_handle(Handle) :-
     z3_new_handle(Handle),
     (nb_current(z3_timeout, Ms) -> z3_set_timeout(Handle, Ms) ; true), % kept across z3_reset
     nb_setval(global_handle, Handle),
-    nb_setval(solver_depth, 0),
     debug(z3(handle), "Made new z3.pl handle", []).
 
 get_global_handle(Handle) :- nb_current(global_handle, Handle).
 
 %% get_or_make_global_handle(H) :-
     
-
-assert_depth(N) :- b_getval(solver_depth, N).
 
 z3_declare(A,B) :-
     get_global_handle(H),
@@ -236,40 +241,31 @@ z3_declare(A) :-
 %% and it should always be called before an assert, if we want it to be retractable.
 %% So, hide push_solver, expose asserts.
 
+% Pushes a scope on the global solver, to be popped when Prolog backtracks over this call.
 push_solver(S) :- get_global_handle(S),
-                  resolve_solver_depth(X),
-                  New is X + 1,
-                  b_setval(solver_depth, New), %% backtrackable assignment
-                  z3_solver_push(S, _D).
+                  z3_solver_push(S, _),
+                  undo(pop_scope(S)).
 
+% Undo goals must not fail or raise: undo/1 re-raises their exceptions. After z3_reset/0 inside a
+% query, the handle a pending pop was for is gone, so there is nothing to undo.
+pop_scope(S) :-
+    catch(( current_handle(S) -> z3_solver_pop(S, 1, _) ; true ), _, true).
+
+remove_declarations(H, Symbols) :-
+    catch(( current_handle(H)
+          -> forall(member(F/N, Symbols), ignore(z3_remove_declaration(H, F, N)))
+          ;  true ),
+          _, true).
+
+current_handle(H) :- get_global_handle(Current), Current == H.
 
 raw_solver_scopes(N) :- get_global_handle(S), z3_solver_scopes(S, N).
 
-%% Pops the Z3 solver to match the PL solver_depth:
-resolve_solver_depth(X) :- b_getval(solver_depth, X),
-                           raw_solver_scopes(N),
-                           resolve_solver_depth(X, N).
-
-
-resolve_solver_depth(X, Scopes) :- X >= Scopes,
-                                   % report(informational, status("scopes OK", Scopes, X)),
-                                   !.
-resolve_solver_depth(X, Scopes) :- X < Scopes,
-                                   % report(informational, status("need to pop", Scopes, X)),
-                                   Numpops is Scopes - X,
-                                   popn(Numpops).
-
-popn(Numpops) :- get_global_handle(S),
-                 (  z3_solver_pop(S, Numpops, _)
-                 -> true
-                 ; report(error, "error popping Z3 solver\n")
-                 ).
-
 %% user-visible:
 
-%! solver_scopes(-N)
-%  Number of scopes for the solver at current backtracking point
-solver_scopes(N) :- resolve_solver_depth(_), raw_solver_scopes(N).
+%! solver_scopes(-N) is det.
+%  N is the number of solver scopes: one for each formula pushed on the current branch.
+solver_scopes(N) :- raw_solver_scopes(N).
 
 % should not be used directly. Types in Formula could clash with previously defined types,
 % so should use z3_push. Also the matter of push and pop.
@@ -305,7 +301,6 @@ z3_optimize(Objectives, Model) :-
     % findall/3 undoes the push that typechecks and declares the objectives. Only ground results
     % come out, and they are paired with the Objectives themselves, which may contain variables.
     findall(M-Values, optimal_model(Objectives, M, Values), Found),
-    resolve_solver_depth(_),
     Found = [Model0-Values],
     maplist([O, V, O = V]>>true, Objectives, Values, Pairs),
     Model = Model0.put(objectives, Pairs).
@@ -341,7 +336,6 @@ z3_unsat_core(Formulas, Core) :-
     numlist_labels(N, Labels),
     % findall/3 undoes the push; only the ground labels come out, so Formulas are not copied.
     findall(CoreLabels, core_labels(Formulas, Labels, CoreLabels), Found),
-    resolve_solver_depth(_),          % pop the labelled formulas now, not at the next push
     Found = [CoreLabels],
     labelled_subset(Labels, Formulas, CoreLabels, Core).
 
@@ -386,10 +380,7 @@ typed_quickxplain(Mode, Formulas, Result) :-
     length(Formulas, N),
     numlist(0, N, [0|Is]),                           % numlist(1, 0, _) fails, so start from 0
     pairs_keys_values(Numbered, Is, Formulas),
-    catch(findall(Numbers, quickxplain_numbers(Mode, Formulas, Numbered, Numbers), Found),
-          Error,
-          ( resolve_solver_depth(_), throw(Error) )),
-    resolve_solver_depth(_),
+    findall(Numbers, quickxplain_numbers(Mode, Formulas, Numbered, Numbers), Found),
     Found = [Numbers],
     % Not findall/3, which would copy: the result must be the caller's own terms, in their order.
     include([I-_]>>memberchk(I, Numbers), Numbered, Chosen),
@@ -462,7 +453,6 @@ labelled_subset([L|Ls], [F|Fs], CoreLabels, Core) :-
 %  Do a solver check and return the status, one of `{l_true, l_false, l_undef}`
 z3_check(Status) :-
     check_status_arg(Status),
-    resolve_solver_depth(_),          % drop formulas undone by backtracking
     get_global_handle(S),
     z3_check(S, Status).
 
@@ -470,14 +460,12 @@ z3_check(Status) :-
 %  Prints a model if status is not `l_false` (that is, known to be unsat).
 z3_check_and_print(Status) :-
     check_status_arg(Status),
-    resolve_solver_depth(_),
     get_global_handle(Solver),
     z3_check_and_print(Solver, Status).
 
 % Flag toggles between getting the model as lists or as assoc maps:
 z3_model_internal(Flag, Model) :-
     must_be(oneof([lists, assocs]), Flag),
-    resolve_solver_depth(_),
     z3_check(Status),
     member(Status, [l_true, l_undef]), !,
     get_global_handle(H),
@@ -519,7 +507,7 @@ z3_push(Foriginal, Status) :-
 push_formula(Foriginal, Mode, Status) :-
     (get_global_handle(H) -> true; new_global_handle(H)),
     z3_expand_term(Foriginal, F),
-    (b_getval(solver_depth, 0) ->
+    (z3_solver_scopes(H, 0) ->         %% nothing pushed on this branch: a new query
          z3_reset_declarations(H), %% does not clear enums
          z3_enum_declarations_assoc(H, EnumMap),
          set_type_inference_map(EnumMap)
@@ -535,6 +523,7 @@ push_formula(Foriginal, Mode, Status) :-
              %% writeln(compare(Symbols, NewSymbols)),
              get_type_inference_map(Assoc),
              z3_declare_types_for_symbols(H, NewSymbols, Assoc),
+             undo(remove_declarations(H, NewSymbols)),   %% declarations follow backtracking too
              push_solver(Solver),
              %% We now remove ":" terms from FG. Unfortunately, this can't be done by "ground_version", because
              %% we use the ":" annotations in the type checking after variables are grounded (assert_type);
@@ -564,7 +553,6 @@ solve(L, M) :- maplist(z3_push, L), z3_model(M).
 %  Evaluates the expression in a current model. CompletionFlag is one of `true, false`.
 z3_eval(Expression, Completion, Result) :-
     \+ is_list(Expression), !,
-    resolve_solver_depth(_),
     get_global_handle(S),
     z3_check(S, l_true),
     replace_var_attributes(Expression, E1),
@@ -583,7 +571,6 @@ z3_eval(Expression, Result) :- z3_eval(Expression, false, Result).
 
 %% Map eval on a list:
 z3_eval_list(L, Completion, Result) :- must_be(list, L),
-                                       resolve_solver_depth(_),
                                        get_global_handle(S),
                                        z3_check(S, l_true),
                                        replace_var_attributes(L, L1),
@@ -656,17 +643,7 @@ z3_push_and_print(F) :- z3_push_and_print(F, l_true).
 %  Succeeds if Formula is known to be consistent with the formulas pushed so far (status `l_true`). Fails
 %  if it is not, or if Z3 cannot decide. Pushes nothing.
 z3_is_consistent(F) :-
-    check_and_pop(F, l_true).
-
-% Pushes F, succeeding if the status is Status, then pops it again, restoring solver_depth: popping
-% alone left solver_depth one too high, so that a later backtrack could leave a formula asserted.
-% F's types stay in the type map, as its symbols stay declared in Z3, which does not undo
-% declarations within a query.
-check_and_pop(F, Status) :-
-    b_getval(solver_depth, Depth),
-    z3_push(F, Status),
-    popn(1),
-    b_setval(solver_depth, Depth).
+    \+ \+ z3_push(F, l_true).          % \+ \+ undoes the push, and its declarations
 
 %% to handle type errors correctly, need to distiguish failure-by-type-error from failure-by-inconsistency:
 
@@ -675,7 +652,7 @@ check_and_pop(F, Status) :-
 %  inconsistent with them). Fails if it is not, if Z3 cannot decide, or if Formula is ill-typed. Pushes
 %  nothing.
 z3_is_implied(F) :-
-    check_and_pop(not(F), l_false).
+    \+ \+ z3_push(not(F), l_false).
 
 %% does not work if there are type errors:
 %% z3_is_implied(F) :- \+ z3_is_consistent(not(F)).
@@ -1397,45 +1374,63 @@ test(type_error) :-
 
 % Quantifiers through z3.pl: bound variables are typed in scope, and not declared.
 
-:- begin_tests(z3pl_solver_depth, [setup(reset_globals), cleanup(free_globals)]).
+:- begin_tests(z3pl_backtracking, [setup(reset_globals), cleanup(free_globals)]).
 
-% After resolving, Z3's scopes match the pushes on the current branch.
-depth_matches :-
-    resolve_solver_depth(D),
-    raw_solver_scopes(N),
-    assertion(D == N).
+% Pushes are undone by backtracking (undo/1): Z3's scopes, assertions and declarations follow the
+% current Prolog branch at once, with nothing to resolve.
+
+scopes_are(N) :- raw_solver_scopes(S), assertion(S == N).
+
+declared_names(Names) :-
+    z3_declarations(Ds),
+    findall(Name, member((Name/_):_, Ds), Names0),
+    msort(Names0, Names).
 
 % Backtracking to a point between two pushes, after a consistency check, undoes the later push.
-% (z3_is_consistent/1 and z3_is_implied/1 popped Z3 without lowering solver_depth, so x = 7
+% (Before, z3_is_consistent/1 and z3_is_implied/1 left the depth counter one too high, so x = 7
 % stayed asserted.)
 test(check_then_backtrack, [forall(member(Check, [z3_is_consistent(x > 5), z3_is_implied(x > -1)]))]) :-
     z3_reset,
     z3_push(x:int > 0),
     call(Check),
-    depth_matches,
+    scopes_are(1),
     z3_push(x < 10),
     member(K, [1, 2]),
     (   K == 1
-    ->  z3_push(x = 7), fail
+    ->  z3_push(x = 7), scopes_are(3), fail
     ;   true
     ),
-    assertion(z3_is_consistent(x = 3)),
-    depth_matches.
+    scopes_are(2),
+    assertion(z3_is_consistent(x = 3)).
 
-% The checks push nothing; their formulas' types stay, as Z3 keeps the declarations.
+% The checks push nothing, and leave no declarations or types behind.
 test(checks_leave_nothing) :-
     z3_reset,
     z3_push(x:int > 0),
-    z3_is_consistent(y:int > 0),               % not in assertion/1, which would undo the types
+    z3_is_consistent(y:int > 0),
     z3_is_implied(x > -1),
     \+ z3_is_consistent(x < 0),
     \+ z3_is_implied(x > 3),
-    depth_matches,
+    scopes_are(1),
     get_global_handle(H),
     z3_swi_foreign:z3_solver_assertions(H, As),
     assertion(As == [x > 0]),
-    z3_push(y:real > 0.5, Status),               % y is an int, from the check above
-    assertion(Status == l_type_error).
+    declared_names(Names),
+    assertion(Names == [x]),
+    z3_push(y:real > 0.5, Status),               % y is free to be a real now
+    assertion(Status == l_true).
+
+% A formula's declarations are undone with it, so another branch can give a name another sort.
+test(declarations_follow_backtracking) :-
+    z3_reset,
+    z3_push(x:int > 0),
+    (   z3_push(y:int > 0), fail
+    ;   true
+    ),
+    declared_names(Names),
+    assertion(Names == [x]),
+    z3_push(y:bool, Status),
+    assertion(Status == l_true).
 
 % After backtracking, z3_check/1, z3_eval/2 and z3_model/1 see only the current branch.
 test(no_stale_assertions) :-
@@ -1444,11 +1439,37 @@ test(no_stale_assertions) :-
     (   z3_push(x < 0, _), fail
     ;   true
     ),
+    scopes_are(1),
     z3_check(S), assertion(S == l_true),
     z3_eval(x, V), assertion(V > 0),
     z3_model(M), assertion(memberchk(x = _, M.constants)).
 
-:- end_tests(z3pl_solver_depth).
+% A cut commits to a push; an exception undoes it; findall/3 undoes its pushes.
+test(cut_exception_findall) :-
+    z3_reset,
+    (   z3_push(x:int > 0), !
+    ;   true
+    ),
+    scopes_are(1),
+    catch(( z3_push(x < 5), throw(stop) ), stop, true),
+    scopes_are(1),
+    findall(K, ( member(K, [1, 2, 3]), z3_push(x = K) ), Ks),
+    assertion(Ks == [1, 2, 3]),
+    scopes_are(1).
+
+% z3_reset/0 inside a query makes a new handle: the pops still pending for the old one do nothing.
+test(reset_inside_query) :-
+    z3_reset,
+    z3_push(a:int > 0),
+    (   z3_reset, z3_push(b:int > 0), scopes_are(1), fail
+    ;   true
+    ),
+    scopes_are(0),
+    z3_push(c:int > 0),
+    z3_check(S),
+    assertion(S == l_true).
+
+:- end_tests(z3pl_backtracking).
 
 :- begin_tests(z3pl_label, [setup(reset_globals), cleanup(free_globals)]).
 
