@@ -134,6 +134,12 @@ every line and branch of the C code that the workload reaches is already reached
 It finds memory that is never freed, not objects that are kept alive longer than needed but are freed
 with their handle.
 
+## Examples
+
+[examples/](examples/README.md) has worked examples of each feature, as scripts that print
+questions and Z3's answers; its README shows how to run them, explore them interactively, and run
+their tests.
+
 ## Code and Functionality Overview
 
 ### High-level, backtrackable: z3.pl
