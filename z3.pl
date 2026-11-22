@@ -86,6 +86,7 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
 
 :- use_module(library(assoc)).
 :- use_module(library(ordsets)).
+:- use_module(library(debug)).   % debug/3, for the z3(handle) topic
 
 :- use_module(z3_swi_foreign, [
                   z3_assert/2,
@@ -120,7 +121,7 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
 free_handle :-
     (nb_current(global_handle, H) ->
          (
-             print_message(informational, z3_message("Freeing old z3.pl handle")),
+             debug(z3(handle), "Freeing old z3.pl handle", []),
              z3_free_handle(H)
          )
     ;
@@ -199,16 +200,18 @@ attr_unify_hook(Attr, Formula) :-
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%% should only be called at the top-most level:
+%% should only be called at the top-most level.
+%% Making and freeing handles is traced under the debug topic z3(handle), off by default:
+%% ?- debug(z3(handle)).  shows it.
 
 new_global_handle(Handle) :-
-    print_message(informational, z3_message("Making new z3.pl handle")),
+    debug(z3(handle), "Making new z3.pl handle", []),
     free_handle,
     z3_new_handle(Handle),
     (nb_current(z3_timeout, Ms) -> z3_set_timeout(Handle, Ms) ; true), % kept across z3_reset
     nb_setval(global_handle, Handle),
     nb_setval(solver_depth, 0),
-    print_message(informational, z3_message("Made new z3.pl handle")).
+    debug(z3(handle), "Made new z3.pl handle", []).
 
 get_global_handle(Handle) :- nb_current(global_handle, Handle).
 
