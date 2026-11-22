@@ -292,6 +292,28 @@ M = model{constants:[a=store(const_array(int, 7), 1, 5)], functions:[]}.
 Here every element of `a` is 7, except the one at index 1. (Z3 chose 7 for the default, since only
 indices 1 and 2 are constrained.)
 
+### Quantifiers
+
+`forall(Vars, Body)` and `exists(Vars, Body)` quantify over `Vars`, a list of names, each optionally with a
+sort (`x:int`); `z3.pl` infers the sorts of the others from the body. Inside the body, a bound name
+refers to the bound variable, shadowing any constant of the same name; bound names are not declared as
+constants.
+
+```prolog
+?- z3_push(forall([x], f(x) = 2 * x)), z3_is_implied(f(5) = 10).
+true.
+```
+
+Z3 is good at proving that a quantified formula is unsatisfiable, by instantiating its quantifiers, but
+it cannot always decide that one is satisfiable: `forall([x:int], f(x) > x)` holds for `f(x) = x + 1`,
+yet Z3 searches until stopped. Since `z3_push` checks after each push, set a timeout (`z3_set_timeout/1`)
+when using quantifiers; an undecided check then has status `l_undef`. At the lower level
+(`z3_swi_foreign`), each bound variable needs its sort.
+
+[examples/quantifiers.pl](examples/quantifiers.pl) has worked examples: a syllogism, properties of
+functions and arrays, defining a function by an axiom, explaining an inconsistency, and a question Z3
+cannot settle. Run it with `./examples/quantifiers.pl`.
+
 ### Reserved names
 
 These names have a built-in meaning in formulas, so they cannot be used as names of your own
@@ -316,6 +338,7 @@ constants or functions (with the arities shown, where they matter).
 - Arithmetic: `+`, `-`, `minus`, `*`, `/`, `div`, `mod`, `rem`, `divides`, `power`, `**`, `^`,
   `is_int`, `int2real`, `real2int`.
 - Pseudo-Boolean: `atleast`, `atmost`.
+- Quantifiers: `forall(Vars, Body)` and `exists(Vars, Body)`.
 - Arrays: `select(Array, Index)`, `store(Array, Index, Value)` (the array with `Index` set to `Value`), and
   `const_array(IndexSort, Value)` (the array with `Value` at every index).
 - Strings, with arguments in the SMT-LIB order: `str_concat/N`, `str_len/1`, `str_substr/3` (string, offset,
@@ -354,6 +377,20 @@ faster when only a few of many formulas conflict:
 ?- z3_push(x:int > 5), z3_unsat_core([x < 3, y:int = 1], Core).
 Core = [x<3].
 ```
+
+- `z3_explain(Formulas, Core)` and `z3_relax(Formulas, Kept)` run QuickXplain with Z3: `Core` is a
+minimal subset of `Formulas` that conflict (with the formulas pushed so far), and `Kept` a maximal
+subset that can all hold, preferring earlier formulas, so list the most important first. Use these
+rather than `qexplain(z3_push, ...)` and `qrelax(z3_push, ...)`: QuickXplain pushes formulas one at a
+time, and a formula pushed alone can get other types than with the rest (in `f(a) = f(b)`, `a` has no
+numeric type yet, so a later `a = 1` is a type error), which `z3_push` reports by failing, as it does a
+conflict. `z3_explain` and `z3_relax` type all the formulas together first. `z3_minimal_core(Formulas,
+Core)` is `z3_unsat_core` followed by `z3_explain`. With quantifiers, their consistency checks of
+subsets may each take until the timeout, while `z3_unsat_core/2` stays fast.
+
+[examples/explanations.pl](examples/explanations.pl) has worked examples: scheduling a meeting and
+configuring a car within a budget, explained, relaxed and optimized. Run it with
+`./examples/explanations.pl`.
 
 At the lower level, `z3_check_assumptions(Handle, Literals, Status)` checks under Boolean assumptions,
 and `z3_get_unsat_core(Handle, Core)` gives the ones an `l_false` result used.

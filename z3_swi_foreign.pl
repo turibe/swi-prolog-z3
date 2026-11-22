@@ -1602,3 +1602,98 @@ test(malformed, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)), forall(mal
     \+ z3_assert(H, F).
 
 :- end_tests(arrays).
+
+% Quantifiers: forall(Vars, Body) and exists(Vars, Body), with Vars a list of Name:Sort.
+% Z3 decides satisfiable quantified formulas only sometimes, so each handle has a timeout.
+
+:- begin_tests(quantifiers).
+
+quantified_handle(H) :- z3_new_handle(H), z3_set_timeout(H, 2000).
+
+status_of(Formulas, Status) :-
+    setup_call_cleanup(quantified_handle(H),
+                       ( maplist(z3_assert(H), Formulas), z3_check(H, Status) ),
+                       z3_free_handle(H)).
+
+% Formula follows from Assumptions: asserting its negation is unsatisfiable.
+follows(Decls, Assumptions, Formula) :-
+    setup_call_cleanup(quantified_handle(H),
+                       ( forall(member(D-T, Decls), z3_declare_function(H, D, T)),
+                         maplist(z3_assert(H), Assumptions),
+                         z3_assert(H, not(Formula)),
+                         z3_check(H, l_false) ),
+                       z3_free_handle(H)).
+
+quantified_status(forall([x:int], (x:int) + 0 = x), l_true).
+quantified_status(forall([x:int], x > 0), l_false).
+quantified_status(exists([x:int], x * x = 4), l_true).
+quantified_status(exists([x:int], x * x = 2), l_false).
+quantified_status(forall([x:int], exists([y:int], y > x)), l_true).
+quantified_status(forall([x:int], exists([x:int], x > 5)), l_true).   % the inner x shadows the outer one
+
+test(status, [forall(quantified_status(F, Expected))]) :-
+    status_of([F], Status),
+    assertion(Status == Expected).
+
+test(instantiation, [forall(member(Decls-As-F, [ [f(int)-int]-[forall([x:int], f(x) > x)]-(f(3) > 3),
+                                                 [f(int)-int]-[forall([x:int], f(x) = 2 * x)]-(f(5) = 10),
+                                                 [g(int, int)-int]-[forall([x:int, y:int], g(x, y) = g(y, x))]-(g(1, 2) = g(2, 1)) ]))]) :-
+    follows(Decls, As, F).
+
+% A bound variable shadows a constant of the same name, of any sort; other constants are global.
+test(shadowing, [setup(quantified_handle(H)), cleanup(z3_free_handle(H))]) :-
+    z3_declare_function(H, x, bool),
+    z3_assert(H, x),
+    z3_assert(H, forall([x:int], x * 0 = 0)),
+    z3_check(H, l_true).
+
+test(global_inside_body) :-
+    follows([h(int)-int], [(z:int) = 7, forall([y:int], h(y) > z)], h(0) > 7).
+
+% x:Sort inside the body refers to the bound variable if the sort is the same.
+test(annotated_inside_body) :-
+    status_of([forall([x:int], (x:int) * 0 = 0)], l_true).
+
+test(annotated_inside_body_other_sort, [setup(quantified_handle(H)), cleanup(z3_free_handle(H)), fail]) :-
+    z3_assert(H, forall([x:int], (x:bool))).
+
+% Assertions come back as forall/exists terms, which can be asserted again.
+test(round_trip, [setup(quantified_handle(H)), cleanup(z3_free_handle(H))]) :-
+    z3_declare_function(H, f(int), int),
+    F = forall([x:int], exists([y:real], f(x) > x or y > x)),
+    z3_assert(H, F),
+    z3_solver_assertions(H, [Back]),
+    % Z3 converts x to a real to compare it with y, so Back has int2real(x) (Z3's to_real).
+    assertion(Back == forall([x:int], exists([y:real], f(x) > x or y > int2real(x)))),
+    z3_assert(H, Back).
+
+malformed_quantifier(forall([], p:bool)).            % no bound variables
+malformed_quantifier(forall([x], x > 0)).            % no sort (z3.pl infers sorts; this level needs them)
+malformed_quantifier(forall([x:int], x + 1)).        % body not a formula
+malformed_quantifier(forall(x:int, x > 0)).          % not a list
+malformed_quantifier(exists([x:foo(bar)], true)).    % not a sort
+
+test(malformed, [setup(quantified_handle(H)), cleanup(z3_free_handle(H)), forall(malformed_quantifier(F))]) :-
+    \+ z3_assert(H, F).
+
+% Z3 cannot decide this satisfiable formula (it would need f(x) = x + 1); a time limit stops the check.
+test(undecided_can_be_interrupted, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))]) :-
+    z3_declare_function(H, f(int), int),
+    z3_assert(H, forall([x:int], f(x) > x)),
+    get_time(T0),
+    catch(call_with_time_limit(0.3, z3_check(H, _)), E, true),
+    get_time(T1),
+    assertion(E == time_limit_exceeded),
+    assertion(T1 - T0 < 1.0).
+
+% Not only in quantifiers: the conversions Z3 inserts when integers and reals are mixed come back
+% with the Prolog names, so the terms can be asserted again.
+test(mixed_arithmetic_round_trip, [setup(quantified_handle(H)), cleanup(z3_free_handle(H))]) :-
+    z3_assert(H, (y:real) > (x:int)),
+    z3_assert(H, is_int(y:real)),
+    z3_solver_assertions(H, As),
+    assertion(As == [is_int(y), y > int2real(x)]),
+    forall(member(A, As), z3_assert(H, A)),
+    z3_check(H, l_true).
+
+:- end_tests(quantifiers).

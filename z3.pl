@@ -10,6 +10,8 @@
               z3_reason_unknown/1,     % -Reason  Why the last check returned l_undef
               z3_unsat_core/2,         % +Formulas, -Core  A subset of Formulas inconsistent with the solver
               z3_minimal_core/2,       % +Formulas, -Core  The same, minimal (using QuickXplain)
+              z3_explain/2,            % +Formulas, -Core  A minimal subset of Formulas that is inconsistent
+              z3_relax/2,              % +Formulas, -Kept  A maximal subset of Formulas that is consistent
               z3_optimize/2,           % +Objectives, -Model  An optimal model of the formulas pushed so far
               z3_declarations/1,       % -Declarations  Get declarations so far, or those used in the previous query (reset on a new push).
               z3_declare_enum/2,       % +EnumName, +EnumValues. Not backtrackable.
@@ -76,7 +78,7 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
                   z3_expand_term/2
                   ]
              ).
-:- use_module(quickexplain, [qexplain/3]).  % for z3_minimal_core/2
+:- use_module(quickexplain, [qexplain/3, qrelax/3]).  % for z3_explain/2 and z3_relax/2
 
 :- use_module(utils, [repeat_string/3,
                       pair_list_to_assoc/2
@@ -304,8 +306,7 @@ z3_optimize(Objectives, Model) :-
 optimal_model(Objectives, Model, Values) :-
     maplist(objective_formula, Objectives, Formulas),
     Conjunction =.. [and, true | Formulas],
-    z3_push(Conjunction, Status),            % types and declares the objectives' symbols
-    memberchk(Status, [l_true, l_undef]),
+    push_formula(Conjunction, types_only, l_true),  % types and declares the objectives' symbols
     ground_version(Objectives, Grounded, _),
     remove_type_annotations(Grounded, Plain),
     get_global_handle(H),
@@ -339,10 +340,70 @@ z3_unsat_core(Formulas, Core) :-
 
 %! z3_minimal_core(+Formulas, -Core) is semidet.
 %  Like z3_unsat_core/2, but Core is minimal: removing any formula from it makes it consistent with
-%  the formulas pushed so far. The unsat core is a fast first cut, which QuickXplain then minimizes.
+%  the formulas pushed so far. The unsat core is a fast first cut, which z3_explain/2 then minimizes.
+%  With quantifiers, z3_explain/2's consistency checks of subsets may each take until the timeout.
 z3_minimal_core(Formulas, Core) :-
     z3_unsat_core(Formulas, Core0),
-    qexplain(z3_push, Core0, Core).
+    (   Core0 == []
+    ->  Core = []                                % the pushed formulas are inconsistent by themselves
+    ;   z3_explain(Core0, Core)
+    ).
+
+%! z3_explain(+Formulas, -Core) is semidet.
+%  Core is a minimal subset of Formulas, in their order, that is inconsistent with the formulas pushed
+%  so far: removing any formula from Core makes it consistent. Fails if Formulas are consistent with
+%  them (or Z3 cannot decide). Uses QuickXplain (quickexplain.pl) with z3_push, but first types all of
+%  Formulas together: pushed one at a time, a formula can get other types than with the rest (in
+%  f(a) = f(b), a and f have no numeric type yet, so a = 1 alone is then a type error), and
+%  qexplain(z3_push, ...) would take that type error for a conflict. The solver is left as it was.
+z3_explain(Formulas, Core) :-
+    typed_quickxplain(explain, Formulas, Core).
+
+%! z3_relax(+Formulas, -Kept) is det.
+%  Kept is a maximal subset of Formulas, in their order, that is consistent with the formulas pushed so
+%  far: adding any other formula of Formulas makes it inconsistent. When formulas conflict, earlier
+%  ones are preferred, so list the most important first. Kept is Formulas if they are consistent.
+%  Like z3_explain/2, it types all of Formulas together first. The solver is left as it was.
+z3_relax(Formulas, Kept) :-
+    typed_quickxplain(relax, Formulas, Kept).
+
+% Runs QuickXplain (Mode explain or relax) on Formulas, typed together first. QuickXplain runs on
+% numbered formulas inside findall/3, which undoes the pushes; only the numbers come out, so
+% Formulas, which may contain Prolog variables, are not copied.
+typed_quickxplain(Mode, Formulas, Result) :-
+    must_be(list, Formulas),
+    length(Formulas, N),
+    numlist(1, N, Is),
+    pairs_keys_values(Numbered, Is, Formulas),
+    findall(Numbers, quickxplain_numbers(Mode, Formulas, Numbered, Numbers), Found),
+    resolve_solver_depth(_),
+    Found = [Numbers],
+    % Not findall/3, which would copy: the result must be the caller's own terms, in their order.
+    include([I-_]>>memberchk(I, Numbers), Numbered, Chosen),
+    pairs_values(Chosen, Result).
+
+quickxplain_numbers(Mode, Formulas, Numbered, Numbers) :-
+    Conjunction =.. [and, true | Formulas],
+    push_formula(Conjunction, types_only, l_true),   % types and declares all the symbols together
+    quickxplain_mode(Mode, Conjunction, Numbered, Chosen),
+    pairs_keys(Chosen, Numbers).
+
+quickxplain_mode(explain, Conjunction, Numbered, Core) :-
+    \+ \+ z3_push(Conjunction, l_false),             % Formulas are inconsistent (with what was pushed)
+    qexplain(push_consistent, Numbered, Core).
+quickxplain_mode(relax, _Conjunction, Numbered, Kept) :-
+    reverse(Numbered, Reversed),                     % qrelax keeps later formulas over earlier ones
+    qrelax(push_consistent, Reversed, Kept).
+
+% The push QuickXplain uses: fails only if the solver becomes inconsistent. A type error cannot
+% happen once all the formulas are typed together, but would raise an error rather than look like a
+% conflict.
+push_consistent(_-F) :-
+    z3_push(F, Status),
+    (   Status == l_type_error
+    ->  type_error(well_typed_formula, F)
+    ;   Status \== l_false
+    ).
 
 numlist_labels(0, []) :- !.
 numlist_labels(N, Labels) :-
@@ -414,6 +475,12 @@ check_status_arg(Status) :- valid_status_list(L),
 %  Typechecks the formula and declares any needed types.
 z3_push(Foriginal, Status) :-
     check_status_arg(Status),
+    push_formula(Foriginal, assert, Status).
+
+% push_formula(+Formula, +Mode, -Status): z3_push/2 for Mode = assert; for Mode = types_only, only types
+% and declares Formula's symbols and pushes a solver scope, without asserting or checking (Status is
+% l_true unless there is a type error).
+push_formula(Foriginal, Mode, Status) :-
     (get_global_handle(H) -> true; new_global_handle(H)),
     z3_expand_term(Foriginal, F),
     (b_getval(solver_depth, 0) ->
@@ -437,7 +504,10 @@ z3_push(Foriginal, Status) :-
              %% we use the ":" annotations in the type checking after variables are grounded (assert_type);
              %% so we do two passes through the term.
              remove_type_annotations(FG, FG_notypes),
-             internal_assert_and_check(Solver, FG_notypes, Status)
+             (   Mode == assert
+             ->  internal_assert_and_check(Solver, FG_notypes, Status)
+             ;   Status = l_true
+             )
          )
     ;  (
         Status = l_type_error,
@@ -980,7 +1050,7 @@ test(solver_unchanged) :-
     raw_solver_scopes(S1),
     assertion(S1 == S0),
     get_global_handle(H),
-    z3_solver_assertions(H, As),
+    z3_swi_foreign:z3_solver_assertions(H, As),
     assertion(As == [x > 5]).                               % no labelled formulas left
 
 test(already_inconsistent) :-
@@ -997,6 +1067,14 @@ test(prolog_variables) :-
     Core = [Lt],
     assertion(Lt == (X < 5)).                               % the formula itself, not a copy
 
+% QuickXplain pushes formulas one at a time; pushed alone, f(a) = f(b) left a, b and f without a
+% numeric type, so a = 1 was a type error, which looked like a conflict.
+test(minimal_core_types_formulas_together) :-
+    z3_reset,
+    Formulas = [f(a) = f(b), a = 1, b = 2, f(1) <> f(2)],
+    z3_minimal_core(Formulas, Core),
+    assertion(Core == Formulas).                            % all four are needed
+
 test(minimal_core_like_qexplain) :-
     Formulas = [a:int = b, b:int = c, c:int = d, d:int = f(a), e:int = f(b), f(a:int) > f(d:int)],
     z3_reset,
@@ -1004,6 +1082,57 @@ test(minimal_core_like_qexplain) :-
     z3_reset,
     qexplain(z3_push, Formulas, Expected),
     assertion(Core == Expected).
+
+test(explain) :-
+    z3_reset,
+    z3_explain([x:int > 5, y:int = 1, x < 3], Core),
+    assertion(Core == [x:int > 5, x < 3]).
+
+test(explain_consistent, [fail]) :-
+    z3_reset,
+    z3_explain([x:int > 1, x < 3], _).
+
+test(explain_relative_to_pushed) :-
+    z3_reset,
+    z3_push(x:int > 5),
+    z3_explain([y:int = 1, x < 3], Core),
+    assertion(Core == [x < 3]).
+
+% Earlier formulas are preferred: of two that conflict, the earlier one is kept.
+test(relax_prefers_earlier, [forall(member(Fs-Kept, [[x:int > 5, x < 3, y:int = 1]-[x:int > 5, y:int = 1],
+                                                       [x:int < 3, x > 5, y:int = 1]-[x:int < 3, y:int = 1]]))]) :-
+    z3_reset,
+    z3_relax(Fs, K),
+    assertion(K == Kept).
+
+test(relax_consistent) :-
+    z3_reset,
+    z3_relax([x:int > 1, x < 3], Kept),
+    assertion(Kept == [x:int > 1, x < 3]).
+
+% Like z3_explain, z3_relax types the formulas together (qrelax(z3_push, ...) drops f(a) = f(b) here).
+test(relax_types_formulas_together) :-
+    z3_reset,
+    z3_relax([f(a) = f(b), a = 1, b = 2, f(1) <> f(2)], Kept),
+    assertion(Kept == [f(a) = f(b), a = 1, b = 2]).
+
+test(explain_and_relax_leave_solver_unchanged) :-
+    z3_reset,
+    z3_push(x:int > 5),
+    raw_solver_scopes(S0),
+    z3_explain([x < 3], _),
+    z3_relax([x < 3, x < 9], _),
+    raw_solver_scopes(S1),
+    assertion(S1 == S0),
+    get_global_handle(H),
+    z3_swi_foreign:z3_solver_assertions(H, As),
+    assertion(As == [x > 5]).
+
+test(explain_prolog_variables) :-
+    z3_reset,
+    z3_explain([X > 10, X < 5, Y > 0], Core),
+    assertion(Core == [X > 10, X < 5]),                     % the caller's terms, not copies
+    assertion(var(Y)).
 
 :- end_tests(z3pl_cores).
 
@@ -1045,7 +1174,7 @@ test(solver_unchanged) :-
     raw_solver_scopes(S1),
     assertion(S1 == S0),
     get_global_handle(H),
-    z3_solver_assertions(H, As),
+    z3_swi_foreign:z3_solver_assertions(H, As),
     assertion(As == [x > 0]).
 
 test(prolog_variables) :-
@@ -1093,6 +1222,49 @@ test(type_error) :-
     assertion(R == l_type_error).
 
 :- end_tests(z3pl_arrays).
+
+% Quantifiers through z3.pl: bound variables are typed in scope, and not declared.
+
+:- begin_tests(z3pl_quantifiers, [setup((reset_globals, z3_set_timeout(2000))),
+                                  cleanup((z3_set_timeout(0), free_globals))]).
+
+global_assertions(As) :- get_global_handle(H), z3_swi_foreign:z3_solver_assertions(H, As).
+
+test(inferred_sort) :-
+    z3_reset,
+    z3_push(forall([x], f(x) * 0 = x * 0), _),             % x is an int; valid, so decided at once
+    global_assertions(As),
+    assertion(As == [forall([x:int], f(x) * 0 = x * 0)]),
+    z3_declarations(Ds),
+    assertion(\+ memberchk((x/0):_, Ds)),                   % the bound x is not a constant
+    assertion(memberchk((f/1):'Int', Ds)).
+
+test(implied) :-
+    z3_reset,
+    z3_push(forall([x], f(x) = 2 * x), _),
+    assertion(z3_is_implied(f(5) = 10)).
+
+% A sort that the body does not determine is uninterpreted.
+test(unknown_sort) :-
+    z3_reset,
+    z3_push(forall([x], x = x), _),
+    global_assertions(As),
+    assertion(As == [forall([x:uninterpreted], x = x)]).
+
+test(shadowing) :-
+    z3_reset,
+    z3_push(x:bool),
+    z3_push(forall([x:int], x * 0 = 0), _),
+    z3_declarations(Ds),
+    assertion(memberchk((x/0):'Bool', Ds)),
+    assertion(z3_is_implied(x)).
+
+test(type_error_in_body) :-
+    z3_reset,
+    z3_push(forall([x:int], x and p), R),
+    assertion(R == l_type_error).
+
+:- end_tests(z3pl_quantifiers).
 
 
 :- begin_tests(enums).
