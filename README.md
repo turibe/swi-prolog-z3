@@ -388,6 +388,10 @@ conflict. `z3_explain` and `z3_relax` type all the formulas together first. `z3_
 Core)` is `z3_unsat_core` followed by `z3_explain`. With quantifiers, their consistency checks of
 subsets may each take until the timeout, while `z3_unsat_core/2` stays fast.
 
+[examples/explanations.pl](examples/explanations.pl) has worked examples: scheduling a meeting and
+configuring a car within a budget, explained, relaxed and optimized. Run it with
+`./examples/explanations.pl`.
+
 At the lower level, `z3_check_assumptions(Handle, Literals, Status)` checks under Boolean assumptions,
 and `z3_get_unsat_core(Handle, Core)` gives the ones an `l_false` result used.
 
