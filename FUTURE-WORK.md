@@ -4,8 +4,11 @@ Z3 features that could be added to this integration, roughly in the suggested or
 Effort estimates are rough: small is a day or less, moderate a few days, large more.
 
 Current support, for reference: `int`, `real` and `bool` sorts, enumerations, uninterpreted sorts and
-functions, bit vectors, arithmetic, propositional logic and equality, pseudo-Boolean `atleast`/`atmost`,
-and string literals.
+functions, bit vectors, arithmetic (nonlinear too, with exact irrational values in models), propositional
+logic and equality, pseudo-Boolean `atleast`/`atmost`, strings, arrays, quantifiers and IEEE floating
+point; unsat cores, explanations and relaxations, optimization, timeouts and interrupts; and Prolog
+variables in formulas, with `z3_label/1`. Still open: items 6, 10, 11 and 12, the leftovers listed under
+the items that are done, and items 13 to 17.
 
 ## Gaps in what is already there
 
@@ -141,8 +144,46 @@ handle's declarations would allow independent queries without redeclaring types.
 See the Future Work section of the README: big numbers could be passed between Prolog and Z3 with GMP
 instead of through text, mostly speeding up the way back to Prolog.
 
+## Found while working on the above
+
+### 13. Making the solver state follow backtracking with undo/1 (blocked)
+
+`z3.pl` keeps Z3's scopes in step with Prolog's backtracking with a backtrackable depth counter, which
+every predicate that reads the solver must resolve first. SWI-Prolog's `undo/1` could do this directly:
+each push would register its pop, and each push's new declarations their removal, so Z3's state would
+follow the current branch with nothing to resolve. A version of `z3.pl` that does this is on the local
+`undo-solver` branch. It cannot be merged yet: with SWI-Prolog 11.0.0, an undo goal can be lost (under
+plunit, a test with a `true(...)` option after exactly two tests runs only one of its two), which leaves
+declarations behind; and with 9.1.21, a clause that registers an undo goal and then fails crashes the
+VM. The branch has a minimal reproduction (`test/undo_lost.pl`) and an issue description
+(`test/undo_lost_issue.md`) for the SWI-Prolog maintainers. Revisit when `undo/1` is reliable.
+
+### 14. Enumeration sorts in the stateful REPL (small)
+
+`stateful_repl.pl` has no command to declare an enumeration sort, and `decl/1` shows Z3's sort names
+(`'Int'`) next to the Prolog ones (`int`).
+
+### 15. Quieter error output in the tests (small)
+
+`make test` prints about 40 expected `ERROR:` and `INFO:` lines from tests of error handling, which the C
+code writes straight to stderr. A flag to turn these messages off, or routing them through Prolog's
+message system, would let the tests hide them.
+
+### 16. Tests that depend on what is loaded (small)
+
+Two `finalize_memory` tests fail when `z3_swi_foreign.pl` is loaded without `z3.pl` (for example, when
+running all the tests from `examples/pigeonhole.pl`); `make test`, which loads both, passes. The cause is
+not known yet.
+
+### 17. The `:` operator (design)
+
+`z3.pl` and `stateful_repl.pl` export `:` at priority 299, so that `x:int` binds tighter than `+` and
+`=`. Where they are loaded, module-qualified predicate indicators need parentheses, as in
+`lists:(append/3)`. This is documented in the README; avoiding it would mean another annotation syntax.
+
 ## Suggested order
 
-1 (done), then 3, then 4: item 1 fixed silently wrong output, item 3 completes the interruption work, and item 4
-builds on the existing QuickXplain code and can be checked against it. After those, 5 or 6 would most
-extend what the library can do.
+10 first: it is small, helps with debugging (dumping the assertions as SMT-LIB2) and lets the library
+be checked against other solvers. Then 6, which would most extend what the library can do, since
+datatypes map naturally onto Prolog terms. The small items, 14 to 16, can be done at any time; 11 when
+independent queries on shared declarations are needed; and 13 when SWI-Prolog's `undo/1` is fixed.
