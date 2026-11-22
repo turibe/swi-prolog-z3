@@ -193,18 +193,56 @@ will only succeed for `X = a` and `X = d`.
 
 ### High-level, stateful: stateful_repl.pl
 
-Using `z3.pl`, all assertions and type declarations (except for enums) are reset from one query to the next.
-The stateful_repl module offers an alternative to `z3.pl`, where assertions and declarations are accumulated,
-similarly to the Python integration or the Z3 prompt.
+With `z3.pl`, all assertions and type declarations (except for enums) are reset from one query to the
+next. The `stateful_repl` module is an alternative where formulas and declarations accumulate from one
+query to the next, as with the Z3 prompt or the Python API:
 
-The main queries / commands are:
-- add(+Formula)
-- asserted(-FormulaList)
-- reset
-- is_implied(+Formula)
-- is_consistent(+Formula)
-- model(-Model)
-- declarations(-Declarations)
+```prolog
+?- use_module(stateful_repl).
+?- add(x:int > 3).
+?- add(y = x + 1).
+?- implied(y > 4).
+true.
+?- consistent(y < 4).
+false.
+?- model(M).
+M = model{constants:[x=4, y=5], functions:[]}.
+```
+
+`add(F)` type-checks `F` against the types so far, declares its new symbols, and keeps `F` only if it is
+consistent with the formulas added before; otherwise it fails, and nothing changes. This holds too if
+the check is stopped (by `call_with_time_limit/2` or Ctrl-C). If Z3 cannot decide (status `l_undef`,
+for example after a timeout), `F` is added, with a warning. `z3_help/0` lists the commands:
+
+- Adding and asking:
+  - `add(+F)`: add formula `F`.
+  - `implied(+F)` (or `implies/1`): `F` follows from the formulas added so far.
+  - `consistent(+F)`: `F` is consistent with them. Like `implied/1`, it fails if Z3 cannot decide.
+  - `model(-M)`: a model of the formulas added so far.
+- State:
+  - `formulas(-L)` (or `asserted/1`): the formulas added so far, in order.
+  - `declarations(-L)`: the types of the symbols so far; `decl/1` also shows Z3's declarations.
+  - `status(-S)`: `l_true`, `l_false` or `l_undef`.
+  - `show_status/0`: prints the number of formulas, the status and the number of declarations.
+  - `scopes(-N)`: the number of solver scopes, one per formula added.
+  - `reset/0`: removes all formulas and declarations.
+- Timeouts: `timeout(+Ms)` limits each check to `Ms` milliseconds (0 for no limit; `reset/0` keeps it),
+  and `reason_unknown(-R)` says why the last check had status `l_undef`.
+- Conflicts and optimization, relative to the formulas added so far, without adding anything:
+  - `unsat_core(+Fs, -Core)`: a subset of `Fs` that conflicts with them;
+  - `explain(+Fs, -Core)`: a minimal such subset;
+  - `relax(+Fs, -Kept)`: a maximal subset of `Fs` consistent with them, preferring earlier formulas;
+  - `optimize(+Objectives, -M)`: a model that is best for `Objectives` (see Optimization).
+
+  These use `z3.pl` (`z3_unsat_core/2` and so on), with the formulas added so far pushed first. They
+  run inside `findall/3`, so `z3.pl`'s own formulas are unaffected, but don't call them while you
+  have `z3.pl` formulas pushed in the same query.
+- Sessions: `save_formulas(+File)` saves the formulas added so far, and `add_formulas(+File)` adds
+  the formulas saved in `File`.
+
+Like `z3.pl`, `stateful_repl` exports the operators `and`, `or`, `<>`, `<=>`, and `:` at priority 299,
+so that `x:int` binds tighter than `+` and `=`. A consequence is that, where it is loaded, a
+module-qualified predicate indicator needs parentheses: `lists:(append/3)`.
 
 ### Lower-level: z3_swi_foreign.pl
 
