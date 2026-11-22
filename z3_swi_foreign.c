@@ -3135,8 +3135,15 @@ static Z3_ast compound_to_ast(const handle h, decl_map declaration_map, const ch
   else if (strcmp(name_string, "div") == 0 || strcmp(name_string, "/") == 0) {
     CHECK_ARITY(name_string, 2, arity);
     DEBUG("making div\n");
+    // Z3_mk_div divides as integers if its first argument is an integer, converting the second one
+    // to an integer (truncating it): x / 2.0 would be (div x (to_int 2.0)). With one integer and one
+    // real argument, convert the integer one to a real, so this is real division, as type inference
+    // assumes. (The other arithmetic operations already convert the integer to a real.)
+    Z3_sort_kind k0 = Z3_get_sort_kind(ctx, Z3_get_sort(ctx, subterms[0]));
+    Z3_sort_kind k1 = Z3_get_sort_kind(ctx, Z3_get_sort(ctx, subterms[1]));
+    if (k0 == Z3_INT_SORT && k1 == Z3_REAL_SORT) subterms[0] = Z3_mk_int2real(ctx, subterms[0]);
+    if (k0 == Z3_REAL_SORT && k1 == Z3_INT_SORT) subterms[1] = Z3_mk_int2real(ctx, subterms[1]);
     result = Z3_mk_div(ctx, subterms[0], subterms[1]);
-    // The arguments must either both have int type or both have real type.
     // division by 0 is allowed, can be anything
     DEBUG("result is %s\n", Z3_ast_to_string(ctx, result));
   }

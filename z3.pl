@@ -1450,6 +1450,21 @@ test(no_stale_assertions) :-
 
 :- end_tests(z3pl_solver_depth).
 
+:- begin_tests(z3pl_division, [setup(reset_globals), cleanup(free_globals)]).
+
+test(mixed_is_real_division) :-
+    z3_reset,
+    z3_push(x:int = 3),
+    assertion(z3_is_implied(x / 2.0 = 1.5)),
+    assertion(z3_is_implied(1.5 / x = 0.5)).
+
+test(integers_divide_as_integers) :-
+    z3_reset,
+    z3_push(x:int = 7),
+    assertion(z3_is_implied(x / 2 = 3)).
+
+:- end_tests(z3pl_division).
+
 :- begin_tests(z3pl_label, [setup(reset_globals), cleanup(free_globals)]).
 
 test(all_solutions) :-

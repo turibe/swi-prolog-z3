@@ -1710,6 +1710,34 @@ test(mixed_arithmetic_round_trip, [setup(quantified_handle(H)), cleanup(z3_free_
 
 :- end_tests(quantifiers).
 
+% Division with one integer and one real argument is real division. (Z3_mk_div used to divide as
+% integers when the first argument was an integer, truncating the second: x / 2.0 was 1 for x = 3.)
+
+:- begin_tests(mixed_division).
+
+division_value(Formula, Value) :-
+    setup_call_cleanup(( z3_new_handle(H),
+                         z3_declare_function(H, x, int),
+                         z3_declare_function(H, r, real),
+                         z3_declare_function(H, v, real) ),
+                       ( z3_assert(H, x = 3), z3_assert(H, r = 2.0), z3_assert(H, v = Formula),
+                         z3_check(H, l_true),
+                         z3_model_lists(H, M),
+                         memberchk(v = Value, M.constants) ),
+                       z3_free_handle(H)).
+
+test(real_division, [forall(member(F-V, [x / 2.0 - 3/2, 3 / 2.0 - 3/2, x / r - 3/2, div(x, 2.0) - 3/2,
+                                          r / x - 2/3, 1.5 / x - 1/2]))]) :-
+    division_value(F, Value),
+    assertion(Value == V).
+
+% Two integers still divide as integers.
+test(integer_division) :-
+    division_value(x / 2, Value),
+    assertion(Value == 1).
+
+:- end_tests(mixed_division).
+
 % IEEE floating point at the low level: sorts, values, operations and conversions.
 
 :- begin_tests(floating_point).
