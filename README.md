@@ -310,6 +310,10 @@ yet Z3 searches until stopped. Since `z3_push` checks after each push, set a tim
 when using quantifiers; an undecided check then has status `l_undef`. At the lower level
 (`z3_swi_foreign`), each bound variable needs its sort.
 
+[examples/quantifiers.pl](examples/quantifiers.pl) has worked examples: a syllogism, properties of
+functions and arrays, defining a function by an axiom, explaining an inconsistency, and a question Z3
+cannot settle. Run it with `./examples/quantifiers.pl`.
+
 ### Reserved names
 
 These names have a built-in meaning in formulas, so they cannot be used as names of your own
