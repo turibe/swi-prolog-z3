@@ -23,7 +23,7 @@
               z3_reset_declarations/1,     %% +handle  Resets all declarations, does not clear solvers.
               z3_solver_assertions/2,      %% +handle, -assertions
               z3_check/2,                  %% +handle, -status
-              z3_check_and_print/2,        %% calls Z3_model_to_string
+              z3_check_and_print/2,        %% +handle, -status  The same, printing a model if possible
               z3_set_timeout/2,            %% +handle, +milliseconds (0: no limit)
               z3_reason_unknown/2,         %% +handle, -reason for the last l_undef
               z3_interrupt/1,              %% +handle, from another thread
