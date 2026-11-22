@@ -43,16 +43,16 @@ ground_sort(_).
 
 %%%%% Attribute (Prolog) variables %%%%%%%%%%
 
-%! reset_var_counts
-%  Rests the counter used for Z3 attributes for PL variables (internal).
+%! reset_var_counts is det.
+%  Resets the counter used for Z3 attributes for PL variables (internal).
 reset_var_counts :- nb_setval(varcount, 0).
 
 inc_var_count(X) :- nb_getval(varcount, X),
                     New is X + 1,
                     nb_setval(varcount, New).
 
-%! add_z3_attribute(Var, Attribute)
-%  adds a `z3` attribute to Var, if it does not have one yet.
+%! add_z3_attribute(+Var, -Attribute) is det.
+%  Attribute is Var's `z3` attribute, a fresh constant name, added if Var has none yet.
 add_z3_attribute(V, Attr) :- must_be(var, V),
                           get_attr(V, z3, Attr), !, %  equality should already be asserted
                           true.
@@ -110,7 +110,7 @@ z3_declare(H, F, lambda(Arglist, Range)) :- (var(F) -> type_error(nonvar, F) ; t
 
 
 %! ground_version(+Term, -GroundTerm, -SymbolList)
-%  Grounds any variables in X by making them into attribute variables,
+%  Grounds any variables in Term by making them into attribute variables,
 %  and also returns the non-built-in symbols that it finds, using f/N for all arities, including 0.
 %  Using F/N allows overloading by arity.
 

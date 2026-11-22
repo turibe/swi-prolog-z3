@@ -23,7 +23,7 @@
               z3_reset_declarations/1,     %% +handle  Resets all declarations, does not clear solvers.
               z3_solver_assertions/2,      %% +handle, -assertions
               z3_check/2,                  %% +handle, -status
-              z3_check_and_print/2,        %% calls Z3_model_to_string
+              z3_check_and_print/2,        %% +handle, -status  The same, printing a model if possible
               z3_set_timeout/2,            %% +handle, +milliseconds (0: no limit)
               z3_reason_unknown/2,         %% +handle, -reason for the last l_undef
               z3_interrupt/1,              %% +handle, from another thread
@@ -153,12 +153,14 @@ prolog:message(z3_message(F,L)) --> {swritef(S, F, L)}, [S].
 %  Apply Z3's simplify to Formula.
 %  (Defined in `z3_swi_foreign.c`.)
 
-%! z3_solver_assertions(+Handle, -Assertions)
-%  Get the assertions that have been added to Handle's solver.
+%! z3_solver_assertions(+Handle, -Assertions) is det.
+%  Assertions is the formulas asserted on Handle's solver, newest first, converted back to Prolog with
+%  the names z3_assert/2 accepts, so they can be asserted again.
 %  (Defined in `z3_swi_foreign.c`.)
 
-%! z3_solver_push(+Handle, -Scopes)
-%  Does a z3_push for Handle's solver, and reports the new number of Scopes.
+%! z3_solver_push(+Handle, -Scopes) is det.
+%  Pushes a new scope on Handle's solver, and reports the new number of Scopes. z3_solver_pop/3 removes
+%  the assertions made since.
 %  (Defined in `z3_swi_foreign.c`.)
 
 %! z3_set_timeout(+Handle, +Milliseconds) is det.
@@ -242,8 +244,8 @@ z3_model_assocs(H, M, Map) :- z3_model_functions(H, M, F),
                               pair_list_to_assoc(C, Cmap),
                               Map = model{functions:Fmap, constants:Cmap}.
 
-%! z3_model_assocs(+Handle, -Model)
-%  Gets a Prolog term representing a model for Handle's solver, using assoc maps.
+%! z3_model_assocs(+Handle, -Model) is semidet.
+%  Like z3_model_lists/2, with assoc maps instead of lists for the constants and functions.
 z3_model_assocs(H, Model) :-
     must_be(ground, H),
     setup_call_cleanup(z3_get_model(H, M),
@@ -252,8 +254,18 @@ z3_model_assocs(H, Model) :-
                       ).
 
 
-%! z3_model_lists(+Handle, -Model)
-%  Gets a Prolog term representing a model for Handle's solver, using lists.
+%! z3_model_lists(+Handle, -Model) is semidet.
+%  Model is a model of the assertions on Handle's solver, after a check: the dict
+%  `model{constants:Constants, functions:Functions}`. Constants is a list of `Name = Value`.
+%  Functions is a list of `f(Args) = Value` for each point the model gives, and `(f/N = else) = Value`
+%  for the other arguments; when that Value depends on the arguments, it is `lambda(Vars, Body)`,
+%  with the arguments named as Z3 prints them: `lambda(['x!0':int], 'x!0' + 1)`. Values are numbers,
+%  N/D for rationals, `true` and `false`, strings, enumeration values, `algebraic(Approx, Root)`
+%  for irrational numbers, `fp_value(V, Sort)` for floating point, rounding modes such as `rne`,
+%  and `store(...)` over `const_array(IndexSort, V)` for arrays. These can be given to Z3 again, with
+%  the same meaning. Values of an uninterpreted sort are atoms such as `'foo!val!0'`, which name
+%  distinct elements but, given to Z3 again, are read as new constants. Fails if there is no model
+%  (no check yet, or status `l_false`).
 z3_model_lists(H, Model) :-
     setup_call_cleanup(z3_get_model(H, M),
                        z3_model_lists(H, M, Model),
@@ -268,8 +280,8 @@ translate_entry(Entry, NewEntry) :-
     NK = F/N,
     NewEntry = (NK:Value).
 
-%! z3_declarations(+Handle, -List)
-%  Gets the function and constant declarations for Handle as a list.
+%! z3_declarations(+Handle, -List) is det.
+%  List is the constant and function declarations for Handle, as `(Name/Arity):Sort` terms.
 z3_declarations(H, L) :- z3_get_declarations(H, LG), maplist(translate_entry, LG, L).
 
 %! z3_enum_declarations(+Handle, -List)

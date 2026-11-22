@@ -1,13 +1,18 @@
 # swi-prolog-z3
 
 Code to use Z3 as a constraint solver inside SWI Prolog, for a CLP(CC) implementation.
-Currently supports a subset of Z3's capabilities,
-including propositional logic, equality, arithmetic, bit-vectors, and uninterpreted function symbols.
+Supports much of Z3: propositional logic, equality, integer and real arithmetic (nonlinear too, with
+exact irrational values in models), bit vectors, IEEE floating point, strings, arrays, uninterpreted
+functions and sorts, enumeration sorts, and quantifiers; and finding unsat cores, minimal explanations
+and relaxations of conflicting constraints, optimization, and timeouts. Not yet supported: algebraic
+datatypes, regular expressions, and SMT-LIB2 import and export (see [FUTURE-WORK.md](FUTURE-WORK.md)).
 
-With the high-level API in `z3.pl`,
-Z3 asserts are incremental and backtrackable, and the Z3 solver context is pushed and popped automatically.
+With the high-level API in `z3.pl`, Z3 works like a Prolog constraint solver: each formula is added to
+the solver incrementally, and is removed again when Prolog backtracks. This lets you search for
+solutions to a query, that is, for values of its Prolog variables, in the usual Prolog way.
 
-Alternatively, `stateful-repl` accumulates state from one query to the next.
+Alternatively, `stateful_repl.pl` keeps formulas and declarations from one query to the next, like the
+Z3 prompt or Z3's Python API. It is more procedural, and meant for exploring Z3 interactively.
 
 ### Contact
 

@@ -3,9 +3,9 @@
 % The user-visible functions rely on an implicit solver, pushed and popped automatically, and a backtrackable type map:
 
 :- module(z3, [
-              solver_scopes/1,         % +Num_scopes, starting at 0
-              z3_check/1,              % +Status Returns status of global solver: l_true, l_false, l_undet
-              z3_check_and_print/1,    % +Status Returns status, prints model if possible
+              solver_scopes/1,         % -Scopes  Number of solver scopes at the current depth, from 0
+              z3_check/1,              % ?Status  Status of the global solver: l_true, l_false or l_undef
+              z3_check_and_print/1,    % ?Status  The same, printing a model if possible
               z3_set_timeout/1,        % +Milliseconds  Limit each check of the global solver (0: no limit)
               z3_reason_unknown/1,     % -Reason  Why the last check returned l_undef
               z3_unsat_core/2,         % +Formulas, -Core  A subset of Formulas inconsistent with the solver
@@ -13,21 +13,21 @@
               z3_explain/2,            % +Formulas, -Core  A minimal subset of Formulas that is inconsistent
               z3_relax/2,              % +Formulas, -Kept  A maximal subset of Formulas that is consistent
               z3_optimize/2,           % +Objectives, -Model  An optimal model of the formulas pushed so far
-              z3_declarations/1,       % -Declarations  Get declarations so far, or those used in the previous query (reset on a new push).
-              z3_declare_enum/2,       % +EnumName, +EnumValues. Not backtrackable.
-              z3_enum_declarations/1,
-              z3_eval/2,               % +Expression,-Result  Evaluates Expression in a current model, if the current solver is SAT.
-              z3_eval/3,               % z3_eval, with boolean completion flag
-              z3_is_consistent/1,      % +Formula  Succeeds if Formula is consistent with current solver/context. Fails if l_undet.
-              z3_is_implied/1,         % +Formula  Succeeds if Formula is implied by current solver/context. Fails if l_undet.
-              z3_model/1,              % +ModelTerm  Gets a model if possible. Fails if status is l_true.
-              z3_model_assocs/1,       % +ModelAssocTerm  A model that uses assoc lists (less readable).
-              z3_push/1,               % +Formula   Pushes the formula, fails if status is l_false.
-              z3_push/2,               % +Formula, +Status  Attempts to push the formula, returns status
-              z3_push_and_print/1,     % +Formula   Convenience
-              z3_push_and_print/2,     % +Formula, +Status  Convenience
-              z3_reset/0,              % resets everything, use sparingly
-              free_globals/0,
+              z3_declarations/1,       % -Declarations  Declarations so far, or those of the previous query (reset on a new push)
+              z3_declare_enum/2,       % +EnumName, +EnumValues  Declares an enumeration sort. Not backtrackable.
+              z3_enum_declarations/1,  % -Declarations  The enumeration sorts declared so far
+              z3_eval/2,               % +Expression, -Result  Evaluates Expression in a model, if the solver is sat
+              z3_eval/3,               % +Expression, +Completion, -Result  The same, with a completion flag
+              z3_is_consistent/1,      % +Formula  Formula is consistent with the formulas pushed. Fails if l_undef.
+              z3_is_implied/1,         % +Formula  Formula follows from the formulas pushed. Fails if l_undef.
+              z3_model/1,              % -Model  A model of the formulas pushed. Fails if status is l_false.
+              z3_model_assocs/1,       % -Model  The same, with assoc maps (less readable)
+              z3_push/1,               % +Formula  Pushes Formula; fails if l_false or ill-typed
+              z3_push/2,               % +Formula, ?Status  Pushes Formula, giving the status (also l_type_error)
+              z3_push_and_print/1,     % +Formula  Pushes and prints a model; fails unless l_true
+              z3_push_and_print/2,     % +Formula, ?Status  Pushes and prints a model
+              z3_reset/0,              % Resets everything: a new handle, no declarations or enums
+              free_globals/0,          % Frees the global handle
 
               op(750, xfy, and), % =, >, etc. are 700
               op(751, xfy, or),
@@ -44,9 +44,12 @@ This module builds on the basic functionality of z3_swi_foreign.pl to provide:
 - Typechecking and declaring Z3 variables and functions.
 - Attributed variables.
 - Pushing and popping assertions on the solver as we assert and backtrack.
+- Models, consistency and implication checks, and evaluation.
+- Unsat cores, minimal explanations and relaxations of conflicting formulas.
+- Optimization, and timeouts.
 
 For incrementality, this module maintains a global_handle, where the push and pops happen.
-So even though it is a single Z3 C object, kept in a non-backtrackable Prolog variable, it is meant to works as a backtrackable one.
+So even though it is a single Z3 C object, kept in a non-backtrackable Prolog variable, it is meant to work as a backtrackable one.
 
 type_inference_global_backtrackable does keep a --- backtrackable --- type map.
 
@@ -171,13 +174,13 @@ reset_globals :-
 z3_declare_enum(N,V) :- get_global_handle(H),
                         z3_declare_enum(H,N,V).
 
-%! z3_enum_declarations(+DeclList)
-%  Get a list for the current enum declarations.
+%! z3_enum_declarations(-DeclList) is det.
+%  DeclList is the current enumeration sorts, with their values.
 z3_enum_declarations(D) :- get_global_handle(H),
                            z3_enum_declarations(H, D).
 
-%! z3_declarations(+DeclList)
-%  Get a list for the current declarations.
+%! z3_declarations(-DeclList) is det.
+%  DeclList is the current declarations of constants and functions, as `(Name/Arity):Sort` terms.
 z3_declarations(D) :- get_global_handle(H),
                       z3_declarations(H, D).
 
@@ -477,15 +480,15 @@ z3_model_internal(Flag, Model) :-
     get_global_handle(H),
     (Flag == lists -> z3_model_lists(H, Model) ; z3_model_assocs(H, Model)).
 
-%! z3_model(-Model)
-%  Returns a model for the solver at the current depth, if z3_check succeeds.
-%  Note that Z3 can return "uncertain" models if the status is l_undef.
+%! z3_model(-Model) is semidet.
+%  Model is a model of the formulas pushed so far, as described for z3_model_lists/2 in
+%  z3_swi_foreign: `model{constants:[x=1, ...], functions:[...]}`. Fails if the formulas are
+%  inconsistent. If Z3 cannot decide (status `l_undef`), the model may not satisfy them.
 z3_model(Model) :- z3_model_internal(lists, Model).
 
 
-%! z3_model_assocs(-Model)
-%  Returns a model for the solver at the current depth, if z3_check succeeds, using assoc maps.
-%  Note that Z3 can return "uncertain" models if the status is l_undef.
+%! z3_model_assocs(-Model) is semidet.
+%  Like z3_model/1, with assoc maps instead of lists.
 z3_model_assocs(Model) :- z3_model_internal(assocs, Model).
 
 check_status_arg(Status) :- valid_status_list(L),
@@ -497,9 +500,12 @@ check_status_arg(Status) :- valid_status_list(L),
 
 %% Note that z3_push(false, R) will still push "false" onto the solver.
 
-%! z3_push(+Formula, -Status)
-%  Adds the formula to the current (implicit) solver, failng if the resulting status is `l_false` (known to be unsat).
-%  Typechecks the formula and declares any needed types.
+%! z3_push(+Formula, ?Status) is det.
+%  Typechecks Formula against the formulas pushed so far, declares its new symbols, pushes it onto the
+%  global solver, and checks. Status is `l_true`, `l_false`, `l_undef` (Z3 could not decide, as after a
+%  timeout) or `l_type_error` (Formula is not pushed). Does not fail on `l_false`: the inconsistent
+%  formula stays pushed; see z3_push/1. The push is undone on backtracking. If Status is given, fails
+%  unless the status is that one.
 z3_push(Foriginal, Status) :-
     check_status_arg(Status),
     push_formula(Foriginal, assert, Status).
@@ -544,9 +550,9 @@ push_formula(Foriginal, Mode, Status) :-
     ).
 
 
-%! z3_push(+Formula)
-%  Fails if solver reports inconsistency or type error.
-%  Pushes the formula onto the solver unless there was a type error.
+%! z3_push(+Formula) is semidet.
+%  Like z3_push/2, but fails, pushing nothing, if Formula is inconsistent with the formulas pushed so far
+%  (`l_false`) or ill-typed. Succeeds with `l_true`, and with `l_undef` (Z3 could not decide).
 z3_push(F) :- z3_push(F, R), (R == l_true ; R == l_undef), !.
 
 solve(L, M) :- maplist(z3_push, L), z3_model(M).
@@ -611,14 +617,17 @@ z3_push_and_print(F,R) :- z3_push(F,R), z3_check_and_print(R1), assertion(R == R
 %  Pushes the formula, and prints a model. Fails if status is not `l_true` (sat).
 z3_push_and_print(F) :- z3_push_and_print(F, l_true).
 
-%! z3_is_consistent(+Formula)
-%  Succeeds if Formula is known to be consistent with the current context. Fails if the resulting status is `l_undef`.
+%! z3_is_consistent(+Formula) is semidet.
+%  Succeeds if Formula is known to be consistent with the formulas pushed so far (status `l_true`). Fails
+%  if it is not, or if Z3 cannot decide. Pushes nothing.
 z3_is_consistent(F) :- z3_push(F, l_true), popn(1).
 
 %% to handle type errors correctly, need to distiguish failure-by-type-error from failure-by-inconsistency:
 
-%! z3_is_implied(+Formula)
-%  Succeeds if Formula is known to be implied by the current context.
+%! z3_is_implied(+Formula) is semidet.
+%  Succeeds if Formula is known to be implied by the formulas pushed so far (its negation is
+%  inconsistent with them). Fails if it is not, if Z3 cannot decide, or if Formula is ill-typed. Pushes
+%  nothing.
 z3_is_implied(F) :- z3_push(not(F), Status),
                     (Status == l_true -> (popn(1) , fail)
                     ;

@@ -306,8 +306,10 @@ algebraic_value(T) :- compound(T), T = algebraic(_Approx, Root), compound(Root),
 
 %%%%%%%% main predicate: typecheck/4 : +Expression, ~Type, +Environment, -NewEnvironment:
 
-%! typecheck(+Expression, -Type, +InputMap, +OutputMap)
-%  Given the types in InputMap, check/infer Type for Expression, and let OutputMap be the resulting type map.
+%! typecheck(+Expression, ?Type, +InputMap, -OutputMap) is nondet.
+%  Given the types in InputMap, checks or infers Type for Expression, and OutputMap is the resulting type
+%  map. Raises `instantiation_error` for an unbound subterm. Several typings can succeed, when nothing
+%  fixes a type (a numeric constant could be int or real); callers usually take the first.
 typecheck(F, _, _, _) :- var(F), !, instantiation_error(F).
 typecheck(Term:Type, T, Envin, Envout) :- !, canonical_sort(Type, T),
                                           typecheck(Term, T, Envin, Envout).
@@ -500,8 +502,8 @@ check_signature([], [], E, E).
 check_signature([Arg|Rest], [T|TRest], Ein, Eout) :- typecheck(Arg, T, Ein, E2),
                                                      check_signature(Rest, TRest, E2, Eout).
 
-%! typecheck(+Term, -Type, -OutputMap) is nondet.
-%  Checks/infers that Term has Type, starting from an empty map.
+%! typecheck(+Term, ?Type, -OutputMap) is nondet.
+%  Checks or infers that Term has Type, starting from an empty map.
 typecheck(Term, Type, Eout) :- empty_assoc(Empty), typecheck(Term, Type, Empty, Eout).
 
 
