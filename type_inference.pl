@@ -41,24 +41,24 @@ Notes:
 %% Note that assoc lists require ground keys.
 %% When typing a var, we can add an attribute to it, and then type the attribute.
 
-:- dynamic signature/3.
-
-:- retractall(signature(_,_,_)).
-
 %% F has been defined:
 declared(F) :- signature(F, _, _).
 declared(F) :- comparison_operator(F).
+declared(F) :- arithmetic_operator(F).
+declared(between).
 
-declare(Functor, ArgTypes, Result) :-
-    must_be(atomic, Functor),
-    assert(signature(Functor, ArgTypes, Result)).
+%! signature(?Functor, ?ArgTypes, ?Result) is nondet.
+%  Types of the built-in functions and predicates that are not typed by a rule in typecheck/4.
+%  ArgTypes is a list of argument types, all(T) for any number of arguments of type T, or
+%  allthen(T, U) for any number of arguments of type T followed by one of type U.
+%  Several facts for one Functor give alternative typings, tried in order.
 
 %% aliases:
 signature(/, A, B) :- signature(div, A, B).
 signature(==, A, B) :- signature(=, A, B).
 signature(equal, A, B) :- signature(=, A, B).
 signature(equals, A, B) :- signature(=, A, B).
-signature(minus, A, B) :- signature(-, A, B).
+signature(alldifferent, A, B) :- signature(distinct, A, B).
 signature(',', A, B) :- signature(and, A, B).
 signature(; , A, B) :- signature(or, A, B).
 signature(-> , A, B) :- signature(implies, A, B).
@@ -68,152 +68,115 @@ signature(^, A, B) :- signature(power, A, B).
 
 % Notation: "all(T)" means there can be an arbitrary number of arguments, all of type T.
 
-:- declare(=, [T, T], bool).
+signature(=, [T, T], bool).
 % for more flexible arithmetic:
-% :- declare(=, [bool, real], bool). % not allowed by Z3
-% :- declare(=, [bool, int], bool). % not allowed by Z3
-:- declare(=, [real, int], bool). % works in Z3
-:- declare(=, [int, real], bool).
-:- declare(<>, [T, T], bool).
-:- declare(<>, [int, real], bool).
-:- declare(<>, [int, bool], bool).
-:- declare(<>, [real, int], bool).
-:- declare(<>, [real, bool], bool).
-:- declare(<>, [bool, real], bool).
-:- declare(<>, [bool, int], bool).
+% signature(=, [bool, real], bool). % not allowed by Z3
+% signature(=, [bool, int], bool). % not allowed by Z3
+signature(=, [real, int], bool). % works in Z3
+signature(=, [int, real], bool).
+signature(<>, [T, T], bool).
+signature(<>, [int, real], bool).
+signature(<>, [int, bool], bool).
+signature(<>, [real, int], bool).
+signature(<>, [real, bool], bool).
+signature(<>, [bool, real], bool).
+signature(<>, [bool, int], bool).
 
-:- declare(between, [T, T, T], bool).
-:- declare(between, [int, real, real], bool).
-:- declare(between, [int, int, real], bool).
-:- declare(between, [int, real, int], bool).
-:- declare(between, [int, real, real], bool).
+% between/3 is typed by a rule in typecheck/4: its three arguments are numeric, in any combination.
 
-:- declare(distinct, all(_T), bool).
+signature(distinct, all(_T), bool).
 
-% A possible improvement is to support expressions like all(number) AND oneof(float),
-% but makes the typechecking more expensive:
-% :- declare(+, oneof(real), real).
-% :- declare(*, oneof(real), real).
 
-:- declare(+, all(T), T).
-:- declare(*, all(T), T).
-:- declare(-, all(T), T).
+% +, *, - and minus are typed by a rule in typecheck/4 (see arithmetic_operator/1), not by signatures.
 
-:- declare(+, [real, _T], real).
-:- declare(+, [_T, real], real).
-:- declare(*, [real, _T], real).
-:- declare(*, [_T, real], real).
-:- declare(-, [_T, real], real).
-:- declare(-, [real, _T], real).
+signature(power, [int, int], int).
+signature(power, [real, int], real).
+signature(power, [int, real], real).
+signature(power, [real, real], real).
 
-:- declare(+, [int, bool], int).
-:- declare(+, [bool, int], int).
-:- declare(+, [bool, bool], int).
-
-:- declare(*, [int, bool], int).
-:- declare(*, [bool, int], int).
-:- declare(*, [bool, bool], int).
-
-:- declare(power, [int, int], int).
-:- declare(power, [real, int], real).
-:- declare(power, [int, real], real).
-:- declare(power, [real, real], real).
-
-:- declare(real2int, [real], int).
-:- declare(int2real, [int], real).
-:- declare(is_int, [real], bool).
+signature(real2int, [real], int).
+signature(int2real, [int], real).
+signature(is_int, [real], bool).
 
 % From the Z3 docs:
 % "The arguments must either both have int type or both have real type. If the arguments have int type, then the result type is an int type, otherwise the the result type is real."
-:- declare(div, [real, real], real).
-:- declare(div, [int, int], int).
-:- declare(div, [real, int], real).
-:- declare(div, [int, real], real).
+signature(div, [real, real], real).
+signature(div, [int, int], int).
+signature(div, [real, int], real).
+signature(div, [int, real], real).
 
-:- declare(divides, [int, int], bool).
-:- declare(rem, [int, int], int).
-:- declare(mod, [int, int], int).
+signature(divides, [int, int], bool).
+signature(rem, [int, int], int).
+signature(mod, [int, int], int).
 
-% :- declare(<, [T, T], bool).
-% :- declare(>, [T, T], bool).
-% :- declare(>=, [T, T], bool).
-% :- declare(geq, [T, T], bool).
-% :- declare(=<, [T, T], bool).
-% :- declare(leq, [T, T], bool).
-:- declare(and, all(bool), bool).
-:- declare(or, all(bool), bool).
-:- declare(xor, all(bool), bool).
-:- declare(implies, [bool, bool], bool).
-:- declare(iff, [bool, bool], bool).
-:- declare(not, [bool], bool).
-:- declare(true, [], bool).
-:- declare(false, [], bool).
-:- declare(ite, [bool, T, T], T).
+% Comparisons (<, >, =<, >=, leq, geq) are typed by a rule in typecheck/4 (see comparison_operator/1).
+signature(and, all(bool), bool).
+signature(or, all(bool), bool).
+signature(xor, all(bool), bool).
+signature(implies, [bool, bool], bool).
+signature(iff, [bool, bool], bool).
+signature(not, [bool], bool).
+signature(true, [], bool).
+signature(false, [], bool).
+signature(ite, [bool, T, T], T).
 
 %%%% Bit-vector declarations
-:- declare(bv2int, [bv(_N),bool], int).
+signature(bv2int, [bv(_N),bool], int).
 %% Note that bv2int and int2bv are not supported by the decision procedures.
 
 %%%% use "bool_const" instead of bool in the no_overflow defs that have a bool arg?
 
-:- declare(bvadd, [bv(N), bv(N)], bv(N)).
-:- declare(bvadd_no_overflow, [bv(N), bv(N), bool], bool).
-:- declare(bvadd_no_underflow, [bv(N), bv(N)], bool).
-:- declare(bvand, [bv(N), bv(N)], bv(N)).
-:- declare(bvashr, [bv(N), bv(N)], bv(N)).
-:- declare(bvlshr, [bv(N), bv(N)], bv(N)).
-:- declare(bvmul, [bv(N), bv(N)], bv(N)).
-:- declare(bvmul_no_overflow, [bv(N), bv(N), bool], bool).
-:- declare(bvmul_no_underflow, [bv(N), bv(N)], bool).
-:- declare(bvnand, [bv(N), bv(N)], bv(N)).
-:- declare(bvneg, [bv(N)], bv(N)).
-:- declare(bvneg_no_overflow, [bv(_N)], bool).
-:- declare(bvnor, [bv(N), bv(N)], bv(N)).
-:- declare(bvnot, [bv(N)], bv(N)).
-:- declare(bvor, [bv(N), bv(N)], bv(N)).
-:- declare(bvredand, [bv(N)], bv(N)).
-:- declare(bvredor, [bv(N)], bv(N)).
-:- declare(bvsdiv, [bv(N), bv(N)], bv(N)).
-:- declare(bvsdiv_no_overflow, [bv(N), bv(N)], bool).
-:- declare(bvsge, [bv(N), bv(N)], bool).
-:- declare(bvsgt, [bv(N), bv(N)], bool).
-:- declare(bvshl, [bv(N), bv(N)], bv(N)).
-:- declare(bvsle, [bv(N), bv(N)], bool).
-:- declare(bvslt, [bv(N), bv(N)], bool).
-:- declare(bvsmod, [bv(N), bv(N)], bv(N)).
-:- declare(bvsrem, [bv(N), bv(N)], bv(N)).
-:- declare(bvsub, [bv(N), bv(N)], bv(N)).
-:- declare(bvsub_no_overflow, [bv(N), bv(N)], bool).        % as Z3_mk_bvsub_no_overflow
-:- declare(bvsub_no_underflow, [bv(N), bv(N), bool], bool). % as Z3_mk_bvsub_no_underflow; bool: signed
-:- declare(bvudiv, [bv(N), bv(N)], bv(N)).
-:- declare(bvuge, [bv(N), bv(N)], bool).
-:- declare(bvugt, [bv(N), bv(N)], bool).
-:- declare(bvule, [bv(N), bv(N)], bool).
-:- declare(bvult, [bv(N), bv(N)], bool).
-:- declare(bvurem, [bv(N), bv(N)], bv(N)).
-:- declare(bvxnor, [bv(N), bv(N)], bv(N)).
-:- declare(bvxor, [bv(N), bv(N)], bv(N)).
+signature(bvadd, [bv(N), bv(N)], bv(N)).
+signature(bvadd_no_overflow, [bv(N), bv(N), bool], bool).
+signature(bvadd_no_underflow, [bv(N), bv(N)], bool).
+signature(bvand, [bv(N), bv(N)], bv(N)).
+signature(bvashr, [bv(N), bv(N)], bv(N)).
+signature(bvlshr, [bv(N), bv(N)], bv(N)).
+signature(bvmul, [bv(N), bv(N)], bv(N)).
+signature(bvmul_no_overflow, [bv(N), bv(N), bool], bool).
+signature(bvmul_no_underflow, [bv(N), bv(N)], bool).
+signature(bvnand, [bv(N), bv(N)], bv(N)).
+signature(bvneg, [bv(N)], bv(N)).
+signature(bvneg_no_overflow, [bv(_N)], bool).
+signature(bvnor, [bv(N), bv(N)], bv(N)).
+signature(bvnot, [bv(N)], bv(N)).
+signature(bvor, [bv(N), bv(N)], bv(N)).
+signature(bvredand, [bv(_N)], bv(1)).  % reductions give a single bit
+signature(bvredor, [bv(_N)], bv(1)).
+signature(bvsdiv, [bv(N), bv(N)], bv(N)).
+signature(bvsdiv_no_overflow, [bv(N), bv(N)], bool).
+signature(bvsge, [bv(N), bv(N)], bool).
+signature(bvsgt, [bv(N), bv(N)], bool).
+signature(bvshl, [bv(N), bv(N)], bv(N)).
+signature(bvsle, [bv(N), bv(N)], bool).
+signature(bvslt, [bv(N), bv(N)], bool).
+signature(bvsmod, [bv(N), bv(N)], bv(N)).
+signature(bvsrem, [bv(N), bv(N)], bv(N)).
+signature(bvsub, [bv(N), bv(N)], bv(N)).
+signature(bvsub_no_overflow, [bv(N), bv(N)], bool).        % as Z3_mk_bvsub_no_overflow
+signature(bvsub_no_underflow, [bv(N), bv(N), bool], bool). % as Z3_mk_bvsub_no_underflow; bool: signed
+signature(bvudiv, [bv(N), bv(N)], bv(N)).
+signature(bvuge, [bv(N), bv(N)], bool).
+signature(bvugt, [bv(N), bv(N)], bool).
+signature(bvule, [bv(N), bv(N)], bool).
+signature(bvult, [bv(N), bv(N)], bool).
+signature(bvurem, [bv(N), bv(N)], bv(N)).
+signature(bvxnor, [bv(N), bv(N)], bv(N)).
+signature(bvxor, [bv(N), bv(N)], bv(N)).
 
 %% the result type depends on the value of an arg, so can't quite do this:
-%% :- declare(int2bv, [int, int], bv(_N)).
+%% signature(int2bv, [int, int], bv(_N)).
 
 % atleast and atmost take any number of bools followed by an int:
 
-:- declare(atleast, allthen(bool, int), bool).
-:- declare(atmost, allthen(bool, int), bool).
+signature(atleast, allthen(bool, int), bool).
+signature(atmost, allthen(bool, int), bool).
 
-% isoneof(x, v1, v2, ...) is expanded to (x = v1 or x = v2 or ...):
-:- declare(isoneof, T, all(T)).
+% isoneof(x, v1, v2, ...) is expanded to (x = v1 or x = v2 or ...) before typechecking, but typing it
+% directly gives the same result:
+signature(isoneof, all(_T), bool).
 
-:- declare(mk_rational, [int, int], real).
-
-sub_type(int, real).
-sub_type(bool, int).
-sub_type(bool, real).
-sub_type(T,T).
-
-% unify_or_error(T1, T2) :- T1 = T2, !, true.
-% unify_or_error(T1, T2) :- write(user_error, "Could not unify "), writeln(user_error, types(T1,T2)), fail.
+signature(mk_rational, [int, int], real).
 
 % "mappable" are non-declared atoms or functions whose type signature needs to be inferred; that is, not pre-defined.
 atomic_mappable(X) :- atom(X).
@@ -247,8 +210,8 @@ typecheck(F, _, _, _) :- var(F), !, instantiation_error(F).
 typecheck(Term:Type, T, Envin, Envout) :- !, Type = T,
                                           typecheck(Term, Type, Envin, Envout).
 typecheck(X, int, E, E) :- integer(X), !.
-typecheck(true, bool, E, E) :- true, !.
-typecheck(false, bool, E, E) :- true, !.
+typecheck(true, bool, E, E) :- !.
+typecheck(false, bool, E, E) :- !.
 %% We could allow integer constants  to be real, but this leads to duplicate answers.
 %% Without this, we must use, e.g., 2.0 instead of 2 when warranted.
 %% typecheck(X, real, E, E) :- integer(X).
@@ -257,10 +220,10 @@ typecheck(X, real, E, E) :- float(X), !.
 typecheck(X, real, E, E) :- rational(X), \+ integer(X), !.
 typecheck(X, string, E, E) :- string(X), !.
 typecheck(X, real, E, E) :- algebraic_value(X), !.
-typecheck(T, bv(N), E, E) :- functor(T, int2bv, _), !,
+typecheck(T, bv(N), Envin, Envout) :- functor(T, int2bv, _), !,
                              T = int2bv(N, I),
-                             integer(N),
-                             integer(I).
+                             integer(N), N > 0,
+                             typecheck(I, int, Envin, Envout).   % any integer expression, not just a literal
 typecheck(T, Type, Envin, Envout) :- functor(T, mk_numeral, N), !,
                                      N = 2,
                                      T = mk_numeral(String, Type),
@@ -269,18 +232,31 @@ typecheck(T, Type, Envin, Envout) :- functor(T, mk_unsigned_int64, N), !,
                                      N = 2,
                                      T = mk_unsigned_int64(Integer, Type),
                                      typecheck(Integer, int, Envin, Envout).
-%% for bv_numeral, need an integer, and a list of bools.
+%% bv_numeral(Bits): a bit vector from a list of bits, least significant first, each one of
+%% true, false, 1 or 0 (what the C code accepts).
 %% Q: how to refer to or constrain a single bit in a BV?
-typecheck(T, Type, E, E) :- functor(T, bv_numeral, 1),
-                            T = bv_numeral(L),                          
-                            ground(L),
-                            %% todo: add check that they're all boolean
+typecheck(T, Type, E, E) :- functor(T, bv_numeral, 1), !,
+                            T = bv_numeral(L),
                             is_list(L),
+                            L \== [],
+                            forall(member(B, L), ( nonvar(B), memberchk(B, [true, false, 1, 0]) )),
                             length(L, N),
                             Type = bv(N).
+%% Arithmetic, with any number of arguments: each argument is numeric (bool, int or real), and the
+%% result is int, or real if some argument is real. Booleans count as 0 or 1, as in Z3.
+%% This is one rule rather than overlapping signatures, so that each typing is found once: with the
+%% overlapping signatures, a type error near a long sum of reals took exponential time to report.
+typecheck(T, Type, Envin, Envout) :- compound(T), functor(T, F, Arity), Arity >= 1,
+                                     arithmetic_operator(F), !,
+                                     T =.. [F|Args],
+                                     member(Type, [int, real]),
+                                     arithmetic_args(Args, Type, Envin, Envout, false, SawReal),
+                                     ( Type == real -> SawReal == true ; true ).
+typecheck(between(X, Low, High), bool, Envin, Envout) :- !,
+                                     numeric_args([X, Low, High], Envin, Envout).
 typecheck(X, T, Envin, Envout) :- atomic_mappable(X), !,
                                   (get_assoc(X/0, Envin, T1) ->
-                                       T = T1, %% unify_or_error(T, T1), % print error if this fails
+                                       T = T1,
                                        Envin = Envout
                                   ;
                                   (
@@ -307,20 +283,35 @@ typecheck(T, bool, E, ER) :- compound(T),
                              typecheck(S1, N1, E, E1),
                              numeric_type(N2),
                              typecheck(S2, N2, E1, ER).
+% Built-ins with a signature (T is not a variable here: the first clause handles those, and the
+% comparison operators have no signature).
 typecheck(T, Type, Envin, Envout) :-
-    nonvar(T),
     functor(T, F, Arity),
-    \+ comparison_operator(F),
     T =.. [F|Subterms],
     signature(F, ArgTypes, Result),
     check_length(ArgTypes, Arity),
     Type = Result,
-    %% sub_type(Type, Result),
     check_signature(Subterms, ArgTypes, Envin, Envout).
                              
 
 comparison_operator(F) :- member(F, [<, >, =<, >=, geq, leq]).
+arithmetic_operator(F) :- memberchk(F, [+, *, -, minus]).
 numeric_type(T) :- member(T, [int, real, bool]).
+
+% Arguments of an arithmetic operation whose result has type Type: an argument's type is at most Type
+% (bool < int < real), tried from Type down. SawReal says whether some argument is real.
+arithmetic_args([], _, E, E, SawReal, SawReal).
+arithmetic_args([A|As], Type, Ein, Eout, SawReal0, SawReal) :-
+    arithmetic_arg_type(Type, ArgType),
+    typecheck(A, ArgType, Ein, E1),
+    ( ArgType == real -> SawReal1 = true ; SawReal1 = SawReal0 ),
+    arithmetic_args(As, Type, E1, Eout, SawReal1, SawReal).
+
+arithmetic_arg_type(int, T) :- member(T, [int, bool]).
+arithmetic_arg_type(real, T) :- member(T, [real, int, bool]).
+
+numeric_args([], E, E).
+numeric_args([A|As], Ein, Eout) :- numeric_type(N), typecheck(A, N, Ein, E1), numeric_args(As, E1, Eout).
 
 check_signature([], allthen(_,_), E, E).
 check_signature([Arg], allthen(_,T), Ein, Eout) :- !, typecheck(Arg, T, Ein, Eout).
@@ -428,5 +419,140 @@ test(basic_eq, set(T == [int, real])) :-
     typecheck(a = b:int, bool, t, R),
     get_assoc(a/0, R, T),
     get_assoc(b/0, R, int).
+
+% Number of distinct typings of Term (as Type and map), to check that each is found once.
+count_typings(Term, Type, N) :-
+    findall(Type-L, (typecheck(Term, Type, M), assoc_to_list(M, L)), Sols),
+    length(Sols, N).
+
+% Arithmetic is typed by one rule, so each typing is found once (overlapping signatures used to give
+% a:real + b:real three identical typings).
+test(arith_typings_once, [forall(member(Term-N, [ (a:real) + (b:real) - 1,
+                                                    (a:int) + (b:real) - 1,
+                                                    (a:int) * (b:int) - 1,
+                                                    -(a:real) - 1,
+                                                    +(a:int, b:int, c:real) - 1 ]))]) :-
+    count_typings(Term, _, Count),
+    assertion(Count == N).
+
+test(arith_result_types, [forall(member(Term-Type, [ (a:int) + (b:real) - real,
+                                                       (a:bool) + (b:bool) - int,
+                                                       (a:bool) * (b:real) - real,
+                                                       minus(a:int, 1) - int,
+                                                       +(a:int, b:int, c:real) - real ]))]) :-
+    typecheck(Term, T, _),
+    !,
+    assertion(T == Type).
+
+% An unknown argument can be anything numeric no larger than the result.
+test(arith_unknown_arg, set(T == [bool, int, real])) :-
+    typecheck((a:real) + b, real, M),
+    get_assoc(b/0, M, T).
+
+% Arithmetic needs numbers: it used to accept any sort, and booleans as results.
+test(arith_not_numeric, [fail]) :-
+    typecheck((a:foo) + b, _, _).
+
+test(arith_no_bool_result, [fail]) :-
+    typecheck((a:bool) + (b:bool), bool, _).
+
+% A type error near a long sum used to take exponential time (3 s for 12 terms).
+test(arith_type_error_fast) :-
+    numlist(1, 20, Is),
+    foldl([I, S0, S0 + (V:real)]>>format(atom(V), "x~w", [I]), Is, 0.0, Sum),
+    % The time limit makes the old behavior fail the test rather than run for hours.
+    catch(call_with_time_limit(2, \+ typecheck(and(Sum > 0.0, p:int = q:bool), bool, _)), E, true),
+    assertion(var(E)).
+
+% between/3 takes numeric arguments in any combination; [int, real, real] used to be declared twice,
+% and [real, int, int] not at all.
+test(between_typings, [forall(member(Term, [ between(a:int, b:real, c:real),
+                                             between(a:real, b:int, c:int),
+                                             between(a:int, b:int, c:int) ]))]) :-
+    count_typings(Term, bool, Count),
+    assertion(Count == 1).
+
+test(between_not_numeric, [fail]) :-
+    typecheck(between(a:foo, 1, 2), bool, _).
+
+% int2bv used to accept only an integer literal.
+test(int2bv_expression, [nondet]) :-
+    typecheck(int2bv(8, (b:int) + 1), T, M),
+    assertion(T == bv(8)),
+    assertion(get_assoc(b/0, M, int)).
+
+test(int2bv_bad_width, [fail]) :-
+    typecheck(int2bv(0, 5), _, _).
+
+% Bit reductions give one bit, not a vector of the argument's width.
+test(bit_reductions, [forall(member(Op, [bvredand, bvredor]))]) :-
+    T =.. [Op, x:bv(8)],
+    typecheck(T, Type, _),
+    assertion(Type == bv(1)).
+
+% isoneof was declared with a meaningless type; alldifferent had no type at all.
+test(isoneof_bool, [nondet]) :-
+    typecheck(isoneof(x, 1, 2), T, M),
+    assertion(T == bool),
+    assertion(get_assoc(x/0, M, int)).
+
+test(alldifferent_like_distinct, [nondet]) :-
+    typecheck(alldifferent(a:int, b, c), T, M),
+    assertion(T == bool),
+    assertion(get_assoc(c/0, M, int)).
+
+% Coverage of built-ins and special forms that had no direct tests.
+
+% Each Term has the given Type, with the given symbol types.
+typing(ite(c, a:int, 2), int, [c/0-bool, a/0-int]).
+typing(distinct(a:int, b, c), bool, [b/0-int, c/0-int]).
+typing(power(a:real, 2), real, [a/0-real]).
+typing(div(a:int, 2), int, [a/0-int]).
+typing(div(a:real, 2), real, [a/0-real]).
+typing(mod(a:int, 3), int, [a/0-int]).
+typing(rem(a:int, 3), int, [a/0-int]).
+typing(divides(3, a), bool, [a/0-int]).
+typing(xor(p, q, r), bool, [p/0-bool, q/0-bool, r/0-bool]).
+typing(atmost(p, q, 1), bool, [p/0-bool, q/0-bool]).
+typing(mk_numeral("123", bv(16)), bv(16), []).
+typing(mk_unsigned_int64(123, bv(16)), bv(16), []).
+typing(bv_numeral([true, false, 1, 0]), bv(4), []).
+typing(algebraic(1.4142135623730951, root([-2, 0, 1], 2)), real, []).
+typing("a string", string, []).
+typing(bvadd(x:bv(8), y), bv(8), [y/0-bv(8)]).
+typing(bvsub_no_underflow(x:bv(8), y, s), bool, [y/0-bv(8), s/0-bool]).
+typing(bv2int(x:bv(8), true), int, [x/0-bv(8)]).
+
+test(typings, [forall(typing(Term, Type, Symbols)), nondet]) :-
+    typecheck(Term, T, M),
+    assertion(T == Type),
+    forall(member(S-ST, Symbols), assertion(get_assoc(S, M, ST))).
+
+% These do not type.
+ill_typed(ite(c, a:int, b:bool)).          % branches of different types
+ill_typed(ite(1, a, b)).                    % condition not boolean
+ill_typed(mod(a:real, 2)).                  % mod and rem are integer-only
+ill_typed(bvadd(x:bv(8), y:bv(16))).        % different widths
+ill_typed(bv_numeral([1, x])).              % a bit that is not a bit
+ill_typed(bv_numeral([])).                  % no bits
+ill_typed(not(_)).                          % unbound subterms are errors, see below
+ill_typed(and(p, 3)).                       % 3 is not a bool
+
+test(ill_typed, [forall(ill_typed(Term))]) :-
+    \+ catch(typecheck(Term, _, _), error(instantiation_error, _), fail).
+
+test(unbound_term, [throws(error(instantiation_error, _))]) :-
+    typecheck(_, _, _).
+
+% A function name can be used with different arities, each with its own type.
+test(overloading_by_arity, [nondet]) :-
+    typecheck(and(f(a:int) = 1, f(a, b:bool) = 2.0), bool, M),
+    assertion(get_assoc(f/1, M, lambda([int], int))),
+    assertion(get_assoc(f/2, M, lambda([int, bool], real))).
+
+% A symbol keeps one type within a formula: p cannot be a boolean and equal to an integer.
+% (Booleans are allowed in arithmetic, so and(p, p + 1 = 2) does type.)
+test(symbol_type_conflict, [fail]) :-
+    typecheck(and(p, p = 3), bool, _).
 
 :- end_tests(type_inference_tests).
