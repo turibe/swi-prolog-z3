@@ -23,8 +23,8 @@ Github: [https://github.com/turibe/swi-prolog-z3](https://github.com/turibe/swi-
 
 ## Installation:
 
-Tested on macOS (arm64) with SWI-Prolog 9.1.21 and Z3 5.4.2 (built from source with CMake),
-Z3 5.4.1 (Homebrew), and Z3 4.12.6.
+Tested on macOS (arm64) with SWI-Prolog 11.0.0 (Homebrew; earlier also 9.1.21), and Z3 5.4.2 (built
+from source with CMake), Z3 5.4.1 (Homebrew), and Z3 4.12.6.
 
 1. Install swi-prolog. This can be done via brew, macports, or download. See [https://www.swi-prolog.org/](https://www.swi-prolog.org/).
 
