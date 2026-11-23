@@ -308,6 +308,42 @@ The associated declarations can be listed with `z3_enum_declarations`.
 To clear them, we must reset the entire Z3 context,
 with `z3_reset_context` (low-level), `z3_reset` (for `z3.pl`), or `reset` (for `stateful_repl.pl`).
 
+### Algebraic datatypes
+
+Datatypes are declared by their constructors: each an atom, or a term whose arguments are
+`Field:Sort`. A field's sort can be the datatype itself, for a recursive one:
+
+```prolog
+?- z3_declare_datatype(list, [nil, cons(head:int, tail:list)]).
+?- z3_declare_datatype(point, [point(x:real, y:real)]).          % a record
+?- z3_declare_datatype(tree, [leaf, node(left:tree, value:int, right:tree)]).
+```
+
+Each constructor `C` gives the constructor itself, a recognizer `is_C/1`, and an accessor `Field/1` for
+each field: for `list`, `nil`, `cons/2`, `is_nil/1`, `is_cons/1`, `head/1` and `tail/1`. Z3 knows that
+values built by different constructors differ, that constructors are injective, and that values are
+finite (no list is its own tail), without axioms. Models give values as constructor terms:
+
+```prolog
+?- z3_declare_datatype(list, [nil, cons(head:int, tail:list)]),
+   z3_push(is_cons(t:list) and head(t) > 5 and is_nil(tail(t))), z3_model(M).
+M = model{constants:[t=cons(6, nil)], functions:[]}.
+```
+
+Datatypes that refer to each other are declared together, with `z3_declare_datatypes/1`:
+
+```prolog
+?- z3_declare_datatypes([expr-[num(val:int), plus(a:expr, b:expr), block(body:stmt)],
+                         stmt-[skip, seq(first:stmt, rest:stmt), print(e:expr)]]).
+```
+
+Like enumerations, datatypes are not undone by backtracking, and `z3_reset/0` clears them;
+`z3_datatypes/1` lists them, enumerations included. A constructor, recognizer or field name cannot
+be a built-in name, such as `select`. Not supported yet: parametric datatypes, such as `list(T)`, and
+fields whose sort contains a datatype being declared, such as `array(int, tree)`.
+[examples/datatypes.pl](examples/datatypes.pl) has worked examples: a list found by Z3, injectivity,
+no cycles, a tree of a given shape, a record, an option type, mutual recursion, and SMT-LIB2.
+
 ### Utilities/shortcuts
 
 For convenience, we expand `isoneof(a,v1,...,vn)` to `or(a=v1, ... a=vn)`.
@@ -485,7 +521,7 @@ M = model{constants:[a=6], functions:[]}.
 
 Only the assertions in scope at the end of a script are taken; other commands, such as `check-sat`,
 are ignored. Enumeration sorts (`declare-datatypes` whose constructors have no arguments) are
-declared as by `z3_declare_enum/2`; other datatypes are not supported yet. At the lower level,
+declared as by `z3_declare_enum/2`, and other datatypes as by `z3_declare_datatypes/1`. At the lower level,
 `z3_solver_smtlib2/2` exports a handle's assertions, `z3_parse_smtlib2/4` parses a script into formulas
 and declarations, and `z3_eval_smtlib2(Script, Output)` runs a whole script, `check-sat` and `get-model`
 included, in a fresh Z3 context, giving Z3's output. In the stateful REPL, `smtlib2/1` and
@@ -511,6 +547,7 @@ constants or functions (with the arities shown, where they matter).
   - `fp_value/2`, a floating-point constant;
   - `isoneof/N` and `alldifferent/N`, macros (see above).
 - Constants: `true`, `false`, and the rounding modes `rne`, `rna`, `rtp`, `rtn`, `rtz`.
+- Declared datatypes' constructors, recognizers (`is_C`) and field accessors, once declared.
 - Sort names, in `Term:Sort` and declarations: `int` or `integer`, `real`, `bool` or `boolean`, `bv(N)`,
   `string`, `array(IndexSort, ValueSort)`, `float16`, `float32`, `float64`, `float128`, `fp(Ebits, Sbits)`,
   `roundingmode`, and the names of declared enumeration sorts. `float` and `double` are errors (they

@@ -74,6 +74,7 @@ for e in strings:string_examples arrays:array_examples algebraic_numbers:algebra
          floating_point:floating_point_examples optimization:optimization_examples \
          quantifiers:quantifier_examples explanations:explanation_examples \
          timeouts:timeout_examples attributed_variables:attributed_variable_examples \
+         datatypes:datatype_examples \
          einstein:einstein; do
   swipl -g "run_tests(${e#*:})" -t halt "examples/${e%%:*}.pl"
 done
@@ -93,6 +94,7 @@ done
 | [`quantifiers.pl`](quantifiers.pl) | `forall` and `exists`: a syllogism, properties of functions and arrays, a definition by an axiom, a question Z3 cannot settle | `quantifier_examples` | 1 s |
 | [`explanations.pl`](explanations.pl) | Explaining and relaxing conflicts (`z3_explain`, `z3_relax`, unsat cores): scheduling a meeting, configuring a car within a budget | `explanation_examples` | 0.4 s |
 | [`timeouts.pl`](timeouts.pl) | Stopping a long check: a timeout, `call_with_time_limit/2`, `z3_interrupt/1` from another thread | `timeout_examples` | 2 s |
+| [`datatypes.pl`](datatypes.pl) | Algebraic datatypes: a list found by Z3, injectivity, no cycles, a tree of a given shape, a record, an option type, mutual recursion | `datatype_examples` | 0.3 s |
 | [`attributed_variables.pl`](attributed_variables.pl) | Prolog variables in formulas: Prolog choosing values that Z3 prunes (SEND + MORE = MONEY, map coloring), and `z3_label/1` binding them from models | `attributed_variable_examples` | 0.5 s |
 | [`einstein.pl`](einstein.pl) | The Einstein (zebra) puzzle, with enumeration sorts. Also `make einstein` | `einstein` | 0.4 s |
 | [`pigeonhole.pl`](pigeonhole.pl) | The pigeonhole problem with the low-level `z3_swi_foreign` API, timed for increasing sizes | — | 1.5 s |

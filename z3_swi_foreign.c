@@ -1323,6 +1323,325 @@ foreign_t remove_declaration(Z3_context ctx, Z3_ast_map map, const char* name_st
 }
 
 
+/********************************************* Datatypes *********************************************/
+
+static int prolog_sort_term(Z3_context ctx, Z3_sort sort, term_t term);
+
+// Registers d under the Prolog name name/arity in map (Z3's own name for it may differ).
+static void register_named(Z3_context ctx, decl_map map, const char *name, unsigned arity, Z3_func_decl d) {
+  Z3_ast key = mk_ast_key(ctx, name, arity);
+  Z3_ast_map_insert(ctx, map, key, (Z3_ast) d);
+}
+
+// The Prolog name of a datatype function: the constructor's name for its recognizer is is_<name>.
+static char *recognizer_name(const char *constructor) {
+  size_t n = strlen(constructor) + 4;
+  char *name = malloc(n);
+  if (name != NULL) snprintf(name, n, "is_%s", constructor);
+  return name;
+}
+
+/*
+  Registers the datatype sort s in h: the sort under its name in h->enum_sorts, and its
+  constructors, recognizers (is_C/1) and accessors (named after their fields) in h->enum_declarations,
+  where term_to_ast finds them and z3_datatype_declarations/2 lists them for type inference.
+*/
+static int register_datatype(handle h, Z3_sort s) {
+  Z3_context ctx = h->ctx;
+  char *sort_name = strdup(Z3_get_symbol_string(ctx, Z3_get_sort_name(ctx, s)));
+  if (sort_name == NULL) return PL_resource_error("memory");
+  Z3_ast_map_insert(ctx, h->enum_sorts, mk_ast_key(ctx, sort_name, 0), (Z3_ast) s);
+  free(sort_name);
+  unsigned n = Z3_get_datatype_sort_num_constructors(ctx, s);
+  for (unsigned i = 0; i < n; i++) {
+    Z3_func_decl c = Z3_get_datatype_sort_constructor(ctx, s, i);
+    unsigned arity = Z3_get_domain_size(ctx, c);
+    char *name = strdup(Z3_get_symbol_string(ctx, Z3_get_decl_name(ctx, c)));
+    char *is_name = name ? recognizer_name(name) : NULL;
+    if (is_name == NULL) { free(name); return PL_resource_error("memory"); }
+    register_named(ctx, h->enum_declarations, name, arity, c);
+    register_named(ctx, h->enum_declarations, is_name, 1, Z3_get_datatype_sort_recognizer(ctx, s, i));
+    free(name); free(is_name);
+    for (unsigned j = 0; j < arity; j++) {
+      Z3_func_decl a = Z3_get_datatype_sort_constructor_accessor(ctx, s, i, j);
+      char *field = strdup(Z3_get_symbol_string(ctx, Z3_get_decl_name(ctx, a)));
+      if (field == NULL) return PL_resource_error("memory");
+      register_named(ctx, h->enum_declarations, field, 1, a);
+      free(field);
+    }
+  }
+  return TRUE;
+}
+
+// datatype(Name, Constructors) for the datatype sort s, as z3_declare_datatypes/2 takes it: each
+// constructor an atom, or C(Field:Sort, ...).
+static int datatype_term(Z3_context ctx, Z3_sort s, term_t term) {
+  unsigned n = Z3_get_datatype_sort_num_constructors(ctx, s);
+  term_t list = PL_new_term_ref(), ct = PL_new_term_ref();
+  PL_put_nil(list);
+  int ok = TRUE;
+  for (unsigned i = n; ok && i > 0; i--) {
+    Z3_func_decl c = Z3_get_datatype_sort_constructor(ctx, s, i - 1);
+    unsigned arity = Z3_get_domain_size(ctx, c);
+    atom_t name = PL_new_atom(Z3_get_symbol_string(ctx, Z3_get_decl_name(ctx, c)));
+    if (arity == 0) {
+      ok = PL_put_atom(ct, name);
+    }
+    else {
+      term_t fields = PL_new_term_refs(arity), pair = PL_new_term_refs(2);
+      for (unsigned j = 0; ok && j < arity; j++) {
+        Z3_func_decl a = Z3_get_datatype_sort_constructor_accessor(ctx, s, i - 1, j);
+        ok = PL_put_atom_chars(pair, Z3_get_symbol_string(ctx, Z3_get_decl_name(ctx, a)))
+          && prolog_sort_term(ctx, Z3_get_range(ctx, a), pair + 1)
+          && PL_cons_functor(fields + j, PL_new_functor(PL_new_atom(":"), 2), pair, pair + 1);
+      }
+      ok = ok && PL_cons_functor_v(ct, PL_new_functor(name, arity), fields);
+    }
+    PL_unregister_atom(name);
+    ok = ok && PL_cons_list(list, ct, list);
+  }
+  term_t args = PL_new_term_refs(2);
+  return ok && PL_put_atom_chars(args, Z3_get_symbol_string(ctx, Z3_get_sort_name(ctx, s)))
+    && PL_put_term(args + 1, list)
+    && PL_cons_functor(term, PL_new_functor(PL_new_atom("datatype"), 2), args, args + 1);
+}
+
+static bool builtin_sort_name(const char *name) {
+  static const char *names[] = {"bool", "boolean", "int", "integer", "real", "string", "float", "double",
+                                "float16", "float32", "float64", "float128", "roundingmode",
+                                "array", "bv", "fp", "uninterpreted", NULL};
+  for (int i = 0; names[i] != NULL; i++) if (strcmp(names[i], name) == 0) return true;
+  return false;
+}
+
+// True if term mentions one of the n atoms in names, anywhere inside.
+static bool mentions(term_t term, atom_t *names, size_t n) {
+  atom_t a;
+  if (PL_get_atom(term, &a)) {
+    for (size_t i = 0; i < n; i++) if (names[i] == a) return true;
+    return false;
+  }
+  size_t arity;
+  if (!PL_get_name_arity(term, NULL, &arity)) return false;
+  term_t arg = PL_new_term_ref();
+  for (size_t i = 1; i <= arity; i++) {
+    if (PL_get_arg(i, term, arg) && mentions(arg, names, n)) return true;
+  }
+  return false;
+}
+
+// Raises permission_error(declare, function, Name/Arity) if h already has a function Name/Arity.
+static int check_unused(handle h, const char *name, size_t arity) {
+  if (get_function_declaration(h->ctx, h->declarations, name, arity) == NULL
+      && get_function_declaration(h->ctx, h->enum_declarations, name, arity) == NULL) return TRUE;
+  term_t culprit = PL_new_term_ref(), args = PL_new_term_refs(2);
+  return PL_put_atom_chars(args, name) && PL_put_int64(args + 1, (int64_t) arity)
+    && PL_cons_functor(culprit, PL_new_functor(PL_new_atom("/"), 2), args, args + 1)
+    && PL_permission_error("declare", "function", culprit);
+}
+
+/*
+  z3_declare_datatypes(+Handle, +Datatypes): declares the (possibly mutually recursive) datatypes in
+  Datatypes, a list of Name-Constructors. Each constructor is an atom, or a term C(Field:Sort, ...);
+  a Sort that is one of the Names refers to that datatype. For each constructor C, declares C, the
+  recognizer is_C/1, and an accessor Field/1 for each field. Raises ISO errors for a malformed
+  argument, and permission_error(declare, ...) for a name already in use.
+*/
+#define MAX_DATATYPES 64
+
+static foreign_t z3_declare_datatypes_foreign_locked(handle h, term_t specs) {
+  Z3_context ctx = h->ctx;
+  size_t nd = 0;
+  atom_t names[MAX_DATATYPES];
+  term_t constructor_lists = PL_new_term_refs(MAX_DATATYPES);
+  term_t tail = PL_copy_term_ref(specs), head = PL_new_term_ref(), arg = PL_new_term_ref();
+
+  // First pass: the datatype names and their constructor lists.
+  while (PL_get_list_ex(tail, head, tail)) {
+    if (!PL_is_functor(head, PL_new_functor(PL_new_atom("-"), 2))) return PL_type_error("datatype_declaration", head);
+    if (nd == MAX_DATATYPES) return PL_resource_error("datatypes");
+    if (!PL_get_arg(1, head, arg)) return FALSE;
+    if (!PL_get_atom_ex(arg, &names[nd])) return FALSE;
+    const char *name = PL_atom_chars(names[nd]);
+    if (builtin_sort_name(name)) return PL_permission_error("declare", "datatype", arg);
+    if (Z3_ast_map_contains(ctx, h->enum_sorts, mk_ast_key(ctx, name, 0))) return PL_permission_error("declare", "datatype", arg);
+    for (size_t i = 0; i < nd; i++) if (names[i] == names[nd]) return PL_permission_error("declare", "datatype", arg);
+    if (!PL_get_arg(2, head, constructor_lists + nd)) return FALSE;
+    if (!PL_is_list(constructor_lists + nd) || PL_get_nil(constructor_lists + nd)) {
+      return PL_type_error("non_empty_list", constructor_lists + nd);
+    }
+    nd++;
+  }
+  if (!PL_get_nil_ex(tail)) return FALSE;
+  if (nd == 0) return PL_domain_error("non_empty_list", specs);
+
+  Z3_symbol sort_names[MAX_DATATYPES];
+  Z3_sort sorts[MAX_DATATYPES];
+  Z3_constructor_list lists[MAX_DATATYPES];
+  size_t nlists = 0, total = 0;
+  Z3_constructor *all = NULL;           // every constructor made, to delete at the end
+  int ok = TRUE;
+
+  for (size_t d = 0; ok && d < nd; d++) {
+    sort_names[d] = Z3_mk_string_symbol(ctx, PL_atom_chars(names[d]));
+    size_t nc = 0;
+    term_t ct = PL_copy_term_ref(constructor_lists + d), c = PL_new_term_ref();
+    while (PL_get_list(ct, c, ct)) nc++;
+    Z3_constructor *cs = malloc(nc * sizeof(Z3_constructor));
+    Z3_constructor *grown = realloc(all, (total + nc) * sizeof(Z3_constructor));
+    if (cs == NULL || grown == NULL) { free(cs); if (grown) all = grown; ok = PL_resource_error("memory"); break; }
+    all = grown;
+    ct = PL_copy_term_ref(constructor_lists + d);
+    size_t k = 0;
+    while (ok && PL_get_list(ct, c, ct)) {
+      atom_t cname;
+      size_t arity;
+      if (!PL_get_name_arity(c, &cname, &arity)) { ok = PL_type_error("datatype_constructor", c); break; }
+      const char *cname_s = PL_atom_chars(cname);
+      char *is_name = recognizer_name(cname_s);
+      if (is_name == NULL) { ok = PL_resource_error("memory"); break; }
+      ok = check_unused(h, cname_s, arity) && check_unused(h, is_name, 1);
+      Z3_symbol *field_names = malloc((arity ? arity : 1) * sizeof(Z3_symbol));
+      Z3_sort *field_sorts = malloc((arity ? arity : 1) * sizeof(Z3_sort));
+      unsigned *refs = malloc((arity ? arity : 1) * sizeof(unsigned));
+      if (ok && (field_names == NULL || field_sorts == NULL || refs == NULL)) ok = PL_resource_error("memory");
+      term_t field = PL_new_term_ref(), fname = PL_new_term_ref(), fsort = PL_new_term_ref();
+      for (size_t j = 1; ok && j <= arity; j++) {
+        atom_t fa, sa;
+        if (!PL_get_arg(j, c, field) || !PL_is_functor(field, PL_new_functor(PL_new_atom(":"), 2))
+            || !PL_get_arg(1, field, fname) || !PL_get_arg(2, field, fsort) || !PL_get_atom(fname, &fa)) {
+          ok = PL_type_error("datatype_field", field);
+          break;
+        }
+        ok = check_unused(h, PL_atom_chars(fa), 1);
+        field_names[j - 1] = Z3_mk_string_symbol(ctx, PL_atom_chars(fa));
+        size_t ref = nd;
+        if (ok && PL_get_atom(fsort, &sa)) {
+          for (size_t i = 0; i < nd; i++) if (names[i] == sa) ref = i;
+        }
+        if (!ok) break;
+        if (ref < nd) {                   // a reference to one of the datatypes being declared
+          field_sorts[j - 1] = NULL;
+          refs[j - 1] = (unsigned) ref;
+        }
+        else if (mentions(fsort, names, nd)) {
+          ERROR("z3_declare_datatypes/2: a field sort can be one of the datatypes being declared, but cannot contain one\n");
+          ok = PL_domain_error("datatype_field_sort", fsort);
+        }
+        else {
+          field_sorts[j - 1] = mk_sort(h, fsort);
+          refs[j - 1] = 0;
+          if (field_sorts[j - 1] == NULL) ok = PL_domain_error("sort", fsort);
+        }
+      }
+      if (ok) {
+        cs[k] = Z3_mk_constructor(ctx, Z3_mk_string_symbol(ctx, cname_s), Z3_mk_string_symbol(ctx, is_name),
+                                  (unsigned) arity, field_names, field_sorts, refs);
+        all[total++] = cs[k];
+        k++;
+      }
+      free(is_name); free(field_names); free(field_sorts); free(refs);
+    }
+    if (ok) lists[nlists++] = Z3_mk_constructor_list(ctx, (unsigned) k, cs);
+    free(cs);
+  }
+  if (ok) {
+    Z3_mk_datatypes(ctx, (unsigned) nd, sort_names, sorts, lists);
+    if (Z3_get_error_code(ctx) != Z3_OK) {
+      ERROR("z3_declare_datatypes/2: Z3 could not make the datatypes (each needs a constructor that does not refer back to it)\n");
+      ok = FALSE;
+    }
+  }
+  for (size_t i = 0; i < nlists; i++) Z3_del_constructor_list(ctx, lists[i]);
+  for (size_t i = 0; i < total; i++) Z3_del_constructor(ctx, all[i]);
+  free(all);
+  for (size_t d = 0; ok && d < nd; d++) ok = register_datatype(h, sorts[d]);
+  return ok;
+}
+
+foreign_t z3_declare_datatypes_foreign(term_t handle_term, term_t specs) {
+  handle h;
+  if (!lock_handle(handle_term, &h)) return FALSE;
+  foreign_t rval = z3_declare_datatypes_foreign_locked(h, specs);
+  unlock_handle(h);
+  return rval;
+}
+
+// z3_datatypes(+Handle, -List): Handle's datatypes, enumerations included, as datatype(Name, Constructors).
+static foreign_t z3_datatypes_foreign_locked(handle h, term_t result) {
+  Z3_context ctx = h->ctx;
+  Z3_ast_vector keys = Z3_ast_map_keys(ctx, h->enum_sorts);
+  Z3_ast_vector_inc_ref(ctx, keys);
+  unsigned n = Z3_ast_vector_size(ctx, keys);
+  term_t list = PL_new_term_ref(), t = PL_new_term_ref();
+  PL_put_nil(list);
+  int ok = TRUE;
+  for (unsigned i = n; ok && i > 0; i--) {
+    Z3_sort s = (Z3_sort) Z3_ast_map_find(ctx, h->enum_sorts, Z3_ast_vector_get(ctx, keys, i - 1));
+    ok = datatype_term(ctx, s, t) && PL_cons_list(list, t, list);
+  }
+  Z3_ast_vector_dec_ref(ctx, keys);
+  return ok && PL_unify(result, list);
+}
+
+foreign_t z3_datatypes_foreign(term_t handle_term, term_t result) {
+  handle h;
+  if (!lock_handle(handle_term, &h)) return FALSE;
+  foreign_t rval = z3_datatypes_foreign_locked(h, result);
+  unlock_handle(h);
+  return rval;
+}
+
+/*
+  z3_datatype_declarations(+Handle, -List): the functions of Handle's datatypes (enumeration values,
+  constructors, recognizers and accessors) with their types, for type inference: Name/0:Sort, and
+  Name/N:lambda(ArgSorts, Sort).
+*/
+static foreign_t z3_datatype_declarations_foreign_locked(handle h, term_t result) {
+  Z3_context ctx = h->ctx;
+  Z3_ast_vector keys = Z3_ast_map_keys(ctx, h->enum_declarations);
+  Z3_ast_vector_inc_ref(ctx, keys);
+  unsigned n = Z3_ast_vector_size(ctx, keys);
+  term_t list = PL_new_term_ref();
+  PL_put_nil(list);
+  int ok = TRUE;
+  for (unsigned i = n; ok && i > 0; i--) {
+    Z3_ast key = Z3_ast_vector_get(ctx, keys, i - 1);
+    Z3_func_decl d = (Z3_func_decl) Z3_ast_map_find(ctx, h->enum_declarations, key);
+    unsigned arity = Z3_get_domain_size(ctx, d);
+    term_t key_term = PL_new_term_ref(), type = PL_new_term_ref(), pair = PL_new_term_ref();
+    // The key is the Z3 term Name / Arity (see mk_ast_key); converted, it would read Name div Arity.
+    Z3_app key_app = Z3_to_app(ctx, key);
+    term_t parts0 = PL_new_term_refs(2);
+    ok = PL_put_atom_chars(parts0, Z3_get_symbol_string(ctx, Z3_get_decl_name(ctx, Z3_get_app_decl(ctx, Z3_to_app(ctx, Z3_get_app_arg(ctx, key_app, 0))))))
+      && PL_put_int64(parts0 + 1, arity)
+      && PL_cons_functor(key_term, PL_new_functor(PL_new_atom("/"), 2), parts0, parts0 + 1);
+    if (ok && arity == 0) {
+      ok = prolog_sort_term(ctx, Z3_get_range(ctx, d), type);
+    }
+    else if (ok) {
+      term_t args = PL_new_term_ref(), a = PL_new_term_ref(), parts = PL_new_term_refs(2);
+      PL_put_nil(args);
+      for (unsigned j = arity; ok && j > 0; j--) {
+        ok = prolog_sort_term(ctx, Z3_get_domain(ctx, d, j - 1), a) && PL_cons_list(args, a, args);
+      }
+      ok = ok && PL_put_term(parts, args) && prolog_sort_term(ctx, Z3_get_range(ctx, d), parts + 1)
+              && PL_cons_functor(type, PL_new_functor(PL_new_atom("lambda"), 2), parts, parts + 1);
+    }
+    ok = ok && PL_cons_functor(pair, declaration_pair_functor, key_term, type) && PL_cons_list(list, pair, list);
+  }
+  Z3_ast_vector_dec_ref(ctx, keys);
+  return ok && PL_unify(result, list);
+}
+
+foreign_t z3_datatype_declarations_foreign(term_t handle_term, term_t result) {
+  handle h;
+  if (!lock_handle(handle_term, &h)) return FALSE;
+  foreign_t rval = z3_datatype_declarations_foreign_locked(h, result);
+  unlock_handle(h);
+  return rval;
+}
+
 static foreign_t z3_remove_declaration_foreign_locked(handle h, term_t handle_term, term_t name_term, term_t arity_term);
 
 foreign_t z3_remove_declaration_foreign(term_t handle_term, term_t name_term, term_t arity_term) {
@@ -1468,9 +1787,22 @@ static int prolog_sort_term(Z3_context ctx, Z3_sort sort, term_t term);
 // z3_solver_smtlib2(+Handle, -String): the assertions on Handle's solver as an SMT-LIB2 benchmark,
 // with the declarations they need.
 static foreign_t z3_solver_smtlib2_foreign_locked(handle h, term_t string_term) {
-  Z3_string text = Z3_solver_to_string(h->ctx, h->solver);
-  if (text == NULL) return FALSE;
-  return PL_unify_chars(string_term, PL_STRING | REP_UTF8, (size_t) -1, text);
+  // From a fresh solver with the same assertions: after a check, Z3_solver_to_string of the solver
+  // itself also prints the model converter (model-add and model-del commands, and declarations of
+  // eliminated variables), which other solvers do not accept.
+  Z3_context ctx = h->ctx;
+  Z3_ast_vector assertions = Z3_solver_get_assertions(ctx, h->solver);
+  Z3_ast_vector_inc_ref(ctx, assertions);
+  Z3_solver fresh = Z3_mk_solver(ctx);       // like the handle's (a simple solver prints normalized forms)
+  Z3_solver_inc_ref(ctx, fresh);
+  for (unsigned i = 0; i < Z3_ast_vector_size(ctx, assertions); i++) {
+    Z3_solver_assert(ctx, fresh, Z3_ast_vector_get(ctx, assertions, i));
+  }
+  Z3_string text = Z3_solver_to_string(ctx, fresh);
+  int ok = text != NULL && PL_unify_chars(string_term, PL_STRING | REP_UTF8, (size_t) -1, text);
+  Z3_solver_dec_ref(ctx, fresh);
+  Z3_ast_vector_dec_ref(ctx, assertions);
+  return ok;
 }
 
 foreign_t z3_solver_smtlib2_foreign(term_t handle_term, term_t string_term) {
@@ -1579,49 +1911,27 @@ static void collect_declarations(Z3_context ctx, Z3_ast ast, struct collected *c
 }
 
 /*
-  Registers in h the enumeration sort s, as z3_declare_enum/3 does, unless h has it already, and puts
-  enum(Name, Values) in term. Fails, printing a message, for a datatype that is not an enumeration (has
-  a constructor with arguments), or an enumeration whose name h already uses for another sort.
+  Registers in h the datatype sort s (an enumeration, or any other datatype), as
+  z3_declare_datatypes/2 does, unless h has it already, and puts datatype(Name, Constructors) in term.
+  Fails, printing a message, if h already has another sort of that name.
 */
-static int register_enumeration(handle h, Z3_sort s, term_t term) {
+static int register_parsed_datatype(handle h, Z3_sort s, term_t term) {
   Z3_context ctx = h->ctx;
   char *name = strdup(Z3_get_symbol_string(ctx, Z3_get_sort_name(ctx, s)));
   if (name == NULL) return PL_resource_error("memory");
-  unsigned n = Z3_get_datatype_sort_num_constructors(ctx, s);
-  for (unsigned i = 0; i < n; i++) {
-    if (Z3_get_domain_size(ctx, Z3_get_datatype_sort_constructor(ctx, s, i)) != 0) {
-      ERROR("z3_parse_smtlib2/4: datatype %s is not an enumeration; only enumerations are supported\n", name);
-      free(name);
-      return FALSE;
-    }
-  }
   Z3_ast key = mk_ast_key(ctx, name, 0);
+  int ok = TRUE;
   if (Z3_ast_map_contains(ctx, h->enum_sorts, key)) {
     if ((Z3_sort) Z3_ast_map_find(ctx, h->enum_sorts, key) != s) {
-      ERROR("z3_parse_smtlib2/4: %s is already an enumeration sort, with other values\n", name);
-      free(name);
-      return FALSE;
+      ERROR("z3_parse_smtlib2/4: %s is already a datatype, with other constructors\n", name);
+      ok = FALSE;
     }
   }
   else {
-    Z3_ast_map_insert(ctx, h->enum_sorts, key, (Z3_ast) s);
-    for (unsigned i = 0; i < n; i++) {
-      Z3_func_decl c = Z3_get_datatype_sort_constructor(ctx, s, i);
-      register_function_declaration(ctx, h->enum_declarations, Z3_get_decl_name(ctx, c), 0, c);
-    }
+    ok = register_datatype(h, s);
   }
-  term_t values = PL_new_term_ref(), value = PL_new_term_ref(), args = PL_new_term_refs(2);
-  PL_put_nil(values);
-  int ok = TRUE;
-  for (unsigned i = n; ok && i > 0; i--) {
-    Z3_func_decl c = Z3_get_datatype_sort_constructor(ctx, s, i - 1);
-    ok = PL_put_atom_chars(value, Z3_get_symbol_string(ctx, Z3_get_decl_name(ctx, c)))
-      && PL_cons_list(values, value, values);
-  }
-  ok = ok && PL_put_atom_chars(args, name) && PL_put_term(args + 1, values)
-          && PL_cons_functor(term, PL_new_functor(PL_new_atom("enum"), 2), args, args + 1);
   free(name);
-  return ok;
+  return ok && datatype_term(ctx, s, term);
 }
 
 // A declaration as the Prolog term z3_declare_function/3 takes apart: Name:Sort for a constant,
@@ -1700,7 +2010,7 @@ static foreign_t z3_parse_smtlib2_foreign_locked(handle h, term_t string_term, t
   // The enumeration sorts first, at the end of the list, so their values are declared when the
   // functions are.
   for (size_t i = c.sort_count; ok && i > 0; i--) {
-    ok = register_enumeration(h, c.sorts[i - 1], dterm) && PL_cons_list(dlist, dterm, dlist);
+    ok = register_parsed_datatype(h, c.sorts[i - 1], dterm) && PL_cons_list(dlist, dterm, dlist);
   }
   free(c.sorts);
   for (size_t i = c.decl_count; ok && i > 0; i--) {
@@ -1869,6 +2179,7 @@ static const char *string_operation_name(Z3_decl_kind kind) {
   case Z3_OP_TO_REAL:      return "int2real";   // Z3: to_real
   case Z3_OP_TO_INT:       return "real2int";   // Z3: to_int
   case Z3_OP_ITE:          return "ite";        // Z3: if
+  case Z3_OP_LE:           return "=<";         // Z3: <=, which is not Prolog's
   // Floating point: Z3 prints fp.add and so on, and roundNearestTiesToEven for rne.
   case Z3_OP_FPA_RM_NEAREST_TIES_TO_EVEN: return "rne";
   case Z3_OP_FPA_RM_NEAREST_TIES_TO_AWAY: return "rna";
@@ -2229,6 +2540,17 @@ static foreign_t ast_to_term_scoped(const Z3_context ctx, Z3_ast ast, term_t ter
     }
     int conversion = fp_conversion_to_term(ctx, ast, Z3_get_decl_kind(ctx, decl), arity, subterms, term);
     if (conversion != -1) return conversion;
+    // A datatype recognizer, which Z3 makes as (_ is C), with the constructor C as a parameter: is_C(X).
+    if ((Z3_get_decl_kind(ctx, decl) == Z3_OP_DT_IS || Z3_get_decl_kind(ctx, decl) == Z3_OP_DT_RECOGNISER)
+        && arity == 1 && Z3_get_decl_num_parameters(ctx, decl) > 0
+        && Z3_get_decl_parameter_kind(ctx, decl, 0) == Z3_PARAMETER_FUNC_DECL) {
+      Z3_func_decl c = Z3_get_decl_func_decl_parameter(ctx, decl, 0);
+      char *name = recognizer_name(Z3_get_symbol_string(ctx, Z3_get_decl_name(ctx, c)));
+      if (name == NULL) return PL_resource_error("memory");
+      int ok = PL_cons_functor_v(t, PL_new_functor(PL_new_atom(name), 1), subterms) && PL_unify(term, t);
+      free(name);
+      return ok;
+    }
     // int2bv(Width, N) and bv2int(BV, Signed), as accepted by term_to_ast: Z3's int2bv has the width
     // as a parameter, not an argument, and its bv2int is unsigned.
     if (Z3_get_decl_kind(ctx, decl) == Z3_OP_INT2BV && arity == 1) {
@@ -3900,9 +4222,11 @@ static Z3_ast compound_to_ast(const handle h, decl_map declaration_map, const ch
   // ********************************************* uninterpreted compound term_to_ast  ****************************************/
   else { // uninterpreted function
     DEBUG("Making uninterpreted function declaration for %s\n", name_string);
-    // no need to look in enum map because we have a compound term:
     assert(arity > 0);
     Z3_func_decl declaration = get_function_declaration(h->ctx, declaration_map, name_string, arity);
+    if (declaration == NULL) {   // a datatype's constructor, recognizer or accessor
+      declaration = get_function_declaration(h->ctx, h->enum_declarations, name_string, arity);
+    }
     if (declaration == NULL) {
       INFO("Could not find declaration for %s/%lu\n", name_string, arity);
       return NULL;
@@ -4795,6 +5119,9 @@ install_t install_z3_swi_foreign(void)
 
   PRED("z3_declare_function", 4, z3_declare_function_foreign, 0); // +handle_term, +pl_term, +range_atom, -z3_ast (the declaration)
   PRED("z3_declare_enum", 3, z3_declare_enum_foreign, 0);
+  PRED("z3_declare_datatypes", 2, z3_declare_datatypes_foreign, 0); // +handle, +[Name-Constructors, ...]
+  PRED("z3_datatypes", 2, z3_datatypes_foreign, 0); // +handle, -[datatype(Name, Constructors), ...]
+  PRED("z3_datatype_declarations", 2, z3_datatype_declarations_foreign, 0); // +handle, -[Name/N:Type, ...]
 
   PRED("z3_solver_push", 2, z3_solver_push_foreign, 0); // +handle, -num_scopes
   PRED("z3_solver_pop", 3, z3_solver_pop_foreign, 0); // +handle, +numpops, -num_scopes

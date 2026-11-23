@@ -7,8 +7,8 @@ Current support, for reference: `int`, `real` and `bool` sorts, enumerations, un
 functions, bit vectors, arithmetic (nonlinear too, with exact irrational values in models), propositional
 logic and equality, pseudo-Boolean `atleast`/`atmost`, strings, arrays, quantifiers and IEEE floating
 point; unsat cores, explanations and relaxations, optimization, timeouts and interrupts; SMT-LIB2 import
-and export; and Prolog variables in formulas, with `z3_label/1`. Still open: items 6, 11 and 12, the
-leftovers listed under the items that are done, and items 13 to 17.
+and export; algebraic datatypes; and Prolog variables in formulas, with `z3_label/1`. Still open:
+items 11 and 12, the leftovers listed under the items that are done, and items 13 to 17.
 
 ## Gaps in what is already there
 
@@ -90,7 +90,13 @@ a second kind of object beside the solver, probably held by the handle.
 
 ## More of Z3's logic
 
-### 6. Algebraic datatypes (large)
+### 6. Algebraic datatypes (done)
+
+There is now `z3_declare_datatype/2` and `z3_declare_datatypes/1` (for mutual recursion), with
+constructors, `is_C` recognizers and accessors, constructor terms in models, and datatypes in
+SMT-LIB2 import; see the README. Not done: parametric datatypes (`list(T)`), and fields whose sort
+contains a datatype being declared (`array(int, tree)`). What follows describes the plan as it was.
+
 
 `Z3_mk_datatype`: records, lists and trees. They map naturally onto Prolog terms, so `cons(H, T)` could be
 a real Z3 datatype rather than an uninterpreted function. Needs a declaration syntax, constructors,
@@ -189,7 +195,6 @@ not known yet.
 
 ## Suggested order
 
-6 first, now that 10 is done: it would most extend what the library can do, since datatypes map
-naturally onto Prolog terms, and SMT-LIB2 import already rejects them with a message, waiting for it.
-The small items, 14 to 16, can be done at any time; 11 when
+With 6 and 10 done, the small items, 14 to 16, can be done at any time, and parametric datatypes
+(a leftover of 6) when needed; 11 when
 independent queries on shared declarations are needed; and 13 when SWI-Prolog's `undo/1` is fixed.
