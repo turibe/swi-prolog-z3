@@ -15,6 +15,9 @@
               z3_optimize/2,           % +Objectives, -Model  An optimal model of the formulas pushed so far
               z3_declarations/1,       % -Declarations  Declarations so far, or those of the previous query (reset on a new push)
               z3_declare_enum/2,       % +EnumName, +EnumValues  Declares an enumeration sort. Not backtrackable.
+              z3_declare_datatype/2,   % +Name, +Constructors  Declares an algebraic datatype. Not backtrackable.
+              z3_declare_datatypes/1,  % +[Name-Constructors, ...]  The same, for mutually recursive datatypes
+              z3_datatypes/1,          % -Datatypes  The datatypes declared, enumerations included
               z3_enum_declarations/1,  % -Declarations  The enumeration sorts declared so far
               z3_eval/2,               % +Expression, -Result  Evaluates Expression in a model, if the solver is sat
               z3_eval/3,               % +Expression, +Completion, -Result  The same, with a completion flag
@@ -83,6 +86,7 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
                   z3_declare/3,            % +Handle, +Formula,+Type    Declares Formula to have Type.
                   z3_declare_types_for_symbols/3,
                   z3_enum_declarations_assoc/2,
+                  z3_datatype_declarations_assoc/2,
                   z3_expand_term/2
                   ]
              ).
@@ -101,6 +105,8 @@ type_inference_global_backtrackable does keep a --- backtrackable --- type map.
                   z3_declarations/2,
                   z3_declarations_string/2,
                   z3_declare_enum/3,
+                  z3_declare_datatypes/2,
+                  z3_datatypes/2,
                   z3_declare_function/3,
                   z3_enum_declarations/2,
                   z3_enums_string/2,
@@ -179,7 +185,62 @@ reset_globals :-
 %! z3_declare_enum(+EnumName,+ValueList)
 %  Declares the given enum type, as ranging over the given list of values.
 z3_declare_enum(N,V) :- get_global_handle(H),
-                        z3_declare_enum(H,N,V).
+                        z3_declare_enum(H,N,V),
+                        add_datatype_functions_to_type_map(H).
+
+%! z3_declare_datatype(+Name, +Constructors) is det.
+%  Declares the algebraic datatype Name, with Constructors: each an atom, or a term C(Field:Sort, ...),
+%  where a Sort can be Name itself, for a recursive datatype. For each constructor C, this declares C,
+%  the recognizer is_C/1, and an accessor Field/1 for each field. For example:
+%
+%      z3_declare_datatype(list, [nil, cons(head:int, tail:list)])
+%
+%  makes `cons(1, nil)` a list, `head(L)` and `tail(L)` its parts, and `is_cons(L)` true for a non-empty
+%  list. Like z3_declare_enum/2, this is not undone by backtracking, and z3_reset/0 clears it. See
+%  z3_declare_datatypes/1 for datatypes that refer to each other.
+z3_declare_datatype(Name, Constructors) :-
+    z3_declare_datatypes([Name-Constructors]).
+
+%! z3_declare_datatypes(+Datatypes) is det.
+%  Declares the datatypes in Datatypes, a list of Name-Constructors, together, so that they can refer
+%  to each other (see z3_declare_datatype/2 and z3_declare_datatypes/2 in z3_swi_foreign). Raises
+%  `permission_error(declare, ...)` for a constructor, recognizer or field name that is a built-in
+%  name, such as `select` or `and`, or already declared.
+z3_declare_datatypes(Datatypes) :-
+    must_be(list, Datatypes),
+    forall(( member(_-Cs, Datatypes), is_list(Cs), member(C, Cs), datatype_function_name(C, Name) ),
+           (   mappable_symbol(Name)
+           ->  true
+           ;   permission_error(declare, function, Name)
+           )),
+    (get_global_handle(H) -> true ; new_global_handle(H)),
+    z3_declare_datatypes(H, Datatypes),
+    add_datatype_functions_to_type_map(H).
+
+% The names a constructor declares: its own, its recognizer's, and its fields'.
+datatype_function_name(C, Name) :-
+    callable(C),
+    functor(C, CName, _),
+    (   Name = CName
+    ;   atom_concat(is_, CName, Name)
+    ;   compound(C), arg(_, C, Field), nonvar(Field), Field = Name:_, atom(Name)
+    ).
+
+% Adds the functions of the datatypes (and enumerations) of H to the current type map, which
+% otherwise only gets them at the first push of a query.
+add_datatype_functions_to_type_map(H) :-
+    z3_datatype_declarations_assoc(H, New),
+    get_type_inference_map(Map0),
+    assoc_to_list(New, Pairs),
+    foldl([K-V, M0, M]>>put_assoc(K, M0, V, M), Pairs, Map0, Map),
+    set_type_inference_map(Map).
+
+%! z3_datatypes(-Datatypes) is det.
+%  Datatypes is the datatypes declared so far, enumeration sorts included, as
+%  `datatype(Name, Constructors)`.
+z3_datatypes(Datatypes) :-
+    get_global_handle(H),
+    z3_datatypes(H, Datatypes).
 
 %! z3_enum_declarations(-DeclList) is det.
 %  DeclList is the current enumeration sorts, with their values.
@@ -527,7 +588,7 @@ push_formula(Foriginal, Mode, Status) :-
     z3_expand_term(Foriginal, F),
     (b_getval(solver_depth, 0) ->
          z3_reset_declarations(H), %% does not clear enums
-         z3_enum_declarations_assoc(H, EnumMap),
+         z3_datatype_declarations_assoc(H, EnumMap), %% enumeration values and datatype functions
          set_type_inference_map(EnumMap)
     ; true),
     get_type_inference_map(OldAssoc),
@@ -663,31 +724,33 @@ z3_smtlib2(String) :-
 %  use of a function or constant the script declares is annotated with its sort (x:int,
 %  f(A:int):real), so that type inference gives every symbol the script's sort. String must declare
 %  everything it uses, except built-ins; it is parsed on its own, without the formulas pushed so far.
-%  Its enumeration sorts (`declare-datatypes` with constructors without arguments) are declared, as
-%  by z3_declare_enum/2, unless they already are, with the same values; like z3_declare_enum/2, this
-%  is not undone by backtracking. Other datatypes are not supported. Fails, printing Z3's message, if
+%  Its datatypes (`declare-datatypes`, enumerations included) are declared, as by
+%  z3_declare_datatypes/1, unless they already are, with the same constructors; like
+%  z3_declare_datatypes/1, this is not undone by backtracking. Fails, printing Z3's message, if
 %  String does not parse.
 z3_smtlib2_formulas(String, Formulas) :-
     setup_call_cleanup(z3_new_handle(H),
                        z3_parse_smtlib2(H, String, Formulas0, Declarations),
                        z3_free_handle(H)),
-    forall(member(enum(Sort, Values), Declarations), ensure_enum(Sort, Values)),
+    ensure_datatypes(Declarations),
     maplist(annotate_formula(Declarations), Formulas0, Formulas).
 
-% Declares the enumeration sort Sort, with Values, unless it is declared already; an existing one
-% must have the same values. The values are also added to the current type map, which otherwise
-% only gets the enumerations at the first push of a query.
-ensure_enum(Sort, Values) :-
-    z3_enum_declarations(Ds),
-    findall(V, member((V/0):Sort, Ds), Existing),
-    (   Existing == []
-    ->  z3_declare_enum(Sort, Values),
-        get_type_inference_map(Map0),
-        foldl([V, M0, M]>>put_assoc(V/0, M0, Sort, M), Values, Map0, Map),
-        set_type_inference_map(Map)
-    ;   msort(Existing, E), msort(Values, E)
+% Declares the datatypes in Declarations (datatype(Name, Constructors) terms, from z3_parse_smtlib2/4)
+% that are not declared yet, together, since they can refer to each other. One already declared must
+% have the same constructors.
+ensure_datatypes(Declarations) :-
+    (get_global_handle(H) -> true ; new_global_handle(H)),
+    z3_datatypes(H, Existing),
+    findall(Name-Cs,
+            ( member(datatype(Name, Cs), Declarations),
+              (   memberchk(datatype(Name, Old), Existing)
+              ->  ( Old == Cs -> fail ; domain_error(datatype(Name, Old), Cs) )
+              ;   true
+              ) ),
+            New),
+    (   New == []
     ->  true
-    ;   domain_error(enumeration(Sort, Existing), Values)
+    ;   z3_declare_datatypes(New)
     ).
 
 %! z3_push_smtlib2(+String) is semidet.
@@ -1618,6 +1681,90 @@ test(enumeration_round_trip) :-
     assertion(z3_is_implied(t <> low)).
 
 :- end_tests(z3pl_smtlib2).
+
+:- begin_tests(z3pl_datatypes, [setup(reset_globals), cleanup(free_globals)]).
+
+test(list) :-
+    z3_reset,
+    z3_declare_datatype(list, [nil, cons(head:int, tail:list)]),
+    z3_push(l:list = cons(1, cons(2, nil))),
+    assertion(z3_is_implied(head(tail(l)) = 2)),
+    assertion(z3_is_implied(is_cons(l))).
+
+test(model) :-
+    z3_reset,
+    z3_declare_datatype(list, [nil, cons(head:int, tail:list)]),
+    z3_push(is_cons(t:list) and head(t) > 5 and is_nil(tail(t))),
+    z3_model(M),
+    M.constants = [t = cons(N, nil)],           % not in assertion/1, which would undo the binding
+    assertion(N > 5).
+
+% Constructors are distinct and injective, with no axioms to write.
+test(free_constructors) :-
+    z3_reset,
+    z3_declare_datatype(list, [nil, cons(head:int, tail:list)]),
+    assertion(z3_is_implied(cons(1, nil) <> nil)),
+    assertion(z3_is_implied(implies(cons(a:int, nil) = cons(b:int, nil), a = b))).
+
+% Type inference knows the datatype's functions: a field of the wrong sort is a type error.
+test(typed) :-
+    z3_reset,
+    z3_declare_datatype(list, [nil, cons(head:int, tail:list)]),
+    z3_push(cons("s", nil) = l:list, Status),
+    assertion(Status == l_type_error).
+
+% Declared in the middle of a query, after a push, the datatype's functions are typed at once.
+test(declared_mid_query) :-
+    z3_reset,
+    z3_push(n:int > 0),
+    z3_declare_datatype(tree, [leaf, node(left:tree, value:int, right:tree)]),
+    z3_push(t:tree = node(leaf, n, leaf)),
+    assertion(z3_is_implied(value(t) > 0)).
+
+test(mutual_recursion) :-
+    z3_reset,
+    z3_declare_datatypes([expr-[num(val:int), block(body:stmt)], stmt-[skip, eval(e:expr)]]),
+    z3_push(x:expr = block(eval(num(3)))),
+    assertion(z3_is_implied(val(e(body(x))) = 3)).
+
+test(reserved_name, [error(permission_error(declare, function, select))]) :-
+    z3_reset,
+    z3_declare_datatype(bad, [select(a:int)]).
+
+test(listed) :-
+    z3_reset,
+    z3_declare_datatype(point, [point(x:real, y:real)]),
+    z3_declare_enum(color, [red, green]),
+    z3_datatypes(Ds),
+    msort(Ds, Sorted),
+    assertion(Sorted == [datatype(color, [red, green]), datatype(point, [point(x:real, y:real)])]).
+
+test(smtlib2_import) :-
+    z3_reset,
+    z3_push_smtlib2("(declare-datatypes ((L 0)) (((lnil) (lcons (lhd Int) (ltl L))))) (declare-const z L) (assert ((_ is lcons) z)) (assert (= (lhd z) 4))"),
+    z3_model(M),
+    assertion(M.constants == [z = lcons(4, lnil)]).
+
+test(smtlib2_round_trip) :-
+    z3_reset,
+    z3_declare_datatype(list, [nil, cons(head:int, tail:list)]),
+    z3_push(l:list = cons(5, nil)),
+    z3_smtlib2(S),
+    z3_reset,
+    z3_push_smtlib2(S),
+    assertion(z3_is_implied(head(l) = 5)).
+
+% With z3_label/1, Z3 finds lists of a given shape.
+test(label) :-
+    z3_reset,
+    z3_declare_datatype(list, [nil, cons(head:int, tail:list)]),
+    z3_push(L = cons(X, cons(Y, nil))),
+    z3_push(X:int > 0 and Y:int > 0 and X + Y = 3),
+    findall(L, z3_label([L]), Ls),
+    msort(Ls, Sorted),
+    assertion(Sorted == [cons(1, cons(2, nil)), cons(2, cons(1, nil))]).
+
+:- end_tests(z3pl_datatypes).
 
 :- begin_tests(z3pl_label, [setup(reset_globals), cleanup(free_globals)]).
 

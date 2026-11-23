@@ -11,6 +11,7 @@
               z3_declare/3,
               z3_declare_types_for_symbols/3,
               z3_enum_declarations_assoc/2,
+              z3_datatype_declarations_assoc/2,
               z3_expand_term/2                 % +formula, -formula   Transforms terms before giving them to the C API
           ]).
 
@@ -182,9 +183,19 @@ print_declarations(H) :-
 
 add_enums([], M, M).
 add_enums([Pair | Rest], Min, Mout) :-
-    Pair =.. [_, (F/0) , Type], % allow any functor as long as it's arity 2
+    Pair =.. [_, (F/0) , Type], !, % allow any functor as long as it's arity 2
     typecheck(F, Type, Min, Mnew),
     add_enums(Rest, Mnew, Mout).
+add_enums([_ | Rest], Min, Mout) :-          % a datatype's other functions (see z3_datatype_declarations_assoc/2)
+    add_enums(Rest, Min, Mout).
+
+%! z3_datatype_declarations_assoc(+Handle, -Map) is det.
+%  Map is a typechecking (assoc) map with the functions of Handle's datatypes (enumeration values,
+%  constructors, recognizers and accessors), as z3_datatype_declarations/2 gives them.
+z3_datatype_declarations_assoc(H, Map) :-
+    z3_datatype_declarations(H, Ds),
+    empty_assoc(Empty),
+    foldl([Key:Type, M0, M]>>put_assoc(Key, M0, Type, M), Ds, Empty, Map).
 
 %! z3_enum_declarations_assoc(+Handle, -Map)
 %  Creates a typechecking (assoc) map with Handle's current enum declarations.

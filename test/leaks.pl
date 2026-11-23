@@ -85,6 +85,7 @@ iteration(I) :-
     quantifiers,
     floating_point,
     smtlib2,
+    datatypes,
     z3_model_lists(H, _),
     z3_model_assocs(H, _),
     z3_get_model(H, M),
@@ -164,6 +165,27 @@ smtlib2 :-
     z3_free_handle(H2),
     z3_eval_smtlib2("(declare-const a Int) (assert (> a 5)) (check-sat) (get-model)", _),
     \+ z3_eval_smtlib2("(assert (> undeclared 5))", _).
+
+% Datatypes: declaring (mutually recursive, and a record), listing them and their functions, models
+% and assertions with constructors and recognizers; and declarations that raise errors or fail.
+datatypes :-
+    z3_new_handle(H),
+    z3_declare_datatypes(H, [dlist-[dnil, dcons(dhead:int, dtail:dlist)]]),
+    z3_declare_datatypes(H, [dexpr-[dnum(dval:int), dblock(dbody:dstmt)], dstmt-[dskip, deval(de:dexpr)]]),
+    z3_declare_datatypes(H, [dpoint-[dpoint(dx:real, dy:real)]]),
+    z3_datatypes(H, _),
+    z3_datatype_declarations(H, _),
+    z3_declare_function(H, dl, dlist),
+    z3_assert(H, is_dcons(dl) and dhead(dl) > 2 and is_dnil(dtail(dl))),
+    z3_check(H, _),
+    z3_model_lists(H, _),
+    z3_solver_assertions(H, _),
+    z3_solver_smtlib2(H, _),
+    catch(z3_declare_datatypes(H, [dlist-[dfoo]]), _, true),
+    catch(z3_declare_datatypes(H, [dbad-[dc(1)]]), _, true),
+    catch(z3_declare_datatypes(H, [drose-[drn(dk:array(int, drose))]]), _, true),
+    \+ z3_declare_datatypes(H, [dstream-[dscons(dsh:int, dst:dstream)]]),
+    z3_free_handle(H).
 
 % Formulas and arguments that fail or raise errors part-way through conversion.
 error_paths(H) :-

@@ -15,6 +15,9 @@
               z3_declare_function/3,       %% +handle, +formula_schema, +type
               z3_remove_declaration/3,     %% +handle, +name, +arity
               z3_declare_enum/3,           %% +handle, +name, +list_of_values
+              z3_declare_datatypes/2,      %% +handle, +[Name-Constructors, ...]
+              z3_datatypes/2,              %% +handle, -[datatype(Name, Constructors), ...]
+              z3_datatype_declarations/2,  %% +handle, -[Name/N:Type, ...]  For type inference
               z3_model_eval/5,             %% +handle, +model, +formula, +completion_flag, -value
               z3_model_lists/2,            %% +handle, -map with lists for constants and functions
               z3_model_lists/3,            %% +handle, +model, -map: the same, for a given model
@@ -111,6 +114,33 @@ prolog:message(z3_message(F,L)) --> {swritef(S, F, L)}, [S].
 %! z3_declare_enum(+Handle, +EnumName, +ValueList)
 %  Declares an enumeration type EnumName with values in ValueList.
 %  Example: `z3_declare_enum(H, color, [black, white, red])`.
+%  (Defined in `z3_swi_foreign.c`.)
+
+%! z3_declare_datatypes(+Handle, +Datatypes) is det.
+%  Declares algebraic datatypes. Datatypes is a list of Name-Constructors; the datatypes in one call
+%  can refer to each other (mutual recursion). Each constructor is an atom, for a constructor without
+%  fields, or a term `C(Field:Sort, ...)`; a field's Sort can be one of the Names being declared, or
+%  any sort declared before. For example:
+%
+%      z3_declare_datatypes(H, [list-[nil, cons(head:int, tail:list)]])
+%
+%  declares the sort `list`, the constructors `nil` and `cons/2`, the recognizers `is_nil/1` and
+%  `is_cons/1`, and the accessors `head/1` and `tail/1`. Like enumeration sorts, datatypes are kept by
+%  z3_reset_declarations/1. Raises type errors for a malformed Datatypes, and
+%  `permission_error(declare, datatype, Name)` or `permission_error(declare, function, Name/Arity)` for
+%  a name already in use. Fails, printing a message, if Z3 rejects the datatypes, as when one has no
+%  constructor that does not refer back to it.
+%  (Defined in `z3_swi_foreign.c`.)
+
+%! z3_datatypes(+Handle, -List) is det.
+%  List is Handle's datatypes, enumeration sorts included, as `datatype(Name, Constructors)`, with
+%  Constructors as z3_declare_datatypes/2 takes them.
+%  (Defined in `z3_swi_foreign.c`.)
+
+%! z3_datatype_declarations(+Handle, -List) is det.
+%  List is the functions of Handle's datatypes, with their types, for type inference: enumeration
+%  values and constructors without fields as `(Name/0):Sort`, and the others as
+%  `(Name/N):lambda(ArgSorts, Sort)`.
 %  (Defined in `z3_swi_foreign.c`.)
 
 %! z3_enums_string(+Handle, -String)
@@ -1996,7 +2026,7 @@ test(uses_handle_declarations, [setup(smt_handle(H)), cleanup(z3_free_handle(H))
     z3_declare_function(H, c, color),
     z3_parse_smtlib2(H, "(declare-const y Int) (assert (> y x)) (assert (= c red))", Fs, Ds),
     assertion(Fs == [y > x, c = red]),
-    assertion(Ds == [y:int, x:int, c:color, enum(color, [red, green])]),
+    assertion(Ds == [y:int, x:int, c:color, datatype(color, [red, green])]),
     forall(member(F, Fs), z3_assert(H, F)),
     z3_check(H, l_true).
 
@@ -2006,15 +2036,22 @@ test(redeclaration_fails, [setup(smt_handle(H)), cleanup(z3_free_handle(H)), fai
 % An enumeration sort in the script is declared in the handle, so its formulas can be asserted.
 test(enumeration_declared, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))]) :-
     z3_parse_smtlib2(H, "(declare-datatypes ((shade 0)) (((light) (dark)))) (declare-const s shade) (assert (= s dark))", Fs, Ds),
-    assertion(Ds == [s:shade, enum(shade, [light, dark])]),
+    assertion(Ds == [s:shade, datatype(shade, [light, dark])]),
     z3_enum_declarations(H, Es),
-    assertion(Es == [(light/0):shade, (dark/0):shade]),
+    assertion(memberchk((light/0):shade, Es)),
+    assertion(memberchk((dark/0):shade, Es)),
+    z3_utils:z3_enum_declarations_assoc(H, Map),
+    assertion(get_assoc(dark/0, Map, shade)),
     forall(member(F, Fs), z3_assert(H, F)),
     z3_check(H, l_true).
 
-% Other datatypes are not supported yet.
-test(datatype_fails, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)), fail]) :-
-    z3_parse_smtlib2(H, "(declare-datatypes ((L 0)) (((nil) (cons (hd Int) (tl L))))) (declare-const l L) (assert (= l nil))", _, _).
+% Other datatypes are declared too, with their constructors, recognizers and accessors.
+test(datatype_declared, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))]) :-
+    z3_parse_smtlib2(H, "(declare-datatypes ((L 0)) (((nil) (cons (hd Int) (tl L))))) (declare-const l L) (assert ((_ is cons) l)) (assert (= (hd l) 2))", Fs, Ds),
+    assertion(Fs == [is_cons(l), hd(l) = 2]),
+    assertion(Ds == [l:'L', datatype('L', [nil, cons(hd:int, tl:'L')])]),
+    forall(member(F, Fs), z3_assert(H, F)),
+    z3_check(H, l_true).
 
 test(syntax_error_fails, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)), fail]) :-
     z3_parse_smtlib2(H, "(assert (> z", _, _).
@@ -2032,3 +2069,102 @@ test(eval_error, [fail]) :-
     z3_eval_smtlib2("(assert (> undeclared 5))", _).
 
 :- end_tests(smtlib2).
+
+% Algebraic datatypes.
+
+:- begin_tests(datatypes).
+
+list_handle(H) :-
+    z3_new_handle(H),
+    z3_declare_datatypes(H, [list-[nil, cons(head:int, tail:list)]]),
+    z3_declare_function(H, l, list).
+
+dt_implied(H, Formula) :-
+    z3_solver_push(H, _),
+    z3_assert(H, not(Formula)),
+    z3_check(H, S),
+    z3_solver_pop(H, 1, _),
+    S == l_false.
+
+test(functions, [setup(list_handle(H)), cleanup(z3_free_handle(H))]) :-
+    z3_datatype_declarations(H, Ds),
+    msort(Ds, Sorted),
+    msort([(nil/0):list, (cons/2):lambda([int, list], list), (head/1):lambda([list], int),
+           (is_cons/1):lambda([list], bool), (is_nil/1):lambda([list], bool),
+           (tail/1):lambda([list], list)], Expected),
+    assertion(Sorted == Expected),
+    z3_datatypes(H, Dts),
+    assertion(Dts == [datatype(list, [nil, cons(head:int, tail:list)])]).
+
+test(reasoning, [setup(list_handle(H)), cleanup(z3_free_handle(H))]) :-
+    z3_assert(H, l = cons(1, cons(2, nil))),
+    assertion(dt_implied(H, head(tail(l)) = 2)),
+    assertion(dt_implied(H, is_cons(l))),
+    assertion(dt_implied(H, not(is_nil(l)))),
+    assertion(dt_implied(H, cons(1, nil) <> nil)).
+
+test(model_values, [setup(list_handle(H)), cleanup(z3_free_handle(H))]) :-
+    z3_assert(H, is_cons(l)),
+    z3_assert(H, head(l) = 7),
+    z3_assert(H, is_nil(tail(l))),
+    z3_check(H, l_true),
+    z3_model_lists(H, M),
+    assertion(M.constants == [l = cons(7, nil)]).
+
+% Assertions come back with recognizers as is_C, so they can be asserted again.
+test(assertions_round_trip, [setup(list_handle(H)), cleanup(z3_free_handle(H))]) :-
+    z3_assert(H, is_cons(l)),
+    z3_assert(H, head(l) > 2),
+    z3_solver_assertions(H, As),
+    assertion(As == [head(l) > 2, is_cons(l)]),
+    forall(member(A, As), z3_assert(H, A)),
+    z3_check(H, l_true).
+
+test(mutual_recursion, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))]) :-
+    z3_declare_datatypes(H, [expr-[num(val:int), plus(a:expr, b:expr), block(body:stmt)],
+                             stmt-[skip, seq(s1:stmt, s2:stmt), eval(e:expr)]]),
+    z3_declare_function(H, x, expr),
+    z3_assert(H, x = block(seq(eval(num(1)), skip))),
+    assertion(dt_implied(H, val(e(s1(body(x)))) = 1)).
+
+% A record: one constructor, with fields of other sorts.
+test(record, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H))]) :-
+    z3_declare_datatypes(H, [point-[point(x:real, y:real)]]),
+    z3_declare_function(H, p, point),
+    z3_assert(H, p = point(1.0, 2.5)),
+    assertion(dt_implied(H, y(p) = 2.5)).
+
+% A field's sort can be a datatype declared before.
+test(earlier_datatype_field, [setup(list_handle(H)), cleanup(z3_free_handle(H))]) :-
+    z3_declare_datatypes(H, [pair-[pair(first:list, second:int)]]),
+    z3_declare_function(H, q, pair),
+    z3_assert(H, q = pair(cons(1, nil), 2)),
+    assertion(dt_implied(H, head(first(q)) = 1)).
+
+bad_declaration([list-[foo]], error(permission_error(declare, datatype, list), _)).        % already declared
+bad_declaration([int-[foo]], error(permission_error(declare, datatype, int), _)).          % a built-in sort
+bad_declaration([other-[cons(a:int)]], error(permission_error(declare, function, is_cons/1), _)). % is_cons exists
+bad_declaration([bad-[c(1)]], error(type_error(datatype_field, 1), _)).
+bad_declaration([bad-[]], error(type_error(non_empty_list, []), _)).
+bad_declaration([bad], error(type_error(datatype_declaration, bad), _)).
+bad_declaration([rose-[node(kids:array(int, rose))]], error(domain_error(datatype_field_sort, array(int, rose)), _)).
+
+test(bad_declarations, [forall(bad_declaration(D, E)), setup(list_handle(H)), cleanup(z3_free_handle(H))]) :-
+    catch(z3_declare_datatypes(H, D), Error, true),
+    assertion(subsumes_term(E, Error)).
+
+% Z3 rejects a datatype with no way to build a value without itself.
+test(not_well_founded, [setup(z3_new_handle(H)), cleanup(z3_free_handle(H)), fail]) :-
+    z3_declare_datatypes(H, [stream-[scons(sh:int, st:stream)]]).
+
+test(smtlib2_round_trip, [setup(list_handle(H)), cleanup((z3_free_handle(H), z3_free_handle(H2)))]) :-
+    z3_assert(H, l = cons(3, nil)),
+    z3_solver_smtlib2(H, S),
+    assertion(\+ sub_string(S, _, _, _, "model-add")),
+    z3_new_handle(H2),
+    z3_parse_smtlib2(H2, S, Fs, Ds),
+    assertion(memberchk(datatype(list, [nil, cons(head:int, tail:list)]), Ds)),
+    forall(member(F, Fs), z3_assert(H2, F)),
+    z3_check(H2, l_true).
+
+:- end_tests(datatypes).
