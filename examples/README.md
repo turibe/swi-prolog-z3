@@ -75,6 +75,7 @@ for e in strings:string_examples arrays:array_examples algebraic_numbers:algebra
          quantifiers:quantifier_examples explanations:explanation_examples \
          timeouts:timeout_examples attributed_variables:attributed_variable_examples \
          datatypes:datatype_examples sudoku:sudoku_examples knights_knaves:knights_knaves \
+         bit_tricks:bit_tricks \
          einstein:einstein; do
   swipl -g "run_tests(${e#*:})" -t halt "examples/${e%%:*}.pl"
 done
@@ -98,6 +99,7 @@ done
 | [`attributed_variables.pl`](attributed_variables.pl) | Prolog variables in formulas: Prolog choosing values that Z3 prunes (SEND + MORE = MONEY, map coloring), and `z3_label/1` binding them from models | `attributed_variable_examples` | 0.5 s |
 | [`sudoku.pl`](sudoku.pl) | Sudoku with an enumeration sort: the Wikipedia puzzle, "the world's hardest sudoku", checking that a solution is unique, counting solutions, which clues of an impossible puzzle conflict, a diagonal variant | `sudoku_examples` | 4.5 s |
 | [`knights_knaves.pl`](knights_knaves.pl) | Smullyan's knights and knaves, in propositional logic: who is which, puzzles with no answer or with no solution, which statements conflict, the question to ask a guard at a fork | `knights_knaves` | 0.3 s |
+| [`bit_tricks.pl`](bit_tricks.pl) | Bit vectors: proving tricks for every 32-bit value (powers of two, the lowest set bit, XOR swap, branch-free abs, overflow-free average, parallel bit count), the overflowing binary-search midpoint, finding the multiplier that divides by 3 | `bit_tricks` | 1.5 s |
 | [`einstein.pl`](einstein.pl) | The Einstein (zebra) puzzle, with enumeration sorts. Also `make einstein` | `einstein` | 0.4 s |
 | [`pigeonhole.pl`](pigeonhole.pl) | The pigeonhole problem with the low-level `z3_swi_foreign` API, timed for increasing sizes | — | 1.5 s |
 
