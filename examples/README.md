@@ -74,7 +74,8 @@ for e in strings:string_examples arrays:array_examples algebraic_numbers:algebra
          floating_point:floating_point_examples optimization:optimization_examples \
          quantifiers:quantifier_examples explanations:explanation_examples \
          timeouts:timeout_examples attributed_variables:attributed_variable_examples \
-         datatypes:datatype_examples \
+         datatypes:datatype_examples sudoku:sudoku_examples knights_knaves:knights_knaves \
+         bit_tricks:bit_tricks \
          einstein:einstein; do
   swipl -g "run_tests(${e#*:})" -t halt "examples/${e%%:*}.pl"
 done
@@ -96,6 +97,9 @@ done
 | [`timeouts.pl`](timeouts.pl) | Stopping a long check: a timeout, `call_with_time_limit/2`, `z3_interrupt/1` from another thread | `timeout_examples` | 2 s |
 | [`datatypes.pl`](datatypes.pl) | Algebraic datatypes: a list found by Z3, injectivity, no cycles, a tree of a given shape, a record, an option type, mutual recursion | `datatype_examples` | 0.3 s |
 | [`attributed_variables.pl`](attributed_variables.pl) | Prolog variables in formulas: Prolog choosing values that Z3 prunes (SEND + MORE = MONEY, map coloring), and `z3_label/1` binding them from models | `attributed_variable_examples` | 0.5 s |
+| [`sudoku.pl`](sudoku.pl) | Sudoku with an enumeration sort: the Wikipedia puzzle, "the world's hardest sudoku", checking that a solution is unique, counting solutions, which clues of an impossible puzzle conflict, a diagonal variant | `sudoku_examples` | 4.5 s |
+| [`knights_knaves.pl`](knights_knaves.pl) | Smullyan's knights and knaves, in propositional logic: who is which, puzzles with no answer or with no solution, which statements conflict, the question to ask a guard at a fork | `knights_knaves` | 0.3 s |
+| [`bit_tricks.pl`](bit_tricks.pl) | Bit vectors: proving tricks for every 32-bit value (powers of two, the lowest set bit, XOR swap, branch-free abs, overflow-free average, parallel bit count), the overflowing binary-search midpoint, finding the multiplier that divides by 3 | `bit_tricks` | 1.5 s |
 | [`einstein.pl`](einstein.pl) | The Einstein (zebra) puzzle, with enumeration sorts. Also `make einstein` | `einstein` | 0.4 s |
 | [`pigeonhole.pl`](pigeonhole.pl) | The pigeonhole problem with the low-level `z3_swi_foreign` API, timed for increasing sizes | — | 1.5 s |
 
@@ -106,6 +110,15 @@ Two of them take arguments or work differently:
 
   ```bash
   ./examples/pigeonhole.pl 6
+  ```
+
+- [`smt2/`](smt2) has no Prolog: it holds the same 9x9 Latin square in SMT-LIB2 with three encodings
+  of the values, for the `z3` command line. With integers from 1 to 9, Z3 takes 20 seconds or more;
+  with an enumeration sort or bit-vectors, a few hundredths of a second. That is why `sudoku.pl` uses an
+  enumeration. To time all three:
+
+  ```bash
+  examples/smt2/latin_squares.sh
   ```
 
 - [`test_explain_clp.pl`](test_explain_clp.pl) uses QuickXplain with SWI-Prolog's CLP(FD) and CLP(R)
