@@ -193,8 +193,73 @@ not known yet.
 `=`. Where they are loaded, module-qualified predicate indicators need parentheses, as in
 `lists:(append/3)`. This is documented in the README; avoiding it would mean another annotation syntax.
 
+## Found while writing the Sudoku, knights-and-knaves and bit tricks examples
+
+### 18. More bit-vector operations (small)
+
+There is no `zero_extend`, `sign_extend`, `extract`, `concat` (of bit vectors) or `rotate_left` /
+`rotate_right`. Without them, a formula cannot widen a word to check for overflow, or take bits out of
+it. `examples/bit_tricks.pl` gets around this for the overflow-free average by using 64-bit values
+below 2^32, so that `x + y` is exact; with `zero_extend`, it could compare 32-bit values with their
+33-bit sum directly. These take their widths as parameters (`Z3_mk_zero_ext(ctx, i, t)`,
+`Z3_mk_extract(ctx, high, low, t)`), so, like `int2bv/2`, they need a case in `z3_swi_foreign.c` as
+well as signatures in `type_inference.pl` (see Reserved names in the README).
+
+### 19. Plain numbers in bit-vector formulas (small, design)
+
+A bit-vector numeral has to be written `int2bv(Width, N)`: `bvxor(x:bv(32), 0)` is a type error, so
+formulas with many constants are hard to read. `examples/bit_tricks.pl` has a helper, `bits/3`, that
+rewrites the plain numbers of a formula into `int2bv/2`. Type inference could do the same, giving an
+integer literal the bit-vector sort that its context requires. The catch: the same literal could then mean
+an integer or a bit vector depending on where it is, which would also change how models and exported
+formulas are read back.
+
+### 20. Mixing integers and bit vectors is slow (known Z3 behavior; documentation)
+
+Formulas that convert between the two with `bv2int` (or `int2bv` on non-constant terms) can make Z3
+very slow: proving the overflow-free average, as `bv2int(Average, false) = (bv2int(x, false) +
+bv2int(y, false)) div 2`, did not finish in a minute, against 0.01 s for the same property in pure
+64-bit bit vectors. The README's bit-vector section could say so, and suggest staying within bit
+vectors (with a wider width, or `zero_extend` once 18 is done).
+
+### 21. Integer encodings of finite domains are slow (known Z3 behavior; documentation)
+
+Integers from 1 to 9 are a poor encoding for Sudoku-like problems: Z3 5.4.1 takes 20 to 25 s to find
+any 9x9 Latin square (distinct rows and columns) over them, and the time grows quickly with the size
+(1 s for 7x7, 5 s for 8x8). An enumeration sort or 4-bit bit vectors take a few hundredths of a
+second. This is not incremental mode: one check of the whole problem is just as slow. It matters more
+in `z3.pl` than elsewhere, since every `z3_push` runs a check, so a problem's rules are solved before
+its data (such as the clues) are pushed; pushing the data first helps. `examples/smt2/` has the Latin
+square in the three encodings, with a script that times them, and `examples/sudoku.pl` explains its
+choice of an enumeration sort. The README could mention this next to enumeration sorts.
+
+### 22. Pushing inside forall/2 does nothing (documentation)
+
+`z3_push/1` is undone on backtracking, like a Prolog binding, so `forall(member(F, Fs), z3_push(F))`,
+or any failure-driven loop, leaves nothing pushed, silently: the Sudoku example first returned grids
+that broke every rule because of this. It follows from the design, but it is an easy mistake. The README
+could warn about it and show the alternatives, `maplist(z3_push, Fs)` or one pushed conjunction.
+
+### 23. z3_push/1 fails at the end of an enumeration (documentation)
+
+Enumerating solutions by blocking each model with `z3_push(not(...))` ends with that push failing, since
+the last block makes the formulas inconsistent. A loop written with `z3_push/1` then fails as a whole,
+instead of stopping. `z3_push/2`, which gives the status, is the one to use; `count_solutions/3` in
+`examples/sudoku.pl` does. `z3_label/1` covers the common case; a predicate that enumerates or counts
+models of a list of terms (with a limit) might be worth adding, since blocking clauses are a common
+idiom.
+
+### 24. Synthesis with forall over bit vectors can be slow (observation)
+
+Finding a constant with an exists-forall query works well for small widths: the multiplier that divides
+8-bit numbers by 3, with 16-bit arithmetic, takes hundredths of a second. The 32-bit version (16-bit
+numbers, multiplier 43691, shift 17) takes about 10 s, so `examples/bit_tricks.pl` uses the small one.
+Nothing to fix; worth knowing when writing such queries, together with a timeout.
+
 ## Suggested order
 
 With 6 and 10 done, the small items, 14 to 16, can be done at any time, and parametric datatypes
 (a leftover of 6) when needed; 11 when
 independent queries on shared declarations are needed; and 13 when SWI-Prolog's `undo/1` is fixed.
+Of the newer items, 18 is the most useful, and 20 to 23 are documentation that can go into the README
+together.
